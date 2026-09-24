@@ -24,11 +24,12 @@ class RemoteAccessControllerTest {
     @Mock RemoteAccessAccessorPairing pairing;
     @Mock RemoteAccessSetup setup;
     @Mock RemoteAccessPairingTokens tokens;
+    @Mock RemoteAccessControlService control;
     MockMvc mvc;
     static final UUID ID=UUID.randomUUID();
     static final Instant NOW=Instant.parse("2026-09-23T12:00:00Z");
     @BeforeEach void prepare() {
-        mvc=MockMvcBuilders.standaloneSetup(new RemoteAccessController(management,invitations,pairing,setup,new RemoteAccessApiMapper(tokens)))
+        mvc=MockMvcBuilders.standaloneSetup(new RemoteAccessController(management,invitations,pairing,setup,new RemoteAccessApiMapper(tokens),control))
             .setControllerAdvice(new RemoteAccessErrorHandler()).build();
     }
     @Test void connectUsesRealLifecycleFor201And202() throws Exception {
@@ -65,6 +66,14 @@ class RemoteAccessControllerTest {
     }
     @Test void secretRecordsHaveRedactedStringRepresentation() {
         assertThat(new RemoteAccessDtos.ConnectRequest("synthetic-secret").toString()).doesNotContain("synthetic-secret");
+    }
+    @Test void disableReturnsPendingUntilCleanupIsConfirmed() throws Exception {
+        when(control.disable()).thenReturn(new RemoteAccessControlStatus(RemoteAccessSwitchStatus.DISABLING,true,1,0,"REMOTE_ACCESS_CLEANUP_PENDING"),
+                new RemoteAccessControlStatus(RemoteAccessSwitchStatus.DISABLED,true,0,0,null));
+        mvc.perform(post("/api/v1/remote-access/control/disable"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("status").value("DISABLING"));
+        mvc.perform(post("/api/v1/remote-access/control/disable"))
+                .andExpect(status().isOk()).andExpect(jsonPath("status").value("DISABLED"));
     }
     static RemoteAccessSession session() {
         return new RemoteAccessSession(ID,UUID.randomUUID(),RemoteAccessRole.ACCESSOR,UUID.randomUUID(),UUID.randomUUID(),"peer",

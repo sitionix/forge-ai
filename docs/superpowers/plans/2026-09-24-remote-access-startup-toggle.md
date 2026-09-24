@@ -22,12 +22,20 @@ Do not choose concrete migration number or fixed management ports until rechecki
 ## Task 1 — protected startup package and dedicated units
 
 1. Add a regression test that runs the systemd renderer/installer in disposable directories and shows that current `just start` has no Remote Access units or protected configuration. Assert the ordinary four units retain their existing user/bind settings.
-2. Add a root-owned, non-writable deployment package for the reviewed `scripts/remote-access` helpers and a root-owned Agent JAR. The dedicated `forge-control` unit must execute that JAR, never the writable checkout. Use the existing installer, `prepare_management.py`, `prepare_local_exec.py`, and workspace preparation rather than duplicating their security checks. Keep setup idempotent and preserve secrets/host key on repeat.
+2. Add a root-owned, non-writable deployment package for the reviewed `scripts/remote-access` helpers and a root-owned Agent JAR. The dedicated `forge-control` unit must execute that JAR, never the writable checkout. Use the existing installer, `prepare_management.py`, and `prepare_local_exec.py` rather than duplicating their security checks. Create a separate Remote Access database for the dedicated Agent; sharing the ordinary workflow database would duplicate recovery. Keep setup idempotent and preserve secrets/host key on repeat.
 3. Render separate loopback Agent/Nexus management units and protected `EnvironmentFile`s. Do not set `FORGE_REMOTE_ACCESS_ENABLED` on ordinary wildcard Nexus or channel-enabled on ordinary Agent. Start services after Postgres and supervisors; check HTTP readiness and socket permissions. `just stop` and status must account for the dedicated units without relabeling an unconfirmed revoke as disabled.
-4. Determine SSH listen address from one unambiguous active default LAN route; interactive startup prompts if ambiguous, noninteractive startup requires an explicit setting. Test loopback/wildcard rejection, multi-interface ambiguity, occupied port, root-owned conflict, lack of privilege, repeated start, and active-supervisor upgrade refusal. Do not rotate keys or stop active sessions on routine `just start`.
+4. Determine SSH listen address from one unambiguous active default LAN route; interactive startup prompts if ambiguous, noninteractive startup requires an explicit setting. Prepare a credential-free immutable workload rootfs with supported tools, and report `NOT_READY` if it cannot be built; do not copy host `/etc`, credentials, or Docker socket into it. Test loopback/wildcard rejection, multi-interface ambiguity, occupied port, root-owned conflict, lack of privilege, repeated start, and active-supervisor upgrade refusal. Do not rotate keys or stop active sessions on routine `just start`.
 5. Run focused Python startup/setup tests and `git diff --check`. Review generated units/env names and filesystem modes; tests must never print protected values.
 
 **Review gate:** Fresh `just start` can prepare a ready but disabled installation in an isolated systemd environment. Ordinary Forge still starts. A failed bootstrap has a specific `NOT_READY` reason and does not claim Remote Access ready.
+
+## Task 1A — session workspace provisioning before ACTIVE
+
+1. Write a failing pairing regression: a valid GRANTOR handshake cannot return/persist `ACTIVE` when its isolated execution context is absent. Add a narrow root-supervisor operation that invokes the existing session-specific `prepare-workspace` helper against the immutable rootfs. Authenticate the control caller with the existing Unix peer boundary; accept only a canonical session ID and fixed rootfs identity, never a browser-supplied path or command.
+2. Wire provisioning before GRANTOR activation. Failed preparation leaves a truthful non-active/revoking state and no usable session grant. Lost acknowledgement/restart retry is idempotent and must not replace a different session's manifest. Preserve Stage 4 confirmation and Stage 5 execution semantics.
+3. Test real privileged pairing then command execution in an isolated systemd fixture, including failure cleanup and no access to Forge control files or credentials. Run focused Agent, Python, and privileged pairing/execution suites before proceeding to Task 2.
+
+**Review gate:** Every newly ACTIVE GRANTOR session has a verified isolated workspace and can run a supported command; failure never presents a ready-but-unusable session.
 
 ## Task 2 — persisted switch and admission fence
 

@@ -4,6 +4,7 @@ import org.mapstruct.Mapper;
 @Mapper(componentModel="spring")
 public interface RemoteAccessClientMapper {
     RemoteAccessModels.Capabilities domain(RemoteAccessClientDtos.Capabilities value);
+    RemoteAccessModels.Control domain(RemoteAccessClientDtos.Control value);
     RemoteAccessModels.Invitation domain(RemoteAccessClientDtos.Invitation value);
     RemoteAccessModels.InvitationCreated domain(RemoteAccessClientDtos.InvitationCreated value);
     RemoteAccessModels.Session domain(RemoteAccessClientDtos.Session value);

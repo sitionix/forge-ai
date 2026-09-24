@@ -15,10 +15,15 @@ public class RemoteAccessAccessorExecution {
     private final RemoteAccessRevokeTransport transport;
     private final RemoteAccessCredentialStore credentials;
     private final RemoteAccessCommandTransport commands;
+    private final RemoteAccessSwitch access;
     private final Clock clock;
     private final Object[] gates=java.util.stream.IntStream.range(0,256).mapToObj(i -> new Object()).toArray();
 
     public RemoteAccessCommandExecution start(UUID id,RemoteAccessCommand command) {
+        return access.admit(() -> startEnabled(id,command));
+    }
+
+    private RemoteAccessCommandExecution startEnabled(UUID id,RemoteAccessCommand command) {
         synchronized(gate(id)) {
             var session=owned(id);
             if (session.status()!=RemoteAccessSessionStatus.ACTIVE) throw new IllegalStateException("Active accessor session required");

@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.api.remoteaccess;
 import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.RemoteAccessPairingTokens;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessControlStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 @Component
@@ -9,6 +10,7 @@ public class RemoteAccessApiMapper {
     private final RemoteAccessPairingTokens tokens;
     public RemoteAccessDtos.Endpoint endpoint(RemoteAccessEndpoint e) { return new RemoteAccessDtos.Endpoint(e.host(),e.port(),e.username()); }
     public RemoteAccessDtos.Capabilities capabilities(RemoteAccessCapabilities c) { return new RemoteAccessDtos.Capabilities(c.ready(),c.supportedOperations(),c.diagnostics()); }
+    public RemoteAccessDtos.Control control(RemoteAccessControlStatus c) { return new RemoteAccessDtos.Control(c.status(),c.ready(),c.pendingSessions(),c.pendingInvitations(),c.diagnostic()); }
     public RemoteAccessDtos.Invitation invitation(RemoteAccessInvitation i) {
         return new RemoteAccessDtos.Invitation(i.id(),i.grantorInstanceId(),endpoint(i.endpoint()),i.createdAt(),i.expiresAt(),i.consumedAt(),i.cancelledAt(),i.redeemedSessionId());
     }

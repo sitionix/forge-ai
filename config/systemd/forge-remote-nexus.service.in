@@ -1,0 +1,25 @@
+[Unit]
+Description=Forge Remote Access local management Nexus
+After=network-online.target forge-remote-agent.service
+Wants=network-online.target
+Requires=forge-remote-agent.service
+
+[Service]
+Type=simple
+User=@FORGE_SYSTEMD_USER@
+Group=@FORGE_SYSTEMD_GROUP@
+WorkingDirectory=@FORGE_AI_HOME@
+EnvironmentFile=/etc/forge-ai/forge-remote-nexus.env
+EnvironmentFile=/etc/forge-remote/management/nexus.env
+ExecStart=/usr/bin/java -jar @FORGE_AI_HOME@/services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar --spring.docker.compose.enabled=false --server.address=127.0.0.1 --server.port=9100
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

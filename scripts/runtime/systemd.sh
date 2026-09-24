@@ -5,8 +5,8 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTION="${1:?Usage: systemd.sh validate|start|stop|status|logs [service]}"
 SERVICE="${2:-all}"
 RUNTIME_DIR="${FORGE_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"
-UNITS=(forge-knowledge.service forge-jarvis.service forge-agent.service forge-nexus.service)
-REVERSE_UNITS=(forge-nexus.service forge-agent.service forge-jarvis.service forge-knowledge.service)
+UNITS=(forge-knowledge.service forge-jarvis.service forge-agent.service forge-nexus.service forge-remote-agent.service forge-remote-nexus.service)
+REVERSE_UNITS=(forge-remote-nexus.service forge-remote-agent.service forge-remote-sshd.service forge-nexus.service forge-agent.service forge-jarvis.service forge-knowledge.service)
 USE_SUDO="${FORGE_SYSTEMD_USE_SUDO:-auto}"
 
 sudo_cmd=()
@@ -86,6 +86,8 @@ health_url() {
     jarvis) printf 'http://127.0.0.1:7071/health' ;;
     agent) printf 'http://127.0.0.1:7091/actuator/health' ;;
     nexus) printf 'http://127.0.0.1:9099/fgaisox/actuator/health' ;;
+    remote-agent) printf 'http://127.0.0.1:7092/actuator/health' ;;
+    remote-nexus) printf 'http://127.0.0.1:9100/fgaisox/actuator/health' ;;
   esac
 }
 
@@ -97,19 +99,33 @@ case "${ACTION}" in
     "${ROOT}/scripts/systemd/install.sh"
     validate
     start_postgres
+    "${ROOT}/scripts/runtime/stage-remote-access.sh"
+    remote_prepare=(/usr/bin/python3 -I /usr/local/lib/forge-remote-setup/prepare_startup.py --operator-user "$(id -un)")
+    if [[ -n "${FORGE_REMOTE_ACCESS_LISTEN_ADDRESS:-}" ]]; then
+      remote_prepare+=(--listen-address "${FORGE_REMOTE_ACCESS_LISTEN_ADDRESS}")
+    fi
+    privileged "${remote_prepare[@]}"
+    privileged systemctl start forge-remote-sshd.service
     # `start` is a no-op for active units. Restart so freshly built artifacts are always loaded.
     privileged systemctl restart "${UNITS[@]}"
     wait_healthy knowledge http://127.0.0.1:7081/health
     wait_healthy jarvis http://127.0.0.1:7071/health
     wait_healthy agent http://127.0.0.1:7091/actuator/health
     wait_healthy nexus http://127.0.0.1:9099/fgaisox/actuator/health
+    wait_healthy remote-agent http://127.0.0.1:7092/actuator/health
+    wait_healthy remote-nexus http://127.0.0.1:9100/fgaisox/actuator/health
     ;;
   stop) validate; privileged systemctl stop "${REVERSE_UNITS[@]}"; docker compose --project-directory "${ROOT}" stop forge-agent-postgres ;;
   status) validate; status ;;
   logs)
     validate
     if [[ "${SERVICE}" == "postgres" ]]; then exec docker compose --project-directory "${ROOT}" logs --follow forge-agent-postgres; fi
-    if [[ "${SERVICE}" == "all" ]]; then privileged journalctl --follow --unit forge-knowledge.service --unit forge-jarvis.service --unit forge-agent.service --unit forge-nexus.service; exit $?; fi
+    if [[ "${SERVICE}" == "all" ]]; then
+      journal_args=()
+      for unit in "${UNITS[@]}"; do journal_args+=(--unit "${unit}"); done
+      privileged journalctl --follow "${journal_args[@]}"
+      exit $?
+    fi
     [[ " ${UNITS[*]} " == *" forge-${SERVICE}.service "* ]] || { echo "Unknown service: ${SERVICE}" >&2; exit 2; }
     privileged journalctl --follow --unit "forge-${SERVICE}.service"
     ;;

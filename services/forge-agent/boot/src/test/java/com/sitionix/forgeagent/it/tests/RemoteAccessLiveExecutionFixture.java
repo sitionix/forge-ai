@@ -31,10 +31,10 @@ public final class RemoteAccessLiveExecutionFixture {
         var a=new Peer("exec_a");var b=new Peer("exec_b");
         var endpoint=new RemoteAccessEndpoint("127.0.0.1",22222,"forge-ssh");
         var grants=new LocalRemoteAccessWorkloads();
-        var execution=new RemoteAccessExecutionService(b.sessions,b.identity,grants,GRANTS,CLOCK);
-        var grantor=new RemoteAccessGrantorPairing(b.invitations,b.sessions,b.identity,TOKENS,GRANTS,GRANTS,b.provisioning(),CLOCK);
-        var accessor=new RemoteAccessAccessorPairing(a.sessions,a.identity,TOKENS,a.provisioning(),a.transport(),CLOCK);
-        var commands=new RemoteAccessAccessorExecution(a.sessions,a.identity,a.transport(),a.credentials,new LocalRemoteAccessCommandTransport(a.credentials),CLOCK);
+        var execution=new RemoteAccessExecutionService(b.sessions,b.identity,grants,GRANTS,b.access,CLOCK);
+        var grantor=new RemoteAccessGrantorPairing(b.invitations,b.sessions,b.identity,TOKENS,GRANTS,GRANTS,b.provisioning(),grants,b.access,CLOCK);
+        var accessor=new RemoteAccessAccessorPairing(a.sessions,a.identity,TOKENS,a.provisioning(),a.transport(),a.access,CLOCK);
+        var commands=new RemoteAccessAccessorExecution(a.sessions,a.identity,a.transport(),a.credentials,new LocalRemoteAccessCommandTransport(a.credentials),a.access,CLOCK);
         try(var server=new RemoteAccessChannelServer(Path.of("/run/forge-remote/channel/authority.sock"),"forge-ssh","forge-ssh",
                 new RemoteAccessChannelService(b.sessions,b.identity,CLOCK,b.invitations),grantor,execution);
             var localExec=new RemoteAccessLocalExecServer(Path.of("/run/forge-remote/local-exec/agent.sock"),"forge-codex",commands::start);
@@ -43,12 +43,12 @@ public final class RemoteAccessLiveExecutionFixture {
             var heartbeat=Executors.newSingleThreadScheduledExecutor();
             heartbeat.scheduleWithFixedDelay(() -> {try {execution.maintain();}catch(RuntimeException unavailable){System.out.println("RECOVERY: authority unavailable");}},0,2,TimeUnit.SECONDS);
             try {
-                var invitation=new RemoteAccessInvitations(b.invitations,b.identity,TOKENS,GRANTS,CLOCK,b.transactions);
+                var invitation=new RemoteAccessInvitations(b.invitations,b.identity,TOKENS,GRANTS,b.access,CLOCK,b.transactions);
                 var first=accessor.connect(invitation.create(endpoint,"B").token().value(),"A");
                 var second=accessor.connect(invitation.create(endpoint,"B").token().value(),"A second");
                 var third=accessor.connect(invitation.create(endpoint,"B").token().value(),"A crash");
                 assertThat(first.status()).isEqualTo(RemoteAccessSessionStatus.ACTIVE);
-                operator("PREPARE "+first.id()+" "+second.id()+" "+third.id());
+                operator("VERIFY_PREPARED "+first.id()+" "+second.id()+" "+third.id());
                 String literal="a b 'quoted' $HOME $(touch /workspace/injected) %n %i";
                 var echo=execute(commands,first.id(),List.of("/usr/bin/python3","-c","import sys; print(sys.argv[1]); print('err',file=sys.stderr); sys.exit(7)",literal),readers);
                 assertThat(echo.code).isEqualTo(7);assertThat(echo.out).isEqualTo(literal+"\n");assertThat(echo.err).isEqualTo("err\n");
@@ -165,12 +165,15 @@ public final class RemoteAccessLiveExecutionFixture {
         final PostgresForgeInstanceIdentityRepository identity;
         final LocalRemoteAccessCredentialStore credentials;
         final DataSourceTransactionManager transactions;
+        final RemoteAccessSwitch access;
         Peer(String schema) {
             Flyway.configure().dataSource(url,user,password).schemas(schema).defaultSchema(schema).locations("classpath:db/migration").load().migrate();
             var source=new DriverManagerDataSource(url+"?currentSchema="+schema,user,password);
             var jdbc=new JdbcTemplate(source);transactions=new DataSourceTransactionManager(source);
             sessions=new PostgresRemoteAccessSessionRepository(jdbc);invitations=new PostgresRemoteAccessInvitationRepository(jdbc);
             identity=new PostgresForgeInstanceIdentityRepository(jdbc);
+            access=new RemoteAccessSwitch(new PostgresRemoteAccessSwitchRepository(jdbc));
+            access.enable();
             credentials=new LocalRemoteAccessCredentialStore(Path.of("/fixture/state",schema+"-keys"));
         }
         RemoteAccessProvisioningService provisioning() {return new RemoteAccessProvisioningService(invitations,sessions,identity,credentials,CLOCK,transactions);}

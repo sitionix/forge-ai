@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.api.remoteaccess;
 import com.sitionix.forgeagent.application.remoteaccess.*;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.RemoteAccessSessionStatus;
+import com.sitionix.forgeagent.domain.model.RemoteAccessSwitchStatus;
 import com.sitionix.forgeagent.domain.port.RemoteAccessSetup;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -20,7 +21,14 @@ public class RemoteAccessController {
     private final RemoteAccessAccessorPairing pairing;
     private final RemoteAccessSetup setup;
     private final RemoteAccessApiMapper mapper;
+    private final RemoteAccessControlService control;
     @GetMapping("/capabilities") public RemoteAccessDtos.Capabilities capabilities() { return mapper.capabilities(setup.capabilities()); }
+    @GetMapping("/control") public RemoteAccessDtos.Control control() { return mapper.control(control.status()); }
+    @PostMapping("/control/enable") public RemoteAccessDtos.Control enable() { return mapper.control(control.enable()); }
+    @PostMapping("/control/disable") public ResponseEntity<RemoteAccessDtos.Control> disable() {
+        var result=control.disable();
+        return ResponseEntity.status(result.status()==RemoteAccessSwitchStatus.DISABLED?200:202).body(mapper.control(result));
+    }
     @GetMapping("/invitations") public List<RemoteAccessDtos.Invitation> invitations() { return invitations.list().stream().map(mapper::invitation).toList(); }
     @PostMapping("/invitations") public ResponseEntity<RemoteAccessDtos.InvitationCreated> invite(@Valid @RequestBody(required=false) RemoteAccessDtos.InvitationRequest body) {
         return ResponseEntity.status(201).body(mapper.created(invitations.create(setup.advertisedEndpoint(body==null?null:body.advertisedHost()),setup.displayName())));

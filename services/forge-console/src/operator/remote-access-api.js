@@ -64,6 +64,9 @@ export class RemoteAccessApi {
     finally { this.clear(); }
   }
   capabilities(signal) { return this.request('GET', '/capabilities', undefined, signal).then(r => r.body); }
+  control(signal) { return this.request('GET', '/control', undefined, signal).then(r => r.body); }
+  enable(signal) { return this.request('POST', '/control/enable', undefined, signal); }
+  disable(signal) { return this.request('POST', '/control/disable', undefined, signal); }
   invitations(signal) { return this.request('GET', '/invitations', undefined, signal).then(r => r.body); }
   sessions(signal) { return this.request('GET', '/sessions', undefined, signal).then(r => r.body); }
   invite(advertisedHost, signal) { return this.request('POST', '/invitations', advertisedHost ? {advertisedHost} : {}, signal); }

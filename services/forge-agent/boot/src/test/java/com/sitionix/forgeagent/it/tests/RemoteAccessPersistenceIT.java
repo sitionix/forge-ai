@@ -46,6 +46,23 @@ class RemoteAccessPersistenceIT {
     static void stop() { DATABASE.stop(); }
 
     @Test
+    void remoteAccessSwitchSurvivesRestartAndRejectsStaleCas() {
+        var repository=new PostgresRemoteAccessSwitchRepository(jdbc);
+        var before=repository.get();
+        assertThat(before.status()).isEqualTo(RemoteAccessSwitchStatus.DISABLED);
+        var enabled=before.enable();
+        assertThat(repository.transition(before,enabled)).isTrue();
+        assertThat(repository.transition(before,enabled)).isFalse();
+        var restarted=new PostgresRemoteAccessSwitchRepository(new JdbcTemplate(
+                new DriverManagerDataSource(DATABASE.getJdbcUrl(),DATABASE.getUsername(),DATABASE.getPassword())));
+        assertThat(restarted.get()).isEqualTo(enabled);
+        var disabling=enabled.beginDisable();
+        assertThat(restarted.transition(enabled,disabling)).isTrue();
+        assertThat(repository.transition(disabling,disabling.finishDisable())).isTrue();
+        assertThat(restarted.get().status()).isEqualTo(RemoteAccessSwitchStatus.DISABLED);
+    }
+
+    @Test
     void observationPersistsWithoutChangingLifecycleAndCannotOverwriteNewerFailure() {
         var repository=new PostgresRemoteAccessSessionRepository(jdbc);
         UUID local=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();

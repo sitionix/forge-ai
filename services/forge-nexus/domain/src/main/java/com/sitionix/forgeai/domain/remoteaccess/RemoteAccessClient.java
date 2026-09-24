@@ -3,6 +3,9 @@ import java.util.List;
 import java.util.UUID;
 public interface RemoteAccessClient {
     RemoteAccessModels.Capabilities capabilities();
+    RemoteAccessModels.Control control();
+    RemoteAccessModels.Control enable();
+    RemoteAccessModels.Control disable();
     List<RemoteAccessModels.Invitation> invitations();
     RemoteAccessModels.InvitationCreated invite(RemoteAccessModels.InvitationRequest request);
     void cancel(UUID id);

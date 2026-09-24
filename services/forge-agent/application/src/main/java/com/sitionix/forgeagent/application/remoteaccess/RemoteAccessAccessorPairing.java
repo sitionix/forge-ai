@@ -17,9 +17,14 @@ public class RemoteAccessAccessorPairing {
     private final RemoteAccessPairingTokens tokens;
     private final RemoteAccessProvisioningService provisioning;
     private final RemoteAccessPairingTransport transport;
+    private final RemoteAccessSwitch access;
     private final Clock clock;
 
     public RemoteAccessSession connect(String token,String displayName) {
+        return access.admit(() -> connectEnabled(token,displayName));
+    }
+
+    private RemoteAccessSession connectEnabled(String token,String displayName) {
         RemoteAccessGrantorPairing.requireDisplayName(displayName);
         UUID local=identity.getOrCreate();
         try (var details=tokens.decode(token,local)) {
@@ -56,6 +61,10 @@ public class RemoteAccessAccessorPairing {
     }
 
     public RemoteAccessSession resume(UUID sessionId) {
+        return access.admit(() -> resumeEnabled(sessionId));
+    }
+
+    private RemoteAccessSession resumeEnabled(UUID sessionId) {
         var session=owned(sessionId);
         if (session.status()!=RemoteAccessSessionStatus.PROVISIONING) return session;
         var confirmationStartedAt=clock.instant();

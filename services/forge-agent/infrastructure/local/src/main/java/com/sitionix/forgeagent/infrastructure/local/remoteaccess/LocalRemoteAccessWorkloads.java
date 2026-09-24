@@ -10,6 +10,7 @@ public final class LocalRemoteAccessWorkloads implements RemoteAccessWorkloads {
     private final Path socket=Path.of("/run/forge-remote/workload-admin/control.sock");
     @Override public void reconcile(UUID epoch) { request("RECONCILE "+epoch,60); }
     @Override public void heartbeat(UUID epoch) { request(socket.resolveSibling("heartbeat.sock"),"HEARTBEAT "+epoch,2); }
+    @Override public void prepare(UUID session) { request("PREPARE "+session,30); }
     @Override public void start(UUID session,UUID attachment,UUID epoch) { request("START "+session+" "+attachment+" "+epoch,3); }
     @Override public void stop(UUID session) { request("STOP "+session,60); }
     private void request(String frame,int timeout) { request(socket,frame,timeout); }

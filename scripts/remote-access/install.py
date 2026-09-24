@@ -321,10 +321,14 @@ def install_workloads(package):
     target=LIB/'workload-supervisor'
     if target.exists() and target.read_bytes()!=(package/'workload_supervisor.py').read_bytes():
         if (RUN/'workload-admin').exists():raise RuntimeError('NOT READY: stop managed workload supervisor before upgrade')
+    reviewed_previous={
+        'workload-supervisor': {'d05427b6b5031f8b50c0a9f97355ffceb90e0e042798d96665e70a7cb1846912'},
+        'prepare-workspace': {'eb9555b2252185a32e05e2f16db56b9cbd34771fd07ecff927f1355d87a99ee7'},
+    }
     for source,name in [('workload_supervisor.py','workload-supervisor'),('workload_units.py','workload_units.py'),
                         ('execution_channel.py','execution_channel.py'),('prepare_workspace.py','prepare-workspace')]:
         require_root_owned(package/source)
-        install_managed_helper(package/source,name,set())
+        install_managed_helper(package/source,name,reviewed_previous.get(name,set()))
     write_owned(pathlib.Path('/etc/systemd/system/forge-remote-workloads.service'),workload_unit(),0o644)
 
 

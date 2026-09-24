@@ -14,8 +14,9 @@ export class RemoteAccessPage {
     this.epoch = 0; this.dialogGeneration = 0; this.disposed = false; this.mounted = false;
     this.authenticated = false; this.pending = false; this.reconcileRequired = false;
     this.sessions = []; this.invitations = []; this.capabilities = {supportedOperations: [], diagnostics: []};
+    this.control = {status:'UNKNOWN',ready:false,pendingSessions:0,pendingInvitations:0,diagnostic:null};
     this.poller = new PollingCoordinator({document, poll: () => this.refresh(),
-      isActive: () => this.sessions.some(s => ['PROVISIONING','REVOKING'].includes(s.status)),
+      isActive: () => this.control.status === 'DISABLING' || this.sessions.some(s => ['PROVISIONING','REVOKING'].includes(s.status)),
       activeIntervalMs: runtimeConfig.activeJobPollIntervalMs || 2000,
       idleIntervalMs: runtimeConfig.statusPollIntervalMs || 15000,
       setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window)});
@@ -28,6 +29,11 @@ export class RemoteAccessPage {
     this.bind('remoteLoginForm','submit',event => {event.preventDefault();this.login();});
     this.bind('remoteLogout','click',() => this.logout());
     this.bind('remoteRefresh','click',() => this.refresh());
+    this.bind('remoteEnable','click',() => this.enable());
+    this.bind('remoteDisable','click',() => this.showDisableConfirmation());
+    this.bind('remoteDisableCancel','click',() => this.hideDisableConfirmation());
+    this.bind('remoteDisableConfirm','click',() => this.disable());
+    this.bind('remoteRetryDisable','click',() => this.disable());
     this.bind('remoteGiveAccess','click',() => this.openDialog('invite'));
     this.bind('remoteConnect','click',() => this.openDialog('connect'));
     this.bind('remoteCloseDialog','click',() => this.closeDialog());
@@ -84,6 +90,8 @@ export class RemoteAccessPage {
     this.epoch += 1; this.requests.abort('metadata'); this.requests.abort('auth');
     this.api.clear(); this.authenticated = false; this.pending = false; this.reconcileRequired = false;
     this.poller.stop(); this.closeDialog(); this.sessions = []; this.invitations = [];
+    this.control = {status:'UNKNOWN',ready:false,pendingSessions:0,pendingInvitations:0,diagnostic:null};
+    this.el('remoteDisableConfirmation').hidden = true;
     this.el('remoteOperatorSecret').value = ''; this.render();
   }
   async refresh() {
@@ -91,9 +99,9 @@ export class RemoteAccessPage {
     const epoch = this.epoch;
     try {
       const result = await this.requests.run('metadata',async ({signal}) => {
-        const [capabilities,sessions,invitations] = await Promise.all([
-          this.api.capabilities(signal),this.api.sessions(signal),this.api.invitations(signal)]);
-        return {capabilities,sessions,invitations};
+        const [capabilities,sessions,invitations,control] = await Promise.all([
+          this.api.capabilities(signal),this.api.sessions(signal),this.api.invitations(signal),this.api.control(signal)]);
+        return {capabilities,sessions,invitations,control};
       });
       if (!result.applied || !this.current(epoch) || this.pending) return;
       Object.assign(this,result.value);
@@ -107,7 +115,7 @@ export class RemoteAccessPage {
   }
   openDialog(kind) {
     const operation = kind === 'invite' ? 'GIVE_ACCESS' : 'CONNECT';
-    if (this.pending || !this.authenticated || !this.capabilities.supportedOperations.includes(operation)) return;
+    if (this.pending || !this.authenticated || this.control.status !== 'ENABLED' || !this.capabilities.supportedOperations.includes(operation)) return;
     this.closeDialog(); this.dialogKind = kind; this.clearError();
     this.el('remoteDialog').hidden = false;
     this.el('remoteDialogTitle').textContent = kind === 'invite' ? 'Give Access' : 'Connect';
@@ -131,7 +139,7 @@ export class RemoteAccessPage {
   updatePreview() {
     const preview = pairingPreview(this.el('remotePairingToken').value.trim(),this.window);
     this.el('remotePeerPreview').textContent = preview ? `Connect to: ${preview}` : 'Enter a valid pairing token to preview the target.';
-    this.el('remoteConnectSubmit').disabled = this.pending || this.reconcileRequired || !preview;
+    this.el('remoteConnectSubmit').disabled = this.pending || this.reconcileRequired || this.control.status !== 'ENABLED' || !preview;
     return preview;
   }
   async mutate(operation, apply, dialog = false, refreshOnError = false) {
@@ -154,8 +162,36 @@ export class RemoteAccessPage {
       }
     }
   }
+  async enable() {
+    if (this.control.status !== 'DISABLED' || !this.control.ready) return;
+    await this.mutate(signal => this.api.enable(signal),result => {
+      this.control = result.body;
+      this.notice('Remote Access enabled. You can now connect or give access.');
+    },false,true);
+    if (this.authenticated && !this.pending) await this.refresh();
+  }
+  showDisableConfirmation() {
+    if (this.pending || this.control.status !== 'ENABLED') return;
+    this.el('remoteDisableConfirmation').hidden = false;
+    this.el('remoteDisableConfirm').focus();
+  }
+  hideDisableConfirmation() {
+    this.el('remoteDisableConfirmation').hidden = true;
+    if (!this.disposed) this.el('remoteDisable').focus();
+  }
+  async disable() {
+    if (!['ENABLED','DISABLING'].includes(this.control.status)) return;
+    this.el('remoteDisableConfirmation').hidden = true;
+    this.closeDialog();
+    await this.mutate(signal => this.api.disable(signal),result => {
+      this.control = result.body;
+      this.notice(result.status === 202 ? 'Cleanup is pending. Remote Access cannot admit new commands.'
+        : 'All Remote Access sessions were revoked. Access is disabled.');
+    },false,true);
+    if (this.authenticated && !this.pending) await this.refresh();
+  }
   invite() {
-    if (this.dialogKind !== 'invite' || !this.el('remoteInviteForm').reportValidity()) return;
+    if (this.control.status !== 'ENABLED' || this.dialogKind !== 'invite' || !this.el('remoteInviteForm').reportValidity()) return;
     const host = this.el('remoteAdvertisedHost').value.trim();
     return this.mutate(signal => this.api.invite(host || undefined,signal),result => {
       this.#issuedToken = result.body.token; this.#issuedInvitation = result.body.invitation;
@@ -165,7 +201,7 @@ export class RemoteAccessPage {
     },true);
   }
   connect() {
-    if (this.pending || this.reconcileRequired || this.dialogKind !== 'connect' || !this.updatePreview()) return;
+    if (this.control.status !== 'ENABLED' || this.pending || this.reconcileRequired || this.dialogKind !== 'connect' || !this.updatePreview()) return;
     const token = this.el('remotePairingToken').value.trim();
     this.el('remotePairingToken').value = ''; this.el('remotePeerPreview').textContent = '';
     return this.mutate(signal => this.api.connect(token,signal),result => {
@@ -222,12 +258,31 @@ export class RemoteAccessPage {
     this.el('remoteManagement').hidden = !this.authenticated;
     this.el('remoteLoginSubmit').disabled = this.pending;
     const operations = this.capabilities.supportedOperations;
-    this.el('remoteConnect').disabled = this.pending || this.reconcileRequired || !operations.includes('CONNECT');
-    this.el('remoteGiveAccess').disabled = this.pending || !operations.includes('GIVE_ACCESS');
+    const state=this.control.status;
+    this.el('remoteControlBadge').textContent = state === 'UNKNOWN' ? 'Checking' : state;
+    this.el('remoteControlBadge').dataset.state = state;
+    this.el('remoteControlSummary').textContent = state === 'ENABLED' ? 'Remote Access is enabled.'
+      : state === 'DISABLING' ? 'Revocation pending. New access is blocked.'
+      : state === 'DISABLED' ? 'Remote Access is disabled.' : 'Checking local Remote Access state…';
+    this.el('remoteControlDetails').textContent = state === 'DISABLING'
+      ? `${this.control.pendingSessions} session(s) and ${this.control.pendingInvitations} invitation(s) still need confirmation. Retry cleanup when the peer is reachable.`
+      : !this.control.ready ? 'System preparation is incomplete. Run just start on this Forge machine, then refresh.'
+      : state === 'DISABLED' ? 'Enable to create a one-time invitation or connect to another machine.'
+      : 'Only the local operator can manage access. Each peer needs its own invitation.';
+    this.el('remoteEnable').hidden = state !== 'DISABLED';
+    this.el('remoteEnable').disabled = this.pending || !this.control.ready;
+    this.el('remoteDisable').hidden = state !== 'ENABLED';
+    this.el('remoteDisable').disabled = this.pending;
+    this.el('remoteRetryDisable').hidden = state !== 'DISABLING';
+    this.el('remoteRetryDisable').disabled = this.pending;
+    this.el('remoteDisableConfirm').disabled = this.pending;
+    this.el('remoteDisableCancel').disabled = this.pending;
+    this.el('remoteConnect').disabled = this.pending || this.reconcileRequired || state !== 'ENABLED' || !operations.includes('CONNECT');
+    this.el('remoteGiveAccess').disabled = this.pending || state !== 'ENABLED' || !operations.includes('GIVE_ACCESS');
     ['remoteRefresh','remoteLogout','remoteInviteSubmit','remoteCancelInvitation'].forEach(id=>{this.el(id).disabled=this.pending;});
-    this.el('remoteConnectSubmit').disabled = this.pending || this.reconcileRequired || !pairingPreview(this.el('remotePairingToken').value.trim(),this.window);
+    this.el('remoteConnectSubmit').disabled = this.pending || this.reconcileRequired || state !== 'ENABLED' || !pairingPreview(this.el('remotePairingToken').value.trim(),this.window);
     if (this.reconcileRequired) this.notice('Connect outcome unconfirmed. Refresh must succeed before retrying Connect.');
-    this.el('remoteReadiness').textContent = this.capabilities.diagnostics.length ? this.capabilities.diagnostics.map(code => ({ADVERTISED_HOST_REQUIRED: 'Give Access needs a reachable SSH address.', GRANTOR_CHANNEL_DISABLED: 'Give Access unavailable: grantor channel is not enabled.', GRANTOR_SETUP_UNAVAILABLE: 'Give Access unavailable: check grantor setup.', SSH_CLIENT_UNAVAILABLE: 'Connect unavailable: OpenSSH client is missing.'})[code] || 'Remote Access setup needs attention.').join(' ') : 'Configured operations available.';
+    this.el('remoteReadiness').textContent = this.capabilities.diagnostics.length ? this.capabilities.diagnostics.map(code => ({ADVERTISED_HOST_REQUIRED: 'Give Access needs a reachable SSH address.', GRANTOR_CHANNEL_DISABLED: 'Give Access unavailable: grantor channel is not enabled.', GRANTOR_SETUP_UNAVAILABLE: 'Give Access unavailable: check grantor setup.', SSH_CLIENT_UNAVAILABLE: 'Connect unavailable: OpenSSH client is missing.', WORKLOAD_ROOTFS_NOT_READY: 'The isolated command workspace is not prepared.', WORKLOAD_AUTHORITY_NOT_READY: 'The managed command supervisor is not ready.'})[code] || 'Remote Access setup needs attention.').join(' ') : 'System preparation is ready.';
     renderRemoteSessions(this.el('remoteAccessorSessions'),this.sessions.filter(s=>s.localRole==='ACCESSOR'),this.pending,operations);
     renderRemoteSessions(this.el('remoteGrantorSessions'),this.sessions.filter(s=>s.localRole==='GRANTOR'),this.pending,operations);
     renderRemoteInvitations(this.el('remoteInvitations'),this.invitations,this.pending,Date.now());

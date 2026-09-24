@@ -15,6 +15,12 @@ public class RemoteAccessProxyController {
     private final RemoteAccessOperations operations;
     private final RemoteAccessProxyMapper mapper;
     @GetMapping("/capabilities") public RemoteAccessProxyDtos.Capabilities capabilities() { return mapper.response(operations.capabilities()); }
+    @GetMapping("/control") public RemoteAccessProxyDtos.Control control() { return mapper.response(operations.control()); }
+    @PostMapping("/control/enable") public RemoteAccessProxyDtos.Control enable() { return mapper.response(operations.enable()); }
+    @PostMapping("/control/disable") public ResponseEntity<RemoteAccessProxyDtos.Control> disable() {
+        var result=operations.disable();
+        return ResponseEntity.status(result.status()==RemoteAccessModels.SwitchStatus.DISABLED?200:202).body(mapper.response(result));
+    }
     @GetMapping("/invitations") public List<RemoteAccessProxyDtos.Invitation> invitations() { return operations.invitations().stream().map(mapper::response).toList(); }
     @PostMapping("/invitations") public ResponseEntity<RemoteAccessProxyDtos.InvitationCreated> invite(@Valid @RequestBody(required=false) RemoteAccessProxyDtos.InvitationRequest body) {
         return ResponseEntity.status(201).body(mapper.response(operations.invite(mapper.command(body==null?new RemoteAccessProxyDtos.InvitationRequest(null):body))));

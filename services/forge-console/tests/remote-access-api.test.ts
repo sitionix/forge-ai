@@ -8,6 +8,18 @@ function setup() {
 }
 
 describe('Remote Access management boundary', () => {
+  it('uses typed local control operations with CSRF and preserves pending Disable', async () => {
+    const {api,fetcher}=setup();await api.operatorSession();
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({status:'DISABLED',ready:true})));
+    expect((await api.control()).status).toBe('DISABLED');
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({status:'ENABLED',ready:true})));
+    expect((await api.enable()).body.status).toBe('ENABLED');
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({status:'DISABLING',pendingSessions:1}),{status:202}));
+    expect(await api.disable()).toMatchObject({status:202,body:{status:'DISABLING',pendingSessions:1}});
+    expect(fetcher.mock.calls.slice(1).map(c=>[c[1].method,c[0].split('/').slice(-2).join('/')]))
+      .toEqual([['GET','remote-access/control'],['POST','control/enable'],['POST','control/disable']]);
+    expect(fetcher.mock.lastCall?.[1].headers['X-CSRF-TOKEN']).toBe('csrf-fixture');
+  });
   it('uses context-aware same-origin endpoints and CSRF after login without persisting secrets', async () => {
     const {api, fetcher} = setup();
     await api.login('operator-canary');

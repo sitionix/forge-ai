@@ -15,6 +15,7 @@ function setup(options: {unauthorized?: boolean; bootstrap?: boolean} = {}) {
   const dom = new JSDOM(readFileSync('src/operator/remote-access.html','utf8'), {url:'http://127.0.0.1:9099/fgaisox/operator/remote-access.html',pretendToBeVisual:true});
   const state = {sessions:[session(),session('b','GRANTOR')], invitations:[] as any[],
     capabilities:{ready:true,supportedOperations:['CONNECT','GIVE_ACCESS','LIST','CHECK','REVOKE'],diagnostics:[] as string[]},
+    control:{status:'ENABLED',ready:true,pendingSessions:0,pendingInvitations:0,diagnostic:null as string | null},
     authorized:!options.unauthorized};
   const fetcher = vi.fn(async (url: string, init: RequestInit) => {
     const path=url.replace('/fgaisox/api/v1/infrastructure/agents/remote-access','');
@@ -22,6 +23,20 @@ function setup(options: {unauthorized?: boolean; bootstrap?: boolean} = {}) {
     if(path==='/operator/login') {state.authorized=true;return json({csrfToken:'csrf'});}
     if(path==='/operator/logout') {state.authorized=false;return new Response(null,{status:204});}
     if(path==='/capabilities') return json(state.capabilities);
+    if(path==='/control' && init.method==='GET') return json(state.control);
+    if(path==='/control/enable' && init.method==='POST') {
+      state.control={...state.control,status:'ENABLED',diagnostic:null};return json(state.control);
+    }
+    if(path==='/control/disable' && init.method==='POST') {
+      if(state.control.status==='DISABLING') {
+        state.control={...state.control,status:'DISABLED',pendingSessions:0,diagnostic:null};
+        state.sessions=state.sessions.map(s=>({...s,status:'REVOKED'}));
+        return json(state.control);
+      }
+      state.control={...state.control,status:'DISABLING',pendingSessions:1,diagnostic:'REMOTE_ACCESS_CLEANUP_PENDING'};
+      state.sessions[0]={...state.sessions[0]!,status:'REVOKING'};
+      return json(state.control,202);
+    }
     if(path==='/sessions' && init.method==='GET') return json(state.sessions);
     if(path==='/invitations' && init.method==='GET') return json(state.invitations);
     if(path==='/invitations' && init.method==='POST') {
@@ -46,6 +61,29 @@ function setup(options: {unauthorized?: boolean; bootstrap?: boolean} = {}) {
 }
 
 describe('Remote Access Console', () => {
+  it('shows Enable first and blocks pairing while disabled', async () => {
+    const t=setup();t.state.control.status='DISABLED';await t.page.mount();
+    expect(t.el('remoteEnable').hidden).toBe(false);
+    expect((t.el('remoteConnect') as HTMLButtonElement).disabled).toBe(true);
+    expect((t.el('remoteGiveAccess') as HTMLButtonElement).disabled).toBe(true);
+    t.click('remoteEnable');await flush();
+    expect(t.el('remoteControlSummary').textContent).toContain('enabled');
+    expect((t.el('remoteConnect') as HTMLButtonElement).disabled).toBe(false);
+    expect(t.fetcher.mock.calls.filter(c=>c[0].endsWith('/invitations')&&c[1].method==='POST')).toHaveLength(0);
+  });
+
+  it('confirms Disable and keeps cleanup pending visible until retry succeeds', async () => {
+    const t=setup();await t.page.mount();
+    t.click('remoteDisable');expect(t.el('remoteDisableConfirmation').hidden).toBe(false);
+    expect(t.fetcher.mock.calls.filter(c=>c[0].endsWith('/control/disable'))).toHaveLength(0);
+    t.click('remoteDisableConfirm');await flush();
+    expect(t.el('remoteControlSummary').textContent).toContain('pending');
+    expect(t.el('remoteRetryDisable').hidden).toBe(false);
+    expect((t.el('remoteConnect') as HTMLButtonElement).disabled).toBe(true);
+    t.click('remoteRetryDisable');await flush();
+    expect(t.el('remoteControlSummary').textContent).toContain('disabled');
+    expect(t.el('remoteEnable').hidden).toBe(false);
+  });
   it('mounts from router/sidebar and separates access roles without claiming ACTIVE is Online', async () => {
     const t=setup({bootstrap:true});await flush();
     expect(t.dom.window.document.querySelector('a[href="./remote-access.html"]')).not.toBeNull();

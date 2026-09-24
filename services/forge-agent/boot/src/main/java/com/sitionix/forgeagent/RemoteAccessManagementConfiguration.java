@@ -1,6 +1,11 @@
 package com.sitionix.forgeagent;
 
 import com.sitionix.forgeagent.api.remoteaccess.RemoteAccessServiceFilter;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessExecutionService;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessControlService;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessInvitations;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessManagement;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessSwitch;
 import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.*;
 import java.nio.file.*;
@@ -15,6 +20,10 @@ import org.springframework.core.Ordered;
 @Configuration
 @ConditionalOnProperty(name="forge.agent.remote-access.management-enabled",havingValue="true")
 public class RemoteAccessManagementConfiguration {
+    @Bean RemoteAccessControlService remoteAccessControlService(RemoteAccessSwitch access,
+            RemoteAccessInvitations invitations, RemoteAccessManagement management, RemoteAccessSetup setup) {
+        return new RemoteAccessControlService(access, invitations, management, setup);
+    }
     @Bean RemoteAccessServiceFilter remoteAccessServiceFilter(@Value("${forge.agent.remote-access.service-secret-file}") Path path) {
         return new RemoteAccessServiceFilter(path);
     }
@@ -29,6 +38,7 @@ public class RemoteAccessManagementConfiguration {
         }
     }
     @Bean RemoteAccessSetup remoteAccessSetup(RemoteAccessInvitationGrants grants,RemoteAccessPairingTokens tokens,
+            RemoteAccessExecutionService execution,
             @Value("${forge.agent.remote-access.display-name:Forge}") String displayName,
             @Value("${forge.agent.remote-access.advertised-host:}") String advertisedHost,
             @Value("${forge.agent.remote-access.ssh-port:2222}") int port,
@@ -52,7 +62,13 @@ public class RemoteAccessManagementConfiguration {
                     catch (RuntimeException unavailable) { diagnostics.add("GRANTOR_SETUP_UNAVAILABLE"); }
                 }
                 if (advertisedHost.isBlank()) diagnostics.add("ADVERTISED_HOST_REQUIRED");
-                return new RemoteAccessCapabilities(operations.contains("CONNECT") || operations.contains("GIVE_ACCESS"),List.copyOf(operations),List.copyOf(diagnostics));
+                var rootfs=Path.of("/srv/forge-remote/rootfs");
+                if (!Files.isDirectory(rootfs) || !Files.isExecutable(rootfs.resolve("bin/sh"))
+                        || !Files.isExecutable(rootfs.resolve("usr/bin/python3"))) {
+                    diagnostics.add("WORKLOAD_ROOTFS_NOT_READY");
+                }
+                if (!execution.ready()) diagnostics.add("WORKLOAD_AUTHORITY_NOT_READY");
+                return new RemoteAccessCapabilities(diagnostics.isEmpty(),List.copyOf(operations),List.copyOf(diagnostics));
             }
         };
     }

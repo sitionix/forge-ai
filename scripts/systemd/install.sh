@@ -9,7 +9,7 @@ ENV_DIR="${FORGE_SYSTEMD_ENV_DIR:-/etc/forge-ai}"
 ENV_FILE="${FORGE_SYSTEMD_ENV_FILE:-${ENV_DIR}/forge-ai.env}"
 USE_SUDO="${FORGE_SYSTEMD_USE_SUDO:-auto}"
 SKIP_RELOAD="${FORGE_SYSTEMD_SKIP_RELOAD:-0}"
-UNITS=(forge-agent.service forge-nexus.service forge-knowledge.service forge-jarvis.service)
+UNITS=(forge-agent.service forge-nexus.service forge-knowledge.service forge-jarvis.service forge-remote-agent.service forge-remote-nexus.service)
 
 if [[ "${SKIP_RELOAD}" != "1" ]] && ! command -v systemctl >/dev/null 2>&1; then
   echo "systemctl is required to install Forge systemd units on this host." >&2
@@ -39,6 +39,8 @@ trap cleanup EXIT
 
 run_privileged install -d -m 0755 "${UNIT_DIR}" "${ENV_DIR}"
 run_privileged install -m 0600 "${tmp_dir}/forge-ai.env" "${ENV_FILE}"
+run_privileged install -m 0600 "${tmp_dir}/units/control-agent.env" "${ENV_DIR}/forge-remote-agent.env"
+run_privileged install -m 0600 "${tmp_dir}/units/control-nexus.env" "${ENV_DIR}/forge-remote-nexus.env"
 for unit in "${UNITS[@]}"; do
   run_privileged install -m 0644 "${tmp_dir}/units/${unit}" "${UNIT_DIR}/${unit}"
 done

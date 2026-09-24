@@ -1124,3 +1124,27 @@ env or tmpfiles file. The tests assert both the persistent group name and the
 immediate `os.chown(runtime, agent_uid, operator_gid)` call. Focused setup tests:
 4 PASS. Full Remote Access Python suite: 72 PASS. The privileged Stage 8 fixture
 is unchanged by this setup-only correction.
+
+## Startup preparation and local Enable/Disable (2026-09-24)
+
+Implementation in the isolated `feature/SITIONIX-146` worktree: `just start`
+stages the protected Remote Access package, prepares a dedicated loopback
+Agent/Nexus pair and database, managed SSH, local operator boundary, and a
+credential-free command rootfs. The persisted switch starts DISABLED. The
+local management UI exposes Enable and Disable; Disable first persists a
+no-new-admission fence, then the recovery worker revokes invitations and
+sessions. It reports DISABLING until cleanup is confirmed, including when an
+ACCESSOR peer is offline. The GRANTOR prepares each isolated session workspace
+through a fixed short-lived systemd unit before confirming ACTIVE, so a paired
+session needs no manual per-session preparation.
+
+Verification: Python Remote Access suite 91 PASS (one opt-in rootfs test
+skipped); Console 580 PASS, typecheck PASS, build PASS; Forge Nexus full verify
+PASS; Forge Agent full verify PASS outside the sandbox. The privileged Stage 5
+fixture PASS includes real OpenSSH, PostgreSQL, automatic session workspace
+preparation, managed command execution, cancellation, revoke and unrelated
+session isolation. A built command image's Docker export passed safe-member
+inspection. Full host `just start` and two-machine Codex live acceptance remain
+NOT_RUN; the optional real image extraction test requires root and could not
+run here because `sudo -n` required interactive authentication. These are not
+claimed as live acceptance.

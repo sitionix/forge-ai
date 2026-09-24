@@ -26,6 +26,15 @@ public final class RemoteAccessLivePairingFixture {
     private static final Path STATE=Path.of("/fixture/state");
     private static final LocalPairingTokens TOKENS=new LocalPairingTokens();
     private static final LocalInvitationGrants GRANTS=new LocalInvitationGrants();
+    // This legacy Stage 4 fixture verifies SSH/persistence only. Stage 5 live execution
+    // uses the real supervisor and checks workspace preparation before ACTIVE.
+    private static final RemoteAccessWorkloads TRANSPORT_ONLY_WORKLOADS=new RemoteAccessWorkloads() {
+        public void reconcile(UUID epoch) { }
+        public void heartbeat(UUID epoch) { }
+        public void prepare(UUID session) { }
+        public void start(UUID session,UUID attachment,UUID epoch) { }
+        public void stop(UUID session) { }
+    };
     private static final RemoteAccessEndpoint ENDPOINT=new RemoteAccessEndpoint("127.0.0.1",22222,"forge-ssh");
     private static String url,user,password;
 
@@ -335,6 +344,7 @@ public final class RemoteAccessLivePairingFixture {
         final LocalRemoteAccessCredentialStore credentials;
         final Path credentialsRoot;
         final DataSourceTransactionManager transactions;
+        final RemoteAccessSwitch access;
         final Clock clock;
         Peer(String schema) { this(schema,CLOCK); }
         Peer(String schema,Clock clock) {
@@ -344,15 +354,17 @@ public final class RemoteAccessLivePairingFixture {
             identity=new PostgresForgeInstanceIdentityRepository(jdbc);
             invitations=new PostgresRemoteAccessInvitationRepository(jdbc);
             sessions=new PostgresRemoteAccessSessionRepository(jdbc);
+            access=new RemoteAccessSwitch(new PostgresRemoteAccessSwitchRepository(jdbc));
+            access.enable();
             credentialsRoot=STATE.resolve(schema+"-credentials");
             credentials=new LocalRemoteAccessCredentialStore(credentialsRoot);
         }
         UUID local() { return identity.getOrCreate(); }
         RemoteAccessProvisioningService provisioning() { return new RemoteAccessProvisioningService(invitations,sessions,identity,credentials,clock,transactions); }
-        RemoteAccessInvitations inviter() { return new RemoteAccessInvitations(invitations,identity,TOKENS,GRANTS,clock,transactions); }
-        RemoteAccessGrantorPairing grantor(RemoteAccessSessionGrants grants) { return new RemoteAccessGrantorPairing(invitations,sessions,identity,TOKENS,GRANTS,grants,provisioning(),clock); }
+        RemoteAccessInvitations inviter() { return new RemoteAccessInvitations(invitations,identity,TOKENS,GRANTS,access,clock,transactions); }
+        RemoteAccessGrantorPairing grantor(RemoteAccessSessionGrants grants) { return new RemoteAccessGrantorPairing(invitations,sessions,identity,TOKENS,GRANTS,grants,provisioning(),TRANSPORT_ONLY_WORKLOADS,access,clock); }
         LocalRemoteAccessPairingTransport transport() { return new LocalRemoteAccessPairingTransport(credentials); }
-        RemoteAccessAccessorPairing accessor(RemoteAccessPairingTransport transport) { return new RemoteAccessAccessorPairing(sessions,identity,TOKENS,provisioning(),transport,clock); }
+        RemoteAccessAccessorPairing accessor(RemoteAccessPairingTransport transport) { return new RemoteAccessAccessorPairing(sessions,identity,TOKENS,provisioning(),transport,access,clock); }
         RemoteAccessChannelServer server(RemoteAccessSessionGrants grants) {
             return new RemoteAccessChannelServer(Path.of("/run/forge-remote/channel/authority.sock"),"forge-ssh","forge-ssh",
                     new RemoteAccessChannelService(sessions,identity,clock,invitations),grantor(grants),

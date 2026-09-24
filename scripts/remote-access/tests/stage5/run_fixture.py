@@ -153,10 +153,13 @@ def main():
     with subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1) as process:
         for line in process.stdout:
             print(line,end='',flush=True)
-            if line.startswith('PREPARE '):
+            if line.startswith('VERIFY_PREPARED '):
                 for value in line.strip().split()[1:]:
                     if str(uuid.UUID(value))!=value:raise ValueError('Invalid fixture session')
-                    run('python3',str(PACKAGE/'prepare_workspace.py'),'--session',value,'--rootfs',str(root))
+                    sys.path.insert(0,str(PACKAGE))
+                    from workload_units import prepared_context
+                    context=prepared_context(pathlib.Path('/etc/forge-remote/workspaces'),value)
+                    if context['rootfs']!=str(root):raise RuntimeError('Session did not auto-prepare rootfs')
                 late_submission(line.strip().split()[1])
                 process.stdin.write('OK\n');process.stdin.flush()
             elif line.startswith('STAGE8_HELPER '):

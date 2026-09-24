@@ -28,4 +28,17 @@ class RemoteAccessClientAdapterTest {
         assertThatThrownBy(sut::capabilities).isInstanceOf(RemoteAccessClientException.class)
             .hasMessage("Invalid Remote Access response").hasNoCause();
     }
+    @Test void disablePreservesPendingAndConfirmedStates() {
+        var pending=new RemoteAccessClientDtos.Control(RemoteAccessModels.SwitchStatus.DISABLING,true,1,0,"REMOTE_ACCESS_CLEANUP_PENDING");
+        var done=new RemoteAccessClientDtos.Control(RemoteAccessModels.SwitchStatus.DISABLED,true,0,0,null);
+        when(http.disable()).thenReturn(ResponseEntity.accepted().body(pending),ResponseEntity.ok(done));
+        assertThat(sut.disable().status()).isEqualTo(RemoteAccessModels.SwitchStatus.DISABLING);
+        assertThat(sut.disable().status()).isEqualTo(RemoteAccessModels.SwitchStatus.DISABLED);
+    }
+    @Test void invalidDisableStatusCannotBeReportedAsCompleted() {
+        when(http.disable()).thenReturn(ResponseEntity.ok(new RemoteAccessClientDtos.Control(
+                RemoteAccessModels.SwitchStatus.DISABLING,true,1,0,"REMOTE_ACCESS_CLEANUP_PENDING")));
+        assertThatThrownBy(sut::disable).isInstanceOf(RemoteAccessClientException.class)
+                .hasMessage("Invalid Remote Access response");
+    }
 }

@@ -12,6 +12,8 @@ public final class RemoteAccessProxyDtos {
     }
     public record Endpoint(String host, int port, String username) {}
     public record Capabilities(boolean ready, List<String> supportedOperations, List<String> diagnostics) {}
+    public record Control(SwitchStatus status, boolean ready, int pendingSessions,
+                          int pendingInvitations, String diagnostic) {}
     public record Invitation(UUID id, UUID grantorInstanceId, Endpoint endpoint, Instant createdAt,
             Instant expiresAt, Instant consumedAt, Instant cancelledAt, UUID redeemedSessionId) {}
     public record InvitationCreated(Invitation invitation, String token) {

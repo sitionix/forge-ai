@@ -54,6 +54,8 @@ render_template "${TEMPLATE_DIR}/forge-agent.service.in" "${OUTPUT_DIR}/forge-ag
 render_template "${TEMPLATE_DIR}/forge-nexus.service.in" "${OUTPUT_DIR}/forge-nexus.service"
 render_template "${TEMPLATE_DIR}/forge-knowledge.service.in" "${OUTPUT_DIR}/forge-knowledge.service"
 render_template "${TEMPLATE_DIR}/forge-jarvis.service.in" "${OUTPUT_DIR}/forge-jarvis.service"
+render_template "${TEMPLATE_DIR}/forge-remote-agent.service.in" "${OUTPUT_DIR}/forge-remote-agent.service"
+render_template "${TEMPLATE_DIR}/forge-remote-nexus.service.in" "${OUTPUT_DIR}/forge-remote-nexus.service"
 
 {
   # System services do not inherit the installing user's SSH agent environment.
@@ -89,5 +91,22 @@ render_template "${TEMPLATE_DIR}/forge-jarvis.service.in" "${OUTPUT_DIR}/forge-j
 } > "${ENV_FILE}"
 
 chmod 0600 "${ENV_FILE}"
+
+{
+  env_line "FORGE_AGENT_DB_URL" "${FORGE_REMOTE_ACCESS_DB_URL:-jdbc:postgresql://localhost:54329/forge_remote_access}"
+  env_line "FORGE_AGENT_DB_USERNAME" "${FORGE_REMOTE_ACCESS_DB_USERNAME:-${FORGE_AGENT_DB_USERNAME:-forge_agent}}"
+  env_line "FORGE_AGENT_DB_PASSWORD" "${FORGE_REMOTE_ACCESS_DB_PASSWORD:-${FORGE_AGENT_DB_PASSWORD:-forge_agent}}"
+  env_line "FORGE_AGENT_HOST" "127.0.0.1"
+  env_line "FORGE_AGENT_PORT" "7092"
+  env_line "FORGE_AGENT_REMOTE_ACCESS_CHANNEL_ENABLED" "true"
+} > "${OUTPUT_DIR}/control-agent.env"
+chmod 0600 "${OUTPUT_DIR}/control-agent.env"
+
+{
+  env_line "FORGE_AGENT_BASE_URL" "http://127.0.0.1:7092"
+  env_line "FORGE_NEXUS_HOST" "127.0.0.1"
+} > "${OUTPUT_DIR}/control-nexus.env"
+chmod 0600 "${OUTPUT_DIR}/control-nexus.env"
+
 printf 'Rendered Forge systemd units in %s\n' "${OUTPUT_DIR}"
 printf 'Rendered Forge systemd environment in %s\n' "${ENV_FILE}"

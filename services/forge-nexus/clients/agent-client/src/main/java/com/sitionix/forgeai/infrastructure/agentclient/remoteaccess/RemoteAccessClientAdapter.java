@@ -14,6 +14,20 @@ public class RemoteAccessClientAdapter implements RemoteAccessClient {
     private final RemoteAccessHttpClient http;
     private final RemoteAccessClientMapper mapper;
     public RemoteAccessModels.Capabilities capabilities() { return mapper.domain(execute(http::capabilities)); }
+    public RemoteAccessModels.Control control() { return mapper.domain(execute(http::control)); }
+    public RemoteAccessModels.Control enable() {
+        var result=mapper.domain(execute(http::enable));
+        if (result.status()!=RemoteAccessModels.SwitchStatus.ENABLED) throw invalid();
+        return result;
+    }
+    public RemoteAccessModels.Control disable() {
+        var response=execute(http::disable);
+        if (response.getBody()==null || !(response.getStatusCode().value()==200
+                && response.getBody().status()==RemoteAccessModels.SwitchStatus.DISABLED
+                || response.getStatusCode().value()==202
+                && response.getBody().status()==RemoteAccessModels.SwitchStatus.DISABLING)) throw invalid();
+        return mapper.domain(response.getBody());
+    }
     public List<RemoteAccessModels.Invitation> invitations() { return execute(http::invitations).stream().map(mapper::domain).toList(); }
     public RemoteAccessModels.InvitationCreated invite(RemoteAccessModels.InvitationRequest request) {
         var body=mapper.request(request);return mapper.domain(execute(() -> http.invite(body)));

@@ -18,6 +18,20 @@
     </form>
   </section>
   <section id="remoteManagement" hidden>
+    <section id="remoteControl" class="panel remote-control" aria-labelledby="remoteControlTitle">
+      <div class="panel-head"><div><h2 id="remoteControlTitle">Remote Access on this machine</h2><p id="remoteControlSummary" role="status" aria-live="polite"></p></div><span id="remoteControlBadge" class="remote-control-badge"></span></div>
+      <p id="remoteControlDetails"></p>
+      <div class="remote-control-buttons">
+        <button id="remoteEnable" class="button" type="button" hidden>Enable Remote Access</button>
+        <button id="remoteDisable" class="button secondary" type="button" hidden>Disable Remote Access</button>
+        <button id="remoteRetryDisable" class="button secondary" type="button" hidden>Retry cleanup</button>
+      </div>
+      <div id="remoteDisableConfirmation" class="remote-control-confirm" hidden>
+        <p>Disable will revoke every Remote Access session and stop its running commands. Changes already made on either machine remain.</p>
+        <button id="remoteDisableConfirm" class="button" type="button">Revoke all sessions and disable</button>
+        <button id="remoteDisableCancel" class="button secondary" type="button">Keep access enabled</button>
+      </div>
+    </section>
     <div class="panel remote-actions">
       <button id="remoteConnect" class="button" type="button">Connect</button>
       <button id="remoteGiveAccess" class="button" type="button">Give Access</button>
@@ -54,5 +68,5 @@
     <p>Disconnect stops managed commands after confirmed cleanup. It does not undo file changes or already-read data.</p>
   </section>
 </main>
-<script src="./runtime-config.js"></script><script type="module" src="./operator-ui.js"></script>
+<script src="./runtime-config.js"></script><script type="module" src="./remote-access-entry.js"></script>
 </body></html>

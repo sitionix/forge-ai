@@ -1,11 +1,13 @@
 package com.sitionix.forgeagent;
 
 import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessExecutionService;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessControlService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.util.concurrent.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class RemoteAccessExecutionRecovery {
     private final RemoteAccessExecutionService execution;
+    private final ObjectProvider<RemoteAccessControlService> control;
     // Cleanup never occupies the liveness worker, even when one session cannot stop.
     private final ScheduledExecutorService heartbeat=timer("remote-access-authority-heartbeat");
     private final ScheduledExecutorService cleanup=timer("remote-access-workload-cleanup");
@@ -28,7 +31,8 @@ public class RemoteAccessExecutionRecovery {
             try { execution.maintain(); } catch (RuntimeException unavailable) { log.warn("Workload authority unavailable; admissions fail closed"); }
         },1,2,TimeUnit.SECONDS);
         cleanup.scheduleWithFixedDelay(() -> {
-            try { execution.reconcile(); } catch (RuntimeException unavailable) { log.warn("Workload cleanup incomplete; persisted intent retained"); }
+            try { execution.reconcile(); control.ifAvailable(RemoteAccessControlService::reconcile); }
+            catch (RuntimeException unavailable) { log.warn("Remote Access cleanup incomplete; persisted intent retained"); }
         },3,5,TimeUnit.SECONDS);
     }
     @PreDestroy public void close() { heartbeat.shutdownNow();cleanup.shutdownNow(); }
