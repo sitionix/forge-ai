@@ -6080,3 +6080,18 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .node-editor-working-repositories .field-label { display: block; margin-top: 12px; }
 .node-editor-working-repositories [data-working-list] { max-height: 200px; overflow-y: auto; margin-top: 8px; }
 .working-repository-option { display: flex; gap: 8px; padding: 4px 0; overflow-wrap: anywhere; }
+
+/* Global Remote Access management: existing operator panels and buttons. */
+.remote-access-shell [hidden] { display: none !important; }
+.remote-access-shell form { display: grid; gap: 12px; }
+.remote-access-shell textarea { width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+.remote-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.remote-actions p { flex-basis: 100%; }
+.remote-session-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.remote-session-card { border: 1px solid var(--line, #ccc); border-radius: 12px; padding: 16px; overflow-wrap: anywhere; }
+.remote-session-card dl { display: grid; grid-template-columns: minmax(100px, 1fr) 2fr; gap: 8px; }
+.remote-session-card dd { margin: 0; }
+.remote-access-shell .panel { padding: 24px; margin-bottom: 20px; }
+.remote-access-shell > p, #remoteManagement > p { color: var(--panel-strong); }
+.remote-access-shell .remote-session-card { border-color: rgba(27, 36, 31, 0.16); }
+.remote-access-shell h2:first-child { margin-top: 0; }

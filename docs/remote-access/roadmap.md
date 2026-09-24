@@ -9,7 +9,8 @@ Stage 0 PR #141 was merged with explicitly authorized admin merge at
 PR #144 was merged at `43a1ea51a30b9bdf869bd67e97ea7f7d86f468b2`; the user then authorized Stage 4.
 PR #145 was merged at `edf49dbfa34643fdbd66fa4aa6a3bbaa78df42d2`; the user authorized Stage 5.
 PR #146 was merged at `a102de5c`; the user authorized Stage 6 and approved its design.
-Each stage remains a separate review unit; Stage 7+ remains unauthorized.
+PR #147 was merged with authorized admin merge at `58f2854f`; the user authorized Stage 7.
+Each stage remains a separate review unit; Stage 8+ remains unauthorized.
 No new PR metadata, comments/reviews or merges without an explicit request.
 Stage 5 execution/revoke is merged with isolated live evidence.
 Management APIs, UI and the local Codex helper remain separate later stages; this
@@ -23,8 +24,8 @@ is not a claim that the complete Remote Access product is production-ready.
 | 3 | Give Access and invitation lifecycle | Five-minute server TTL; single-use token, cancellation/expiry; malformed/key/endpoint checks; no secret GET/list | Merged PR #144; see stage3-invitations.md and evidence.md |
 | 4 | Pairing, durable key exchange and activation | Two real SSH instances; one session; concurrent redeem; lost responses/restarts; session-key confirmation; bounded provisioning cleanup | Merged PR #145; see stage4-pairing.md and evidence.md |
 | 5 | Streaming commands, revoke and recovery | Bounded streams/stdin/exit/cancel; start-vs-revoke fencing; descendant cleanup; isolated sessions; restart/failure truthfulness | Merged PR #146; isolated real SSH/PostgreSQL/systemd evidence in evidence.md |
-| 6 | Agent local management API and typed Nexus proxy | Production HTTP auth/Origin/CSRF, error/status preservation, redaction; ForgeIT typed fixtures, zero upstream calls on rejection | Implemented for external review; stage6-management.md and evidence.md |
-| 7 | Global Remote Access Console | Connect/Give Access; role-separated lists; no ACTIVE=Online; REVOKING visible; stale/double-submit/polling/secret tests and existing UI regression | Not started / not authorized |
+| 6 | Agent local management API and typed Nexus proxy | Production HTTP auth/Origin/CSRF, error/status preservation, redaction; ForgeIT typed fixtures, zero upstream calls on rejection | Merged PR #147 including dedicated 120s Nexus lifecycle timeout; stage6-management.md and evidence.md |
+| 7 | Global Remote Access Console | Connect/Give Access; role-separated lists; no ACTIVE=Online; REVOKING visible; stale/double-submit/polling/secret tests and existing UI regression | Implemented for external review; stage7-console.md and evidence.md |
 | 8 | Local `forge-remote exec` helper | Actual remote read/edit/test, literal argv, cancellation, no local fallback or secret output; local Codex tools remain local | Not started / not authorized |
 | 9 | Two-machine/VM E2E and operational audit | Real persistence/SSH/cleanup; independent session; crash/offline/security cases; separately labeled actual Codex live acceptance | Not started / not authorized |
 
@@ -65,8 +66,8 @@ Review architecture → contracts → production → security/errors/logging →
 dependencies → unit → integration/SSH → CI. Style preference alone is not a
 blocker. Mocked tests are never labeled live SSH/Codex E2E. The final Stage 9 labels
 REMOTE_ACCESS_RUNTIME_E2E_PASS, REMOTE_ACCESS_UI_FLOW_PASS and
-REMOTE_ACCESS_CODEX_LIVE_PASS require their respective real evidence; current
-status for all three is NOT_RUN.
+REMOTE_ACCESS_CODEX_LIVE_PASS require their respective real evidence; Stage 7 records a real-browser UI fixture pass with stubbed management HTTP;
+full Stage 9 runtime/two-machine/live-Codex acceptance remains NOT_RUN.
 
 Each stage stops with Changed / Tests / Result / Limitations / READY_FOR_REVIEW.
 This means submitted for external review, not accepted or ready for production.

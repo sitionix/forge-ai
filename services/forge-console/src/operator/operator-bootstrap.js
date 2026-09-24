@@ -3,6 +3,7 @@ import { AgentProjectsPage } from './agent-projects-page.js';
 import { JarvisPage } from './jarvis-page.js';
 import { KnowledgeGraphPage } from './knowledge-graph-page.js';
 import { KnowledgeOverviewPage } from './knowledge-overview-page.js';
+import { RemoteAccessPage } from './remote-access-page.js';
 import { OperatorRouter } from './operator-router.js';
 import { escapeHtml } from './dom-render-helpers.js';
 
@@ -28,6 +29,7 @@ export function bootstrapOperatorConsole(options = {}) {
   });
   initSidebar(documentRef, windowRef, pageName);
   const registry = {
+    'remote-access': () => new RemoteAccessPage({document: documentRef, window: windowRef, fetcher: options.fetcher, runtimeConfig}),
     knowledge: () => new KnowledgeOverviewPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
     'knowledge-graph': () => new KnowledgeGraphPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
     jarvis: () => new JarvisPage({ document: documentRef, http, runtimeConfig }),
@@ -35,6 +37,12 @@ export function bootstrapOperatorConsole(options = {}) {
   };
   const router = new OperatorRouter(registry, { document: documentRef });
   const mountedPage = router.mount(pageName);
+  if (pageName === 'remote-access') {
+    // pagehide disposes requests/secrets; BFCache restoration needs fresh ownership.
+    windowRef.addEventListener('pageshow', event => {
+      if (event.persisted) windowRef.__forgeMountedOperatorPage = router.mount(pageName);
+    });
+  }
   windowRef.__forgeOperatorRouter = router;
   windowRef.__forgeMountedOperatorPage = mountedPage;
   if (windowRef.__FORGE_OPERATOR_TEST_HOOKS__ && mountedPage?.testApi) {
@@ -69,6 +77,7 @@ export function initSidebar(documentRef = document, windowRef = window, page = d
   const links = [
     ['agent-projects', './agent-projects.html', 'P', 'Projects'],
     ['jarvis', './jarvis.html', 'J', 'Jarvis'],
+    ['remote-access', './remote-access.html', 'R', 'Remote Access'],
     ['knowledge', './knowledge.html', 'K', 'Knowledge']
   ];
   documentRef.body.insertAdjacentHTML('afterbegin', `
