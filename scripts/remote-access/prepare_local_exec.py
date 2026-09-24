@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prepare protected ACCESSOR-local execution socket and Agent environment."""
 import argparse
+import grp
 import os
 import pathlib
 import pwd
@@ -41,6 +42,7 @@ def prepare(runtime, management, tmpfiles, operator_user, agent_uid, agent_gid, 
         raise RuntimeError('Prepared management directory required')
     if not tmpfiles.parent.is_dir() or tmpfiles.parent.stat().st_uid != os.geteuid() or tmpfiles.parent.stat().st_mode & 0o022:
         raise RuntimeError('Protected tmpfiles directory required')
+    operator_group = grp.getgrgid(operator_gid).gr_name
     if runtime.exists():
         info = runtime.stat()
         if (not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o2750
@@ -54,7 +56,7 @@ def prepare(runtime, management, tmpfiles, operator_user, agent_uid, agent_gid, 
                    f'FORGE_AGENT_REMOTE_ACCESS_LOCAL_EXEC_OPERATOR_USER={operator_user}\n')
     managed_file(management/'local-exec-agent.env', environment, 0o600, agent_uid, agent_gid)
     managed_file(tmpfiles,
-                 f'd {runtime} 2750 forge-control {operator_user} -\n',
+                 f'd {runtime} 2750 forge-control {operator_group} -\n',
                  0o644, os.geteuid(), os.getegid())
 
 

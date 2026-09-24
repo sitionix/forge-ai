@@ -16,9 +16,12 @@ sudo python3 scripts/remote-access/prepare_local_exec.py --operator-user <local-
 ```
 
 The setup prepares `/run/forge-remote/local-exec/` as
-`forge-control:<local-codex-user>` mode `2750` (setgid), a root-owned tmpfiles declaration,
+`forge-control:<operator-primary-group>` mode `2750` (setgid), a root-owned tmpfiles declaration,
 and `/etc/forge-remote/management/local-exec-agent.env` as `forge-control` mode
 `0600`. It does not start a service, grant SSH access or modify an existing unit.
+The tmpfiles declaration uses the operator's actual primary group resolved from
+its GID; it does not assume the group has the same name as the operator. An
+unresolvable GID stops setup before it writes Stage 8 artifacts.
 Attach that env file only to the dedicated `forge-control` Agent unit, after its
 existing Agent env file, then restart that Agent using the ordinary deployment
 procedure. The optional listener is disabled by default. Its startup fails if the

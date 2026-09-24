@@ -1114,3 +1114,13 @@ blocked writes. The privileged fixture was strengthened to flood stdin into a
 remote command that does not read it, then send SIGINT. It confirmed helper exit
 `130` and removal of the real SSH/systemd workload, descendants, registry and
 fence. These review findings were fixed within Stage 8; Stage 9 remains NOT_RUN.
+
+PR #150 Stage 8 setup correction: regression tests reproduced that
+`prepare_local_exec.py` wrote the operator username as the tmpfiles group even
+when the provided primary GID resolves to a differently named group. Setup now
+resolves `grp.getgrgid(operator_gid).gr_name` before writing any Stage 8 artifact;
+an unknown GID raises `KeyError` without creating the runtime directory, Agent
+env or tmpfiles file. The tests assert both the persistent group name and the
+immediate `os.chown(runtime, agent_uid, operator_gid)` call. Focused setup tests:
+4 PASS. Full Remote Access Python suite: 72 PASS. The privileged Stage 8 fixture
+is unchanged by this setup-only correction.
