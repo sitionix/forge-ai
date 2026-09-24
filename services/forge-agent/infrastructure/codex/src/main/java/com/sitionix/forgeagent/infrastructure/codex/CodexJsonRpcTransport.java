@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.codex;
 
+import com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -92,8 +93,12 @@ final class CodexJsonRpcTransport implements AutoCloseable {
         this.cleanupClock = cleanupClock;
         this.cleanupDeadline = cleanupDeadline;
         this.writer = new OutputStreamWriter(server.process().getOutputStream(), StandardCharsets.UTF_8);
-        this.stdoutReaderThread = Thread.ofVirtual().name("forge-agent-codex-stdout-" + server.process().pid()).start(this::readStdout);
-        this.stderrReaderThread = Thread.ofVirtual().name("forge-agent-codex-stderr-" + server.process().pid()).start(this::drainStderr);
+        this.stdoutReaderThread = Thread.ofVirtual().name("forge-agent-codex-stdout-" + server.process().pid()).unstarted(this::readStdout);
+        this.stderrReaderThread = Thread.ofVirtual().name("forge-agent-codex-stderr-" + server.process().pid()).unstarted(this::drainStderr);
+        synchronized (this.lifecycleLock) {
+            this.stdoutReaderThread.start();
+            this.stderrReaderThread.start();
+        }
     }
 
     boolean healthy() {
@@ -356,6 +361,10 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 return;
             }
             final Process process = this.server.process();
+            if (process instanceof ManagedRuntimeProcess managed) {
+                this.closeManagedProcess(managed);
+                return;
+            }
             if (this.cleanupStarted) {
                 if (!process.isAlive()) {
                     try {
@@ -420,6 +429,28 @@ final class CodexJsonRpcTransport implements AutoCloseable {
                 this.cleanupFailure = e;
                 throw e;
             }
+        }
+    }
+
+    /** Native pipe handles cannot acknowledge cleanup of a different runtime UID. */
+    private void closeManagedProcess(final ManagedRuntimeProcess process) {
+        this.cleanupStarted = true;
+        try {
+            // Required even after pipe exit, and retried after any unconfirmed stop.
+            // This runs before touching the writer monitor, so blocked stdin can unwind.
+            process.terminateOwnedUnit();
+            if (!process.waitFor(this.cleanupWaitMillis(this.properties.getForceKillTimeout()), TimeUnit.MILLISECONDS)) {
+                throw new CodexTransportException("Codex pipe remained alive after owned runtime cleanup");
+            }
+            this.closeStdin();
+            this.completeCleanup(process);
+        } catch (final InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            this.cleanupFailure = new CodexTransportException("Codex owned runtime cleanup interrupted", exception);
+            throw this.cleanupFailure;
+        } catch (final RuntimeException exception) {
+            this.cleanupFailure = new CodexTransportException("Codex owned runtime cleanup unconfirmed", exception);
+            throw this.cleanupFailure;
         }
     }
 

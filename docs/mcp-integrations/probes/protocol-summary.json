@@ -1,0 +1,112 @@
+[
+  {
+    "file": "v2/ThreadStartParams.json",
+    "sha256": "25f490368ec6df52a2a3b82a5469d2413307eb93439121b309f415b5648eee7a",
+    "required": [],
+    "properties": [
+      "allowProviderModelFallback",
+      "approvalPolicy",
+      "approvalsReviewer",
+      "baseInstructions",
+      "config",
+      "cwd",
+      "developerInstructions",
+      "dynamicTools",
+      "environments",
+      "ephemeral",
+      "experimentalRawEvents",
+      "historyMode",
+      "mockExperimentalField",
+      "model",
+      "modelProvider",
+      "multiAgentMode",
+      "permissions",
+      "personality",
+      "projectId",
+      "runtimeWorkspaceRoots",
+      "sandbox",
+      "selectedCapabilityRoots",
+      "serviceName",
+      "serviceTier",
+      "sessionStartSource",
+      "threadSource"
+    ]
+  },
+  {
+    "file": "v2/ThreadResumeParams.json",
+    "sha256": "5ebc2fe61b33d85dd6dfa81acf88f632fe2bafe4aa83ff57ee58e866f14d49ac",
+    "required": [
+      "threadId"
+    ],
+    "properties": [
+      "approvalPolicy",
+      "approvalsReviewer",
+      "baseInstructions",
+      "config",
+      "cwd",
+      "developerInstructions",
+      "excludeTurns",
+      "history",
+      "initialTurnsPage",
+      "model",
+      "modelProvider",
+      "path",
+      "permissions",
+      "personality",
+      "runtimeWorkspaceRoots",
+      "sandbox",
+      "serviceTier",
+      "threadId"
+    ]
+  },
+  {
+    "file": "v2/ListMcpServerStatusParams.json",
+    "sha256": "33b1933595d844c61f76bdcfbc874c8456b65079877fed6e86e2710ea3d49f1b",
+    "required": [],
+    "properties": [
+      "cursor",
+      "detail",
+      "limit",
+      "threadId"
+    ]
+  },
+  {
+    "file": "v2/McpServerToolCallParams.json",
+    "sha256": "7039a7583a1cbf38e9e0f5fe6398ff3711acd4d654b81b0be562514087fce6ba",
+    "required": [
+      "server",
+      "threadId",
+      "tool"
+    ],
+    "properties": [
+      "_meta",
+      "arguments",
+      "server",
+      "threadId",
+      "tool"
+    ]
+  },
+  {
+    "file": "v2/CommandExecParams.json",
+    "sha256": "fd034b4c85d7b6f466e30a3cbb73db86be1263aca3f81b89b547f14817dfb62e",
+    "required": [
+      "command"
+    ],
+    "properties": [
+      "command",
+      "cwd",
+      "disableOutputCap",
+      "disableTimeout",
+      "env",
+      "outputBytesCap",
+      "permissionProfile",
+      "processId",
+      "sandboxPolicy",
+      "size",
+      "streamStdin",
+      "streamStdoutStderr",
+      "timeoutMs",
+      "tty"
+    ]
+  }
+]

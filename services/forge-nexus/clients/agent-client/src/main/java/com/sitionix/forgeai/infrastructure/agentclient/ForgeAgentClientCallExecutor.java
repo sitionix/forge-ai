@@ -8,15 +8,14 @@ import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.client.ResourceAccessException;
 
 @Component
 @RequiredArgsConstructor
 public class ForgeAgentClientCallExecutor {
 
   private final ForgeAgentClientProperties properties;
-
   public <T> T execute(final Supplier<T> call) {
     if (!this.properties.enabled()) {
       throw new ResourceAccessException("Forge Agent service is disabled");

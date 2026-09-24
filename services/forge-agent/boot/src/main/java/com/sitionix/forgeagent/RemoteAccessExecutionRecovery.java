@@ -13,7 +13,7 @@ import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 @Component
-@DependsOn("remoteAccessChannelServer")
+@DependsOn({"mcpDowngradeGuard", "remoteAccessChannelServer"})
 @ConditionalOnProperty(name="forge.agent.remote-access.channel-enabled",havingValue="true")
 @RequiredArgsConstructor
 @Slf4j

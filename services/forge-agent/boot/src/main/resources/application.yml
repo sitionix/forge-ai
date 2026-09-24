@@ -25,6 +25,10 @@ management:
       exposure:
         include: "health,info"
 forge:
+  mcp:
+    enabled: ${FORGE_MCP_ENABLED:false}
+    runtime:
+      helper: ${FORGE_MCP_RUNTIME_HELPER:/usr/local/libexec/forge-runtime-launcher}
   agent:
     codex:
       app-server:

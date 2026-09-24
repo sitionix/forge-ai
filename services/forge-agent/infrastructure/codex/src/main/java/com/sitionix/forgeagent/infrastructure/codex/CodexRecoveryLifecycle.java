@@ -9,7 +9,7 @@ final class CodexRecoveryLifecycle {
 
     private final AtomicReference<CodexProcessTree> process = new AtomicReference<>();
     private final AtomicBoolean aborted = new AtomicBoolean();
-    private final AtomicBoolean forceIssued = new AtomicBoolean();
+    private boolean forceConfirmed;
 
     boolean register(final Process candidate) {
         Objects.requireNonNull(candidate, "candidate");
@@ -32,10 +32,12 @@ final class CodexRecoveryLifecycle {
         this.forceRegisteredProcess();
     }
 
-    private void forceRegisteredProcess() {
+    private synchronized void forceRegisteredProcess() {
         final CodexProcessTree registered = this.process.get();
-        if (registered != null && this.forceIssued.compareAndSet(false, true)) {
+        if (registered != null && !this.forceConfirmed) {
+            // Serialize cancellation owners, but only consume the retry after acknowledgement.
             registered.terminateTree();
+            this.forceConfirmed = true;
         }
     }
 

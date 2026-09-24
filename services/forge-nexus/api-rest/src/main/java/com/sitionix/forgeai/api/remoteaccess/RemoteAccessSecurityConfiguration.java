@@ -15,16 +15,26 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
 public class RemoteAccessSecurityConfiguration {
     @Bean @Order(1)
     @ConditionalOnProperty(name="forge.remote-access.enabled",havingValue="true")
-    SecurityFilterChain remoteAccessSecurity(HttpSecurity http,RemoteAccessOperatorAuthentication authentication) throws Exception {
+    SecurityFilterChain remoteAccessSecurity(HttpSecurity http,RemoteAccessOperatorAuthentication authentication,
+            @org.springframework.beans.factory.annotation.Value("${forge.mcp.enabled:false}") boolean combined) throws Exception {
         String prefix="/api/v1/infrastructure/agents/remote-access";
         var mapper=new ObjectMapper();
-        http.securityMatcher(prefix,prefix+"/**")
-            .authorizeHttpRequests(auth -> auth.requestMatchers(prefix+"/operator/login").permitAll().anyRequest().hasRole("REMOTE_ACCESS_OPERATOR"))
+        org.springframework.security.web.util.matcher.RequestMatcher login=request -> request.getMethod().equals("POST")
+                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/login");
+        if (!combined) {
+            var remotePath=org.springframework.web.util.pattern.PathPatternParser.defaultInstance.parse(prefix+"/{*path}");
+            http.securityMatcher(request -> remotePath.matches(org.springframework.http.server.RequestPath.parse(
+                    com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request),"").pathWithinApplication()));
+        }
+        http.authorizeHttpRequests(auth -> {
+                if (combined) auth.requestMatchers(com.sitionix.forgeai.api.security.OperatorPublicRoutes::matches).permitAll();
+                auth.requestMatchers(login).permitAll().anyRequest().hasRole("REMOTE_ACCESS_OPERATOR");
+            })
             .securityContext(context -> context.securityContextRepository(new HttpSessionSecurityContextRepository()))
             .csrf(csrf -> csrf.csrfTokenRepository(new HttpSessionCsrfTokenRepository()).csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                .ignoringRequestMatchers(prefix+"/operator/login"))
+                .ignoringRequestMatchers(login))
             .requestCache(cache -> cache.disable()).logout(logout -> logout.disable())
-            .addFilterBefore(new RemoteAccessBrowserFilter(authentication,mapper),CsrfFilter.class)
+            .addFilterBefore(new RemoteAccessBrowserFilter(authentication,mapper,combined),CsrfFilter.class)
             .exceptionHandling(errors -> errors
                 .authenticationEntryPoint((request,response,error) -> {
                     response.setStatus(401);response.setContentType("application/json");

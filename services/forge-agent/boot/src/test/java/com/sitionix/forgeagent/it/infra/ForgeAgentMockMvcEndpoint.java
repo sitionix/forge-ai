@@ -32,6 +32,26 @@ import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 
 public final class ForgeAgentMockMvcEndpoint {
+    public static final Endpoint<com.fasterxml.jackson.databind.JsonNode, com.sitionix.forgeagent.api.mcp.McpConnectionResponse> CREATE_MCP_CONNECTION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.POST, com.fasterxml.jackson.databind.JsonNode.class, com.sitionix.forgeagent.api.mcp.McpConnectionResponse.class);
+    public static final Endpoint<com.fasterxml.jackson.databind.JsonNode, ForgeAgentErrorResponse> CREATE_MCP_CONNECTION_ERROR =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.POST, com.fasterxml.jackson.databind.JsonNode.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, com.sitionix.forgeagent.api.mcp.McpConnectionResponse[]> LIST_MCP_CONNECTIONS =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.GET, Void.class, com.sitionix.forgeagent.api.mcp.McpConnectionResponse[].class);
+    public static final Endpoint<Void, com.sitionix.forgeagent.api.mcp.McpConnectionResponse> GET_MCP_CONNECTION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}", HttpMethod.GET, Void.class, com.sitionix.forgeagent.api.mcp.McpConnectionResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> GET_MCP_CONNECTION_ERROR =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}", HttpMethod.GET, Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> REENCRYPT_MCP_CONNECTION_ERROR =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/reencrypt", HttpMethod.POST, Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<com.fasterxml.jackson.databind.JsonNode, com.sitionix.forgeagent.api.mcp.McpConnectionResponse> UPDATE_MCP_CONNECTION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}", HttpMethod.PUT, com.fasterxml.jackson.databind.JsonNode.class, com.sitionix.forgeagent.api.mcp.McpConnectionResponse.class);
+    public static final Endpoint<com.fasterxml.jackson.databind.JsonNode, com.sitionix.forgeagent.api.mcp.McpConnectionResponse> ENABLE_MCP_CONNECTION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/enabled", HttpMethod.PUT, com.fasterxml.jackson.databind.JsonNode.class, com.sitionix.forgeagent.api.mcp.McpConnectionResponse.class);
+    public static final Endpoint<Void, Void> REENCRYPT_MCP_CONNECTION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/reencrypt", HttpMethod.POST, Void.class, Void.class);
+    public static final Endpoint<Void, Void> DELETE_MCP_CONNECTION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}", HttpMethod.DELETE, Void.class, Void.class);
 
     public static final Endpoint<ProjectAssetRequest, ProjectAssetResponse> CREATE_PROJECT_ASSET =
             Endpoint.createContract("/api/v1/projects/{projectId}/assets", HttpMethod.POST, ProjectAssetRequest.class, ProjectAssetResponse.class);
