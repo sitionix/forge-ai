@@ -6,7 +6,9 @@ import static org.mockito.Mockito.*;
 
 import com.sitionix.forgeagent.api.security.McpManagementProperties;
 import com.sitionix.forgeagent.domain.port.McpConnectionRepository;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessExecutionService;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -52,5 +54,49 @@ class McpDowngradeGuardTest {
               .hasRootCauseMessage("MCP downgrade refused: protected material retained or unavailable");
           verify(repository).hasRetainedCredentials();
         });
+  }
+
+  @Test
+  void retainedRowsRefuseBeforeChannelServerOrExecutionRecoveryCanStart() {
+    final var repository = mock(McpConnectionRepository.class);
+    when(repository.hasRetainedCredentials()).thenReturn(true);
+    new ApplicationContextRunner()
+        .withPropertyValues("forge.agent.remote-access.channel-enabled=true")
+        .withUserConfiguration(RemoteAccessChannelConfiguration.class,
+            AgentMcpDowngradeConfiguration.class)
+        .withBean(McpConnectionRepository.class, () -> repository)
+        .run(context -> assertThat(context.getStartupFailure()).isNotNull()
+            .hasRootCauseMessage("MCP downgrade refused: protected material retained or unavailable"));
+
+    final var serverStarted = new AtomicBoolean();
+    new ApplicationContextRunner()
+        .withPropertyValues("forge.agent.remote-access.channel-enabled=true")
+        .withUserConfiguration(RemoteAccessExecutionRecovery.class,
+            AgentMcpDowngradeConfiguration.class)
+        .withBean(McpConnectionRepository.class, () -> repository)
+        .withBean("remoteAccessChannelServer", SyntheticServer.class,
+            () -> new SyntheticServer(serverStarted), definition -> {
+              definition.setInitMethodName("start");
+              definition.setLazyInit(true);
+            })
+        .withBean(RemoteAccessExecutionService.class, () -> mock(RemoteAccessExecutionService.class))
+        .run(context -> {
+          assertThat(context.getStartupFailure()).isNotNull()
+              .hasRootCauseMessage("MCP downgrade refused: protected material retained or unavailable");
+          assertThat(serverStarted).isFalse();
+        });
+    verify(repository, times(2)).hasRetainedCredentials();
+  }
+
+  static final class SyntheticServer {
+    private final AtomicBoolean started;
+
+    SyntheticServer(AtomicBoolean started) {
+      this.started = started;
+    }
+
+    void start() {
+      started.set(true);
+    }
   }
 }

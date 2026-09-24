@@ -1,0 +1,78 @@
+{
+  "tested_base": "a102de5c9f18ac793fa2835a9d3f0e86e45c52dc",
+  "product_diff_sha256": "998d5ff2fd72237b1e31d5a22603eb66e7770b4c72ef169338d38fe781917fd6",
+  "agent": {
+    "command": "mvn -o -B -Dapi.version=1.44 -f services/forge-agent/pom.xml verify",
+    "exit_code": 0,
+    "totals": {
+      "tests": 1257,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 9
+    },
+    "skips": [
+      {
+        "class": "com.sitionix.forgeagent.it.tests.RemoteAccessLiveExecutionIT",
+        "test": "",
+        "reason": "System property [forge.remote-access.live-execution] does not exist"
+      },
+      {
+        "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+        "test": "liveCodexActiveTurnIsStoppedAndAnUnrelatedRunStillCompletes",
+        "reason": "System property [forge.codex.live-cancellation-e2e] does not exist"
+      },
+      {
+        "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+        "test": "liveCodexSharedIterationsAndReset",
+        "reason": "System property [forge.codex.live-shared-e2e] does not exist"
+      },
+      {
+        "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+        "test": "",
+        "reason": "System property [forge.codex.live-reset-e2e] does not exist"
+      },
+      {
+        "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+        "test": "liveCodexIsolatesTwoIndependentIterations",
+        "reason": "System property [forge.codex.live-iteration-e2e] does not exist"
+      },
+      {
+        "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+        "test": "liveCodexRestartReconcilesPersistedExactTurnAndUnrelatedWorkflowStillSucceeds",
+        "reason": "System property [forge.codex.live-recovery-e2e] does not exist"
+      },
+      {
+        "class": "com.sitionix.forgeagent.it.tests.ForgeAgentPortAwareExecutionIT",
+        "test": "liveCodexResumesTheForgeImplementerSessionAcrossReviewerFeedback",
+        "reason": "System property [forge.codex.live-session-e2e] does not exist"
+      },
+      {
+        "class": "com.sitionix.forgeagent.infrastructure.codex.CodexDurableSessionE2ETest",
+        "test": "",
+        "reason": "System property [forge.codex.live-session-e2e] does not exist"
+      },
+      {
+        "class": "com.sitionix.forgeagent.infrastructure.codex.CodexRecoveryE2ETest",
+        "test": "",
+        "reason": "System property [forge.codex.live-recovery-e2e] does not exist"
+      }
+    ]
+  },
+  "nexus": {
+    "command": "mvn -o -B -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify",
+    "exit_code": 0,
+    "totals": {
+      "tests": 306,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "python": {
+    "runtime_launcher_tests": 11,
+    "fixture_tests": 14,
+    "failures": 0
+  },
+  "concurrent_main": "58f2854f",
+  "integration_with_concurrent_main": "NOT_VERIFIED"
+}
