@@ -382,7 +382,6 @@
   "removed_files": [
     "services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/exception/McpAgentClientException.java"
   ],
-  "ci_current_head": "NOT_VERIFIED",
   "full_log_canary_scan": {
     "synthetic_canaries": [
       "body-canary",
@@ -397,6 +396,17 @@
       "forge-mcp-pr148-final-agent.log": 0,
       "forge-mcp-pr148-final-nexus.log": 0,
       "forge-mcp-pr148-nexus-focused.log": 0
+    }
+  },
+  "ci_verified_source_commit": {
+    "commit": "b84eac34c1901061d39c975d20848713f45f1cac",
+    "run": "https://github.com/sitionix/forge-ai/actions/runs/35983992676",
+    "jobs": {
+      "Forge Agent": "PASS",
+      "Forge Nexus": "PASS",
+      "Forge Knowledge": "PASS",
+      "Forge Console": "PASS",
+      "Forge Jarvis": "PASS"
     }
   }
 }
