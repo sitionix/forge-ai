@@ -82,6 +82,36 @@ class RemoteAccessLocalExecServerTest {
         }
     }
 
+    @Test void disconnectStillCancelsWhenRemoteStdinWriteIsBlocked() throws Exception {
+        Path socket=socket();
+        var writing=new CountDownLatch(1);
+        var closed=new CountDownLatch(1);
+        try(var server=new RemoteAccessLocalExecServer(socket,System.getProperty("user.name"),(id,command) -> new RemoteAccessCommandExecution() {
+            @Override public OutputStream stdin() {return new OutputStream() {
+                @Override public void write(int value) throws IOException {
+                    writing.countDown();
+                    try {closed.await();} catch(InterruptedException interrupted) {Thread.currentThread().interrupt();throw new IOException(interrupted);}
+                }
+            };}
+            @Override public InputStream stdout() {return InputStream.nullInputStream();}
+            @Override public InputStream stderr() {return InputStream.nullInputStream();}
+            @Override public int await() throws InterruptedException {closed.await();return 130;}
+            @Override public void close() {closed.countDown();}
+        })) {
+            server.start();
+            try(var client=SocketChannel.open(UnixDomainSocketAddress.of(socket))) {
+                var input=new DataInputStream(Channels.newInputStream(client));
+                var output=new DataOutputStream(Channels.newOutputStream(client));
+                byte[] request=("{\"sessionId\":\""+UUID.randomUUID()+"\",\"argv\":[\"/bin/cat\"],\"cwd\":\"/workspace\",\"timeoutSeconds\":150}").getBytes();
+                output.writeInt(request.length);output.write(request);output.flush();
+                assertThat(input.readByte()).isEqualTo((byte)'A');assertThat(input.readInt()).isZero();
+                output.writeByte('I');output.writeInt(1);output.writeByte('x');output.flush();
+                assertThat(writing.await(2,TimeUnit.SECONDS)).isTrue();
+            }
+            assertThat(closed.await(3,TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
     @Test void unsafeDirectoryOrExistingSocketCannotBeReplaced() throws Exception {
         Path socket=socket();
         Files.setPosixFilePermissions(socket.getParent(),PosixFilePermissions.fromString("rwxrwx---"));

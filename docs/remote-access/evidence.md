@@ -1087,7 +1087,7 @@ Regression sequence:
   changed to a setgid `2750` directory; the final run passed.
 
 Final verification:
-- Python Remote Access suite: 69 tests PASS.
+- Python Remote Access suite: 70 tests PASS after review fixes.
 - Full Forge Agent `mvn -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: PASS.
 - Full Forge Nexus `mvn -q -Dapi.version=1.44 -f services/forge-nexus/pom.xml verify`: PASS.
 - Console: 574 tests / 22 files PASS, typecheck PASS, build PASS.
@@ -1104,3 +1104,13 @@ This is real SSH/systemd fixture evidence, not a live Codex two-machine run.
 The actual Codex login/history on an ACCESSOR and Stage 9 cross-machine audit
 remain NOT_RUN. No real operator keys or ChatGPT credentials were printed or
 transferred in the fixture.
+
+Independent read-only review found two streaming defects before PR submission.
+Regression tests first reproduced both: a two-byte write to an open buffered
+stdin pipe was not forwarded until EOF; a blocked SSH stdin write prevented the
+same thread from observing local socket EOF. The helper now uses `os.read` for
+file-backed stdin, and an independent local keepalive detects disconnect during
+blocked writes. The privileged fixture was strengthened to flood stdin into a
+remote command that does not read it, then send SIGINT. It confirmed helper exit
+`130` and removal of the real SSH/systemd workload, descendants, registry and
+fence. These review findings were fixed within Stage 8; Stage 9 remains NOT_RUN.

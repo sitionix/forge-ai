@@ -1,5 +1,5 @@
 """Isolated-container root driver; not installed as a production control operation."""
-import os,pathlib,subprocess,sys,uuid,time
+import os,pathlib,subprocess,sys,threading,uuid,time
 PACKAGE=pathlib.Path('/opt/forge-remote-package')
 
 def run(*args):subprocess.run(args,check=True,timeout=90)
@@ -122,16 +122,27 @@ def stage8_cancel(session):
     argv=['runuser','-u','forge-codex','--','python3',str(PACKAGE/'forge-remote'),
           'exec','--session',session,'--cwd','/workspace','--',
           '/bin/sh','-c','echo MAIN=$$; setsid /bin/sleep 120 & echo CHILD=$!; echo READY; wait']
-    with subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-                          text=True,start_new_session=True) as process:
-        main=process.stdout.readline().strip();child=process.stdout.readline().strip();ready=process.stdout.readline().strip()
+    with subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                          start_new_session=True) as process:
+        main=process.stdout.readline().decode().strip();child=process.stdout.readline().decode().strip()
+        ready=process.stdout.readline().decode().strip()
         if not main.startswith('MAIN=') or not child.startswith('CHILD=') or ready!='READY':
             raise RuntimeError('Local helper managed workload did not start')
         captured=capture_cancellation(session,main[5:],child[6:])
+        def flood_stdin():
+            try:
+                for _ in range(512):os.write(process.stdin.fileno(),b'x'*32768)
+            except OSError:
+                pass
+        writer=threading.Thread(target=flood_stdin,daemon=True);writer.start()
+        time.sleep(.5)
+        if not writer.is_alive():raise RuntimeError('Remote non-reader did not apply stdin backpressure')
         os.killpg(process.pid,signal.SIGINT)
         if process.wait(timeout=15)!=130:raise RuntimeError('Local helper cancellation exit mismatch')
+        writer.join(timeout=3)
+        if writer.is_alive():raise RuntimeError('Local stdin producer remained blocked after cancellation')
         verify_cancellation(captured)
-    print('PASS Stage 8 local helper SIGINT closes SSH and removes systemd workload/descendants',flush=True)
+    print('PASS Stage 8 helper SIGINT with blocked stdin closes SSH and removes systemd workload/descendants',flush=True)
 
 
 def main():

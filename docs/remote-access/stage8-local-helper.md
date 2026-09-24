@@ -53,6 +53,11 @@ cancels the managed SSH execution and remote workload. A refused or unavailable
 session returns exit `125`; SIGINT returns `130`. There is no local execution
 fallback. A failed remote command returns its actual exit code.
 
+The helper reads available stdin bytes immediately, including a short write from
+an open pipe. Agent sends a small local keepalive frame while the command runs.
+This lets Agent detect local disconnect and cancel even when writing to the
+remote command's stdin is blocked because that command does not read it.
+
 Codex's built-in local file tools remain local. For remote edits, run commands
 through this helper (for example a remote editor/script or `git apply` through
 stdin), then run remote tests through the same session. Prompt instructions are

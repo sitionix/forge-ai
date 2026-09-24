@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run one command through an ACTIVE Forge Remote Access session on this machine."""
 import argparse
+import io
 import json
 import os
 import pathlib
@@ -60,11 +61,20 @@ def receive(peer):
 
 def stdin_writer(peer, source):
     try:
-        while chunk := source.read(8192):
+        while True:
+            try:
+                chunk = os.read(source.fileno(), 8192)
+            except (AttributeError, io.UnsupportedOperation):
+                chunk = source.read(8192)
+            if not chunk:
+                break
             send(peer, b'I', chunk)
         send(peer, b'E')
     except (OSError, ValueError):
-        pass
+        try:
+            peer.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
 
 def run(arguments, stdin, stdout, stderr):
@@ -109,6 +119,8 @@ def run(arguments, stdin, stdout, stderr):
                     stderr.flush()
                 elif kind == b'X' and len(payload) == 4:
                     return struct.unpack('!i', payload)[0]
+                elif kind == b'P' and not payload:
+                    continue
                 else:
                     raise ValueError('Invalid local execution response')
     except KeyboardInterrupt:

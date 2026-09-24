@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import socket
 import struct
@@ -34,6 +35,36 @@ def exact(conn, length):
 
 
 class ForgeRemoteTest(unittest.TestCase):
+    def test_short_stdin_chunk_from_open_pipe_is_sent_before_eof(self):
+        client, server = socket.socketpair()
+        read_fd, write_fd = os.pipe()
+        received = []
+        def peer():
+            with server:
+                size = struct.unpack('!I', exact(server, 4))[0]
+                exact(server, size)
+                frame(server, b'A')
+                server.settimeout(1)
+                try:
+                    kind, size = exact(server, 1), struct.unpack('!I', exact(server, 4))[0]
+                    received.append((kind, exact(server, size)))
+                except socket.timeout:
+                    pass
+                frame(server, b'X', struct.pack('!i', 0))
+        thread = threading.Thread(target=peer, daemon=True); thread.start()
+        source = os.fdopen(read_fd, 'rb', buffering=8192)
+        try:
+            with patch.object(remote, 'connect', return_value=client):
+                os.write(write_fd, b'hi')
+                result = remote.run(['exec', '--session', '10000000-0000-4000-8000-000000000001',
+                                     '--cwd', '/workspace', '--', '/bin/cat'], source, io.BytesIO(), io.BytesIO())
+            self.assertEqual(0, result)
+            self.assertEqual([(b'I', b'hi')], received)
+        finally:
+            os.close(write_fd)
+            source.close()
+            thread.join(timeout=2)
+
     def test_literal_argv_stdin_binary_streams_and_exit_code(self):
         client, server = socket.socketpair()
         received = {}
@@ -46,6 +77,7 @@ class ForgeRemoteTest(unittest.TestCase):
                 kind, size = exact(server, 1), struct.unpack('!I', exact(server, 4))[0]
                 received['stdin'] = (kind, exact(server, size))
                 received['end'] = exact(server, 5)
+                frame(server, b'P')
                 frame(server, b'O', b'out\x00')
                 frame(server, b'R', b'err\xff')
                 frame(server, b'X', struct.pack('!i', 7))

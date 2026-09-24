@@ -172,6 +172,15 @@ public final class RemoteAccessLocalExecServer implements AutoCloseable {
                 frame(output,'A',new byte[0]);
                 var finished=new AtomicBoolean();
                 Thread.ofVirtual().name("remote-local-exec-stdin").start(() -> receive(input,running,finished));
+                Thread.ofVirtual().name("remote-local-exec-disconnect").start(() -> {
+                    while(!finished.get()) {
+                        try {Thread.sleep(250);}
+                        catch(InterruptedException stopped) {Thread.currentThread().interrupt();return;}
+                        if(finished.get()) return;
+                        try {frame(output,'P',new byte[0]);}
+                        catch(IOException disconnected) {running.close();return;}
+                    }
+                });
                 Thread stdout=Thread.ofVirtual().start(() -> pump(running.stdout(),output,'O'));
                 Thread stderr=Thread.ofVirtual().start(() -> pump(running.stderr(),output,'R'));
                 int code=running.await();
