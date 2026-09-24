@@ -5,9 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess;
 import java.time.Duration;
 import java.time.Instant;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -40,6 +43,70 @@ class CodexManagedTransportLifecycleTest {
             assertThat(fixture.stops.get()).isEqualTo(1);
             assertThat(fixture.pipe.isAlive()).isFalse();
         }
+    }
+
+    @Test void stdoutEofDuringConstructionWaitsForBothReadersBeforeConfirmingCleanup() throws Exception {
+        var pipe = new EarlyEofPipe();
+        var stops = new AtomicInteger();
+        var managed = new ManagedRuntimeProcess(pipe, () -> {
+            stops.incrementAndGet();
+            pipe.stoppingReader.set(Thread.currentThread());
+            pipe.stopEntered.countDown();
+            pipe.destroyForcibly();
+        });
+        var transport = transport(managed);
+        try {
+            assertThat(pipe.stopEntered.await(3, TimeUnit.SECONDS)).isTrue();
+            Thread reader = pipe.stoppingReader.get();
+            reader.join(3_000);
+            assertThat(reader.isAlive()).isFalse();
+            assertThat(transport.cleanupComplete()).isTrue();
+            assertThat(stops.get()).isEqualTo(1);
+            assertThat(pipe.isAlive()).isFalse();
+        } finally {
+            transport.close();
+        }
+    }
+
+    /** Holds the constructor's second pid lookup while the early EOF reader completes cleanup. */
+    private static final class EarlyEofPipe extends Process {
+        private final Thread constructingThread = Thread.currentThread();
+        private final AtomicInteger constructorPidCalls = new AtomicInteger();
+        private final CountDownLatch stdoutRead = new CountDownLatch(1);
+        private final CountDownLatch stopEntered = new CountDownLatch(1);
+        private final AtomicReference<Thread> stoppingReader = new AtomicReference<>();
+        private volatile boolean alive = true;
+
+        @Override public long pid() {
+            if (Thread.currentThread() == constructingThread && constructorPidCalls.incrementAndGet() == 2) {
+                try {
+                    if (stdoutRead.await(2, TimeUnit.SECONDS)) {
+                        if (!stopEntered.await(2, TimeUnit.SECONDS)) throw new IllegalStateException("owned stop not reached");
+                        Thread reader = stoppingReader.get();
+                        reader.join(2_000);
+                        if (reader.isAlive()) throw new IllegalStateException("EOF reader remained active");
+                    }
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("construction interrupted", exception);
+                }
+            }
+            return 4242L;
+        }
+
+        @Override public InputStream getInputStream() {
+            return new InputStream() {
+                @Override public int read() { stdoutRead.countDown(); return -1; }
+            };
+        }
+        @Override public InputStream getErrorStream() { return InputStream.nullInputStream(); }
+        @Override public OutputStream getOutputStream() { return OutputStream.nullOutputStream(); }
+        @Override public int waitFor() { return 0; }
+        @Override public boolean waitFor(long timeout, TimeUnit unit) { return !alive; }
+        @Override public int exitValue() { if (alive) throw new IllegalThreadStateException(); return 0; }
+        @Override public boolean isAlive() { return alive; }
+        @Override public void destroy() { alive = false; }
+        @Override public Process destroyForcibly() { alive = false; return this; }
     }
 
     @Test void responseTimeoutAfterDispatchRequiresOwnedStop() throws Exception {

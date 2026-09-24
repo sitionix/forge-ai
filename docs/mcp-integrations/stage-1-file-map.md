@@ -185,7 +185,7 @@
 - [docs/mcp-integrations/stage-2-plan.md](../../docs/mcp-integrations/stage-2-plan.md)
 
 
-## PR #148 auth/error correction — точні змінені та нові файли
+## PR #148 auth/error correction до lifecycle/error-boundary refactor — історична карта
 
 - `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/remoteaccess/RemoteAccessServiceFilter.java`
 - `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/AgentManagementAuthenticationFilter.java`
@@ -226,3 +226,18 @@
 - `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutorTest.java`
 - `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapterTest.java`
 - `services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/exception/McpAgentClientException.java`
+
+## PR #148 поточна lifecycle/error-boundary корекція
+
+- `services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexJsonRpcTransport.java`
+- `services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexManagedTransportLifecycleTest.java`
+- `services/forge-nexus/api-rest/src/main/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandler.java`
+- `services/forge-nexus/api-rest/src/test/java/com/sitionix/forgeai/api/mcp/McpConnectionsExceptionHandlerTest.java`
+- `services/forge-nexus/boot/src/test/java/com/sitionix/forgeproxyit/NexusOperatorSessionIT.java`
+- `services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutor.java`
+- `services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapter.java`
+- `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentClientCallExecutorTest.java`
+- `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/ForgeAgentMcpClientAdapterTest.java`
+- Видалено: `services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/exception/McpAgentClientException.java`
+
+Поточний повний source fingerprint (усі changed/new `services` files від correction base) і окремий removed-files list — у [verification JSON](stage-1-verification.json).

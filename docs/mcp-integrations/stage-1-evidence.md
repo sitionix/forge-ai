@@ -1,12 +1,32 @@
 # MCP Integrations Stage 1 — evidence / PR #148 corrections
 
+## PR #148 — Codex lifecycle та Nexus error boundary (2026-09-24)
+
+**Root cause:** `CodexJsonRpcTransport` запускав stdout reader до присвоєння обох reader references. Ранній EOF міг викликати `invalidate → closeManagedProcess → completeCleanup → joinReader`, поки `stderrReaderThread` був `null`. Join падав, owned stop уже виконувався, але `cleanupComplete` залишався `false`. Новий deterministic `stdoutEofDuringConstructionWaitsForBothReadersBeforeConfirmingCleanup` керує цим порядком через latches і bounded joins: на старій реалізації **RED** (7 tests, 1 failure, expected cleanupComplete=true); після створення обох unstarted readers та їх запуску під `lifecycleLock` **GREEN**. Інші lifecycle сценарії (звичайний close, EOF за живого pipe, уже завершений pipe, response timeout, blocked stdin, retry невдалого stop, recovery) залишилися в focused suite. Три повторні focused runs: по **27 tests, 0 failures/errors/skips**, `BUILD SUCCESS`.
+
+**Nexus error boundary:** `ForgeAgentMcpClientAdapter` виконує map → звичайний `ForgeAgentClientCallExecutor.execute` → map. Спільний executor тільки зберігає transport status/body/headers/cause у чинному `AgentClientException`; MCP JSON і public response обробляє scoped `McpConnectionsExceptionHandler` через configured Jackson mapper та typed `InfrastructureErrorResponse`. Валідні 400/404/409/422/500 зберігають status/code/message/optional correlationId; malformed → static 502, `ResourceAccessException` → static 503, локальна validation/unreadable request → 400. WARN повідомлення не містять raw payload або throwable. Видалено `executeMcp`, `parseMcpError`, `invalidMcpResponse`, MCP-specific error mapper і `McpAgentClientException`; source search не знайшов їхніх Java consumers. Окремий Nexus ForgeIT `mcpAdvicePreservesTransportWrapperWithoutPublishingItsRawCause` на старій реалізації був **RED**: очікуваний upstream409 перетворювався на502. Після refactor — **GREEN**; synthetic header/cause не потрапляють у response або captured logs. Handler unit також виявив числовий `code`, який Jackson міг перетворити на string; strict node type validation виправила цей випадок до фінального run.
+
+| Перевірка цієї корекції | Фактичний результат |
+|---|---|
+| Focused Codex lifecycle/transport/recovery, 3 runs | 27 tests кожен; 0 failures/errors/skips; exit0 |
+| Focused Nexus executor/adapter/handler та HTTP auth matrix | 15 unit/config + 27 ForgeIT = 42; 0 failures/errors/skips; exit0 |
+| Повний Agent verify | 1284 tests; failures0/errors0/skipped9; exit0/BUILD SUCCESS |
+| Повний Nexus verify | 363 tests; failures0/errors0/skipped0; exit0/BUILD SUCCESS |
+| `git diff --check` | PASS |
+
+Повні команди: `mvn -o -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify` та аналогічно `-pl services/forge-nexus/boot -am verify`. Docker29 потребував cached dependency mode та API1.44; особисті Maven/Codex configs не змінювалися. Full logs: `/tmp/forge-mcp-pr148-final-agent.log`, `/tmp/forge-mcp-pr148-final-nexus.log`; JSON reports зібрані лише з XML після `1790243137`. RED logs: `/tmp/forge-mcp-pr148-lifecycle-red.log`, `/tmp/forge-mcp-pr148-error-red.log`; focused GREEN: `/tmp/forge-mcp-pr148-lifecycle-green{1,2,3}.log`, `/tmp/forge-mcp-pr148-nexus-focused.log`. Дев'ять Agent skips — opt-in live checks, **NOT_VERIFIED**. CI поточного commit: **NOT_VERIFIED** до публікації branch і завершення нового run; останній переглянутий CI попереднього head `a9b88313` мав Agent failure у цьому lifecycle test. Production deployment, TLS, privileged OS/sandbox probes та live network залишаються **NOT_VERIFIED** і не перевиконувалися в цій корекції.
+
+Додатковий scan Agent/Nexus full logs та focused Nexus log для семи відомих synthetic body/header/cause/credential canaries дав 0 matches у кожному; точний список у verification JSON. Це доповнює HTTP та `CapturedOutput` assertions і не є доказом для довільного нового payload.
+
+Наведені нижче 1283/362 та попередній опис executor є **історичними результатами до цієї корекції**, не поточним станом. Перевірений auth fix збережено без redesign.
+
 Поточні auth/error виправлення перевірено після локального включення main `58f2854f03b7abc2413be2f7afa98cb7de13d6ed` (Remote Access Stage6), correction base `d6fa685e`. Гілка `feature/SITIONIX-142`, checkout `/tmp/forge-mcp-stage1`. Original checkout і його сторонні зміни збережено. PR metadata/comments/reviews та merge не змінювалися. Stage2+ не реалізовано.
 
 Попередній integration blocker відтворено кодом і виправлено: Agent має явного власника route, Nexus combined mode — одну чинну RA session authority. Нижче наведено фактичні synthetic HTTP докази; production/runtime deployment не оголошується перевіреним. Історичні Stage1 результати на Stage5 base `a102de5c` збережено окремо.
 
 [Точна карта файлів](stage-1-file-map.md) · [Machine-readable verification](stage-1-verification.json) · [Runbook](stage-1-operations.md) · [Рішення](stage-1-decisions.md) · [Наступний Stage2 — лише план](stage-2-plan.md).
 
-## PR #148 — поточна перевірка auth та errors
+## PR #148 — попередня перевірка auth та errors (історична)
 
 | Перевірка | Фактичний результат |
 |---|---|

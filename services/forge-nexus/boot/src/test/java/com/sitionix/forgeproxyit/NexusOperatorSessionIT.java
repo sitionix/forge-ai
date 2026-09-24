@@ -280,6 +280,30 @@ class NexusOperatorSessionIT {
     assertThat(output.getAll()).doesNotContain("upstream-secret-canary");
   }
 
+  @Test
+  void mcpAdvicePreservesTransportWrapperWithoutPublishingItsRawCause(CapturedOutput output) throws Exception {
+    SessionTokens tokens = login();
+    var error = new com.sitionix.forgeai.domain.exception.AgentClientException(409,
+        "{\"code\":\"DEPENDENCY_CYCLE\",\"message\":\"cycle\",\"correlationId\":\"corr-raw\"}",
+        java.util.Map.of("X-Secret", java.util.List.of("header-canary")),
+        new IllegalStateException("cause-canary"));
+    org.mockito.Mockito.doThrow(error).when(mcpAdapter).list();
+    try {
+      manager.mockMvc().ping(NexusAgentMockMvcEndpoints.mcpListError(409))
+          .header("Host", HOST).cookie("FG_SESSION", tokens.id())
+          .andExpectPath(result -> {
+            var body = new ObjectMapper().readTree(result.getResponse().getContentAsString());
+            assertThat(body.path("code").asText()).isEqualTo("DEPENDENCY_CYCLE");
+            assertThat(body.path("message").asText()).isEqualTo("cycle");
+            assertThat(body.path("correlationId").asText()).isEqualTo("corr-raw");
+            assertThat(result.getResponse().getContentAsString()).doesNotContain("header-canary", "cause-canary");
+          }).assertDefault();
+    } finally {
+      org.mockito.Mockito.reset(mcpAdapter);
+    }
+    assertThat(output.getAll()).doesNotContain("header-canary", "cause-canary");
+  }
+
   @ParameterizedTest
   @ValueSource(ints={400,409,422})
   void mcpValidAgentErrorFieldsAndStatusArePreserved(int status) throws Exception {

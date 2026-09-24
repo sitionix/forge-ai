@@ -93,8 +93,12 @@ final class CodexJsonRpcTransport implements AutoCloseable {
         this.cleanupClock = cleanupClock;
         this.cleanupDeadline = cleanupDeadline;
         this.writer = new OutputStreamWriter(server.process().getOutputStream(), StandardCharsets.UTF_8);
-        this.stdoutReaderThread = Thread.ofVirtual().name("forge-agent-codex-stdout-" + server.process().pid()).start(this::readStdout);
-        this.stderrReaderThread = Thread.ofVirtual().name("forge-agent-codex-stderr-" + server.process().pid()).start(this::drainStderr);
+        this.stdoutReaderThread = Thread.ofVirtual().name("forge-agent-codex-stdout-" + server.process().pid()).unstarted(this::readStdout);
+        this.stderrReaderThread = Thread.ofVirtual().name("forge-agent-codex-stderr-" + server.process().pid()).unstarted(this::drainStderr);
+        synchronized (this.lifecycleLock) {
+            this.stdoutReaderThread.start();
+            this.stderrReaderThread.start();
+        }
     }
 
     boolean healthy() {
