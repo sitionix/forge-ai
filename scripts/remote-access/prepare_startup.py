@@ -5,12 +5,67 @@ import ipaddress
 import argparse
 import json
 import os
+import platform
 import subprocess
 import urllib.parse
 import shlex
 import stat
 import sys
 from pathlib import Path
+
+
+SSHD = Path('/usr/sbin/sshd')
+
+
+def sshd_available():
+    return SSHD.is_file() and os.access(SSHD, os.X_OK)
+
+
+def is_debian_host():
+    release = Path('/etc/os-release').read_text()
+    return platform.system() == 'Linux' and any(
+        line in release.splitlines() for line in ('ID=ubuntu', 'ID=debian'))
+
+
+def ensure_openssh_server():
+    """Install the missing host binary without exposing the distribution SSH listener."""
+    if sshd_available():
+        return
+    if not is_debian_host() or not Path('/usr/bin/apt-get').is_file():
+        raise RuntimeError('REMOTE_ACCESS_SSHD_NOT_READY')
+    units = ('ssh.service', 'ssh.socket')
+    for unit in units:
+        state = subprocess.run(['/usr/bin/systemctl', 'show', unit, '--property=LoadState', '--value'],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                               check=True, timeout=10)
+        if state.stdout.strip() != 'not-found':
+            raise RuntimeError('REMOTE_ACCESS_SSHD_CONFLICT')
+    subprocess.run(['/usr/bin/systemctl', 'mask', *units], stdin=subprocess.DEVNULL,
+                   capture_output=True, check=True, timeout=20)
+    environment = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'DEBIAN_FRONTEND': 'noninteractive'}
+    try:
+        subprocess.run(['/usr/bin/apt-get', 'update'], env=environment,
+                       stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=600)
+        subprocess.run(['/usr/bin/apt-get', 'install', '-y', '--no-install-recommends', 'openssh-server'],
+                       env=environment, stdin=subprocess.DEVNULL, capture_output=True,
+                       check=True, timeout=900)
+        if not sshd_available():
+            raise RuntimeError('REMOTE_ACCESS_SSHD_NOT_READY')
+        subprocess.run(['/usr/bin/systemctl', 'unmask', *units], stdin=subprocess.DEVNULL,
+                       capture_output=True, check=True, timeout=20)
+        subprocess.run(['/usr/bin/systemctl', 'disable', '--now', *units], stdin=subprocess.DEVNULL,
+                       capture_output=True, check=True, timeout=20)
+        for unit in units:
+            active = subprocess.run(['/usr/bin/systemctl', 'is-active', '--quiet', unit],
+                                    stdin=subprocess.DEVNULL, capture_output=True,
+                                    check=False, timeout=10)
+            if active.returncode == 0:
+                raise RuntimeError('REMOTE_ACCESS_SSHD_CONFLICT')
+    except (OSError, RuntimeError, subprocess.SubprocessError) as failure:
+        # A failed or partial package installation must never expose default SSH.
+        subprocess.run(['/usr/bin/systemctl', 'mask', '--now', *units],
+                       stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=20)
+        raise RuntimeError('REMOTE_ACCESS_SSHD_NOT_READY') from failure
 
 
 def select_address(routes, interfaces, requested):
@@ -181,6 +236,8 @@ def prepare_services(package, operator_user, listen_address, jdbc_url, db_user, 
     if active and not installed_transport_matches(package, listen_address):
         raise RuntimeError('REMOTE_ACCESS_UPGRADE_REQUIRES_DRAIN')
     ensure_database(jdbc_url, db_user, db_password)
+    if not active:
+        ensure_openssh_server()
     commands = [
         ('prepare_management.py', '--directory', '/etc/forge-remote/management',
          '--agent-user', 'forge-control', '--operator-user', operator_user,
@@ -255,7 +312,8 @@ def main():
         if code not in {'REMOTE_ACCESS_ADDRESS_REQUIRED', 'REMOTE_ACCESS_ROOTFS_NOT_READY',
                         'REMOTE_ACCESS_UPGRADE_REQUIRES_DRAIN', 'REMOTE_ACCESS_PACKAGE_CONFLICT',
                         'REMOTE_ACCESS_ENV_INVALID', 'REMOTE_ACCESS_DB_URL_INVALID',
-                        'REMOTE_ACCESS_ENDPOINT_CONFLICT'}:
+                        'REMOTE_ACCESS_ENDPOINT_CONFLICT', 'REMOTE_ACCESS_SSHD_NOT_READY',
+                        'REMOTE_ACCESS_SSHD_CONFLICT'}:
             code = 'REMOTE_ACCESS_SETUP_FAILED'
         print(code, file=sys.stderr)
         return 1

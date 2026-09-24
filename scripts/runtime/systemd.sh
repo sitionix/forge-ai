@@ -2,6 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+# The main checkout and feature worktrees share Forge's single local Postgres.
+# Compose otherwise derives a new project name from each worktree directory.
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-forge-ai}"
 ACTION="${1:?Usage: systemd.sh validate|start|stop|status|logs [service]}"
 SERVICE="${2:-all}"
 RUNTIME_DIR="${FORGE_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"

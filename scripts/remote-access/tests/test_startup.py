@@ -14,6 +14,45 @@ sys.path.insert(0, str(ROOT / 'scripts/remote-access'))
 
 
 class RemoteAccessStartupTest(unittest.TestCase):
+    def test_missing_sshd_is_installed_without_enabling_default_ssh_listener(self):
+        import prepare_startup
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv,
+                3 if argv[:3] == ['/usr/bin/systemctl', 'is-active', '--quiet'] else 0,
+                stdout='not-found\n')
+
+        with (mock.patch.object(prepare_startup, 'SSHD', pathlib.Path('/missing/sshd')),
+              mock.patch.object(prepare_startup, 'is_debian_host', return_value=True),
+              mock.patch.object(prepare_startup, 'sshd_available', side_effect=[False, True]),
+              mock.patch('subprocess.run', side_effect=run)):
+            prepare_startup.ensure_openssh_server()
+
+        self.assertLess(calls.index(['/usr/bin/systemctl', 'mask', 'ssh.service', 'ssh.socket']),
+                        next(i for i, command in enumerate(calls) if command[:2] == ['/usr/bin/apt-get', 'install']))
+        self.assertIn(['/usr/bin/systemctl', 'disable', '--now', 'ssh.service', 'ssh.socket'], calls)
+        self.assertIn(['/usr/bin/systemctl', 'unmask', 'ssh.service', 'ssh.socket'], calls)
+
+    def test_failed_sshd_install_leaves_default_listener_masked(self):
+        import prepare_startup
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if argv[:2] == ['/usr/bin/apt-get', 'install']:
+                raise subprocess.CalledProcessError(1, argv)
+            return subprocess.CompletedProcess(argv, 0, stdout='not-found\n')
+
+        with (mock.patch.object(prepare_startup, 'is_debian_host', return_value=True),
+              mock.patch.object(prepare_startup, 'sshd_available', return_value=False),
+              mock.patch('subprocess.run', side_effect=run)):
+            with self.assertRaisesRegex(RuntimeError, 'REMOTE_ACCESS_SSHD_NOT_READY'):
+                prepare_startup.ensure_openssh_server()
+        self.assertIn(['/usr/bin/systemctl', 'mask', '--now', 'ssh.service', 'ssh.socket'], calls)
+        self.assertNotIn(['/usr/bin/systemctl', 'unmask', 'ssh.service', 'ssh.socket'], calls)
+
     def test_workload_installer_exposes_preparation_helper(self):
         import install as managed_ssh
         with tempfile.TemporaryDirectory() as directory:
@@ -213,12 +252,14 @@ class RemoteAccessStartupTest(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, stdout='')
 
             with (mock.patch.object(prepare_startup, 'ensure_database') as database,
+                  mock.patch.object(prepare_startup, 'ensure_openssh_server') as sshd,
                   mock.patch('subprocess.run', side_effect=fake_run),
                   mock.patch.object(prepare_startup, 'managed_sshd_running', return_value=False, create=True)):
                 prepare_startup.prepare_services(package, 'local-operator', '192.168.2.5',
                                                  'jdbc:postgresql://127.0.0.1:54329/forge_remote_access',
                                                  'forge_agent', 'synthetic-secret')
             database.assert_called_once()
+            sshd.assert_called_once()
             self.assertEqual([pathlib.Path(call[2]).name for call in recorded],
                              ['install.py', 'prepare_management.py', 'prepare_local_exec.py'])
             self.assertNotIn('synthetic-secret', repr(recorded))
