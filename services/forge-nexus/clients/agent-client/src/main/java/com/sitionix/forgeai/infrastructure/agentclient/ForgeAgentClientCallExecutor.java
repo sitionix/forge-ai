@@ -28,6 +28,13 @@ public class ForgeAgentClientCallExecutor {
           exception.getResponseBodyAsString(),
           this.toMap(exception.getResponseHeaders()),
           exception);
+    } catch (final feign.RetryableException exception) {
+      throw new ResourceAccessException("Forge Agent service is unavailable");
+    } catch (final feign.FeignException exception) {
+      final Map<String, List<String>> headers = new LinkedHashMap<>();
+      exception.responseHeaders().forEach((name, values) ->
+          headers.put(name, values == null ? List.of() : List.copyOf(values)));
+      throw new AgentClientException(exception.status(), exception.contentUTF8(), headers, exception);
     }
   }
 

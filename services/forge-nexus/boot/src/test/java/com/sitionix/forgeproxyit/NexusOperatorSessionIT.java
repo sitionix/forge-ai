@@ -11,6 +11,7 @@ import com.sitionix.forgeai.Application;
 import com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentClientAdapter;
 import com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentMcpClientAdapter;
 import com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentClientProperties;
+import com.sitionix.forgeai.infrastructure.agentclient.McpAvailableCatalogAdapter;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
 import com.sitionix.forgeit.wiremock.api.WireMockPathParams;
@@ -93,7 +94,33 @@ class NexusOperatorSessionIT {
   @Autowired NexusProxyTestManager manager;
   @SpyBean ForgeAgentClientAdapter agentAdapter;
   @SpyBean ForgeAgentMcpClientAdapter mcpAdapter;
+  @SpyBean McpAvailableCatalogAdapter availableAdapter;
   @Autowired ForgeAgentClientProperties agentClientProperties;
+
+  @Test
+  void availableMcpUsesOperatorSessionAndServiceBearer() throws Exception {
+    clearInvocations(availableAdapter);
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.listAvailableMcp(401))
+        .header("Host", HOST).assertDefault();
+    verifyNoInteractions(availableAdapter);
+    SessionTokens tokens = login();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.listAvailableMcp(403))
+        .header("Host", HOST).header("Origin", "http://evil.test")
+        .cookie("FG_SESSION", tokens.id()).assertDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.invalidAvailableMcp())
+        .header("Host", HOST).cookie("FG_SESSION", tokens.id()).assertDefault();
+    verifyNoInteractions(availableAdapter);
+    final var upstream = manager.wiremock()
+        .createMapping(ForgeAgentWireMockEndpoints.listAvailableMcp())
+        .header("Authorization", equalTo("Bearer " + encoded(SERVICE)))
+        .createDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.listAvailableMcp(200))
+        .header("Host", HOST).cookie("FG_SESSION", tokens.id())
+        .andExpectPath(result -> assertThat(result.getResponse().getContentAsString())
+            .contains("io.example/search", "next-page"))
+        .assertDefault();
+    upstream.verify();
+  }
 
   @Test
   void mcpRouteRejectsAbsentSessionAndUnsafeInputLocally(CapturedOutput output) throws Exception {

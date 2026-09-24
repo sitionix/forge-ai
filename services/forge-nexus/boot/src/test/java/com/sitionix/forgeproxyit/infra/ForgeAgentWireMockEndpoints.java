@@ -31,6 +31,12 @@ import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
 import org.springframework.http.HttpStatus;
 
 public final class ForgeAgentWireMockEndpoints {
+    public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.McpAvailablePageInbound> listAvailableMcp() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/available?limit=20", HttpMethod.GET,
+                Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.McpAvailablePageInbound.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200)
+                        .responseBody("agent-mcp-available-response.json"));
+    }
     public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse[]> listMcpConnections() {
         return Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.GET,
                 Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse[].class,

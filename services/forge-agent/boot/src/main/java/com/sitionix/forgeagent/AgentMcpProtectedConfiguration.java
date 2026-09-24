@@ -2,6 +2,7 @@ package com.sitionix.forgeagent;
 
 import com.sitionix.forgeagent.api.security.McpManagementProperties;
 import com.sitionix.forgeagent.application.mcp.McpConnectionService;
+import com.sitionix.forgeagent.application.mcp.McpAvailableService;
 import com.sitionix.forgeagent.domain.port.*;
 import com.sitionix.forgeagent.infrastructure.local.mcp.*;
 import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryVerifier;
@@ -16,11 +17,13 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
+import org.springframework.cache.annotation.EnableCaching;
 
 /** Enabled-mode files and runtime isolation must be proven before MCP management is available. */
 @Configuration(proxyBeanMethods=false)
 @ConditionalOnProperty(name="forge.mcp.enabled",havingValue="true")
 @EnableConfigurationProperties(McpManagementProperties.class)
+@EnableCaching
 public class AgentMcpProtectedConfiguration {
     @Bean Object mcpProtectedPrerequisites(McpManagementProperties settings,RuntimeBoundaryVerifier verifier,
             @org.springframework.beans.factory.annotation.Value("${forge.agent.remote-access.management-enabled:false}") boolean remoteAccess,
@@ -52,5 +55,8 @@ public class AgentMcpProtectedConfiguration {
     @Bean McpConnectionService mcpConnectionService(McpConnectionRepository repository,ProjectRepository projects,
             ForgeInstanceIdentityRepository identity,McpCredentialCipher cipher) {
         return new McpConnectionService(repository,projects,identity,cipher);
+    }
+    @Bean McpAvailableService mcpAvailableService(McpRegistryCatalog catalog) {
+        return new McpAvailableService(catalog);
     }
 }
