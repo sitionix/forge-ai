@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Run one command through an ACTIVE Forge Remote Access session on this machine."""
+import argparse
+import io
+import json
+import os
+import pathlib
+import pwd
+import socket
+import stat
+import struct
+import sys
+import threading
+import uuid
+
+
+SOCKET = pathlib.Path('/run/forge-remote/local-exec/agent.sock')
+MAX_FRAME = 65_536
+
+
+def connect():
+    directory = SOCKET.parent
+    parent = directory.lstat()
+    endpoint = SOCKET.lstat()
+    control = pwd.getpwnam('forge-control').pw_uid
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != control
+            or stat.S_IMODE(parent.st_mode) != 0o2750
+            or not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != control
+            or stat.S_IMODE(endpoint.st_mode) != 0o660):
+        raise OSError('Protected local execution socket unavailable')
+    peer = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        peer.connect(str(SOCKET))
+        return peer
+    except BaseException:
+        peer.close()
+        raise
+
+
+def exact(peer, size):
+    value = bytearray()
+    while len(value) < size:
+        part = peer.recv(size - len(value))
+        if not part:
+            raise EOFError('Local execution channel closed')
+        value.extend(part)
+    return bytes(value)
+
+
+def send(peer, kind, payload=b''):
+    peer.sendall(kind + struct.pack('!I', len(payload)) + payload)
+
+
+def receive(peer):
+    kind = exact(peer, 1)
+    size = struct.unpack('!I', exact(peer, 4))[0]
+    if size > MAX_FRAME:
+        raise ValueError('Invalid local execution frame')
+    return kind, exact(peer, size)
+
+
+def stdin_writer(peer, source):
+    try:
+        while True:
+            try:
+                chunk = os.read(source.fileno(), 8192)
+            except (AttributeError, io.UnsupportedOperation):
+                chunk = source.read(8192)
+            if not chunk:
+                break
+            send(peer, b'I', chunk)
+        send(peer, b'E')
+    except (OSError, ValueError):
+        try:
+            peer.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def run(arguments, stdin, stdout, stderr):
+    parser = argparse.ArgumentParser(prog='forge-remote')
+    parser.add_argument('action', choices=['exec'])
+    parser.add_argument('--session', required=True)
+    parser.add_argument('--cwd', required=True)
+    parser.add_argument('--timeout', type=int, default=3600)
+    if '--' not in arguments:
+        parser.error('use -- before the remote command')
+    separator = arguments.index('--')
+    args = parser.parse_args(arguments[:separator])
+    argv = arguments[separator + 1:]
+    if not argv or not argv[0].startswith('/'):
+        parser.error('command must start with an absolute executable path after --')
+    try:
+        session = uuid.UUID(args.session)
+        if str(session) != args.session:
+            raise ValueError()
+    except ValueError:
+        parser.error('session must be a canonical UUID')
+    request = json.dumps({'sessionId': str(session), 'cwd': args.cwd,
+                          'timeoutSeconds': args.timeout, 'argv': argv},
+                         separators=(',', ':')).encode('utf-8')
+    if len(request) > 16_384:
+        parser.error('command is too large')
+    try:
+        with connect() as peer:
+            peer.sendall(struct.pack('!I', len(request)) + request)
+            kind, _ = receive(peer)
+            if kind != b'A':
+                stderr.write(b'Remote execution unavailable\n')
+                return 125
+            threading.Thread(target=stdin_writer, args=(peer, stdin), daemon=True).start()
+            while True:
+                kind, payload = receive(peer)
+                if kind == b'O':
+                    stdout.write(payload)
+                    stdout.flush()
+                elif kind == b'R':
+                    stderr.write(payload)
+                    stderr.flush()
+                elif kind == b'X' and len(payload) == 4:
+                    return struct.unpack('!i', payload)[0]
+                elif kind == b'P' and not payload:
+                    continue
+                else:
+                    raise ValueError('Invalid local execution response')
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, EOFError, ValueError):
+        stderr.write(b'Remote execution unavailable\n')
+        return 125
+
+
+if __name__ == '__main__':
+    sys.exit(run(sys.argv[1:], sys.stdin.buffer, sys.stdout.buffer, sys.stderr.buffer))
