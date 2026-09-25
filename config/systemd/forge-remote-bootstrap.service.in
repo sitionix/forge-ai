@@ -1,0 +1,15 @@
+[Unit]
+Description=Forge Remote Access local Enable gate
+Requires=forge-remote-bootstrap.socket
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/libexec/forge-remote/bootstrap.py @FORGE_SYSTEMD_USER@
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX

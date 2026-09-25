@@ -27,6 +27,43 @@ class RemoteAccessPairingLifecycleTest {
     @Mock RemoteAccessSessionGrants sessionGrants;
     @Mock RemoteAccessProvisioningService provisioning;
     @Mock RemoteAccessPairingTransport transport;
+    @Mock RemoteAccessWorkloads workloads;
+
+    @Test void reverseInvitationRequiresTheExactActiveForwardSessionKey() {
+        var pairs=mock(RemoteAccessPairRepository.class);
+        var accessor=mock(RemoteAccessAccessorPairing.class);
+        when(identity.getOrCreate()).thenReturn(GRANTOR);
+        when(sessions.findById(SESSION)).thenReturn(Optional.of(session(RemoteAccessRole.GRANTOR).activate(NOW)));
+        var sut=new RemoteAccessGrantorPairing(invitations,sessions,identity,tokens,invitationGrants,sessionGrants,
+                provisioning,workloads,RemoteAccessTestSwitch.enabled(),Clock.fixed(NOW,ZoneOffset.UTC),pairs,accessor);
+        assertThat(sut.reverse(new RemoteAccessKeyBinding(GRANTOR,SESSION,PAIR_FP),
+                new RemoteAccessReverseRequest(INVITATION,"internal-secret"))).isEmpty();
+        verifyNoInteractions(tokens,pairs,accessor);
+    }
+
+    @Test void reverseInvitationLinksOnlyTheConfirmedReciprocalSession() {
+        var pairs=mock(RemoteAccessPairRepository.class);
+        var accessor=mock(RemoteAccessAccessorPairing.class);
+        var forward=session(RemoteAccessRole.GRANTOR).activate(NOW);
+        var reverseId=UUID.randomUUID();
+        var reverse=new RemoteAccessSession(reverseId,UUID.randomUUID(),RemoteAccessRole.ACCESSOR,ACCESSOR,GRANTOR,
+                "Peer",forward.endpoint(),"host-public","reverse-public",FP,reverseId,
+                RemoteAccessSessionStatus.ACTIVE,NOW,NOW.plusSeconds(300),NOW,null,null,
+                RemoteAccessConnectivity.UNKNOWN,null,null,null,null,1);
+        var pair=RemoteAccessPair.inviter(INVITATION,SESSION,NOW);
+        when(identity.getOrCreate()).thenReturn(GRANTOR);
+        when(sessions.findById(SESSION)).thenReturn(Optional.of(forward));
+        when(tokens.decode("internal-secret",GRANTOR)).thenReturn(new RemoteAccessPairingDetails(
+                reverse.invitationId(),ACCESSOR,"Peer",forward.endpoint(),"host-public",
+                new RemoteAccessPrivateKey(new byte[]{1}),NOW.plusSeconds(300)));
+        when(accessor.connect("internal-secret","Forge Remote Access")).thenReturn(reverse);
+        when(pairs.findById(INVITATION)).thenReturn(Optional.empty(),Optional.of(pair.withReverseSession(reverseId)));
+        var sut=new RemoteAccessGrantorPairing(invitations,sessions,identity,tokens,invitationGrants,sessionGrants,
+                provisioning,workloads,RemoteAccessTestSwitch.enabled(),Clock.fixed(NOW,ZoneOffset.UTC),pairs,accessor);
+        assertThat(sut.reverse(keyBinding(),new RemoteAccessReverseRequest(INVITATION,"internal-secret"))).contains(reverseId);
+        verify(pairs).insert(pair);
+        verify(pairs).transition(pair,pair.withReverseSession(reverseId));
+    }
 
     @Test void grantorCommitsReservationBeforeInstallingKeyAndDoesNotActivate() {
         var invitation=invitation();
@@ -54,6 +91,18 @@ class RemoteAccessPairingLifecycleTest {
         assertThat(grantor(NOW).confirm(keyBinding())).contains(RemoteAccessSessionStatus.ACTIVE);
         verify(sessions,times(1)).transition(any(),any());
         verifyNoInteractions(sessionGrants);
+        verify(workloads).prepare(SESSION);
+    }
+
+    @Test void missingIsolatedWorkspaceDoesNotActivateGrantorSession() {
+        var before=session(RemoteAccessRole.GRANTOR);
+        when(identity.getOrCreate()).thenReturn(GRANTOR);
+        when(sessions.findById(SESSION)).thenReturn(Optional.of(before));
+        doThrow(new IllegalStateException("workspace unavailable")).when(workloads).prepare(SESSION);
+
+        assertThatThrownBy(() -> grantor(NOW).confirm(keyBinding()))
+                .isInstanceOf(IllegalStateException.class);
+        verify(sessions, never()).transition(any(), any());
     }
 
     @Test void wrongKeyAndExpiredSessionNeverActivate() {
@@ -91,6 +140,21 @@ class RemoteAccessPairingLifecycleTest {
         grantor(NOW).reconcile();
         verify(sessions,never()).transition(eq(revoking),any());
         verify(sessions).recordFailure(eq(revoking),eq("REMOTE_ACCESS_CLEANUP_PENDING"),anyString());
+    }
+
+    @Test void disablingNeverRestoresAnUnexpiredGrantDuringReconciliation() {
+        var before=session(RemoteAccessRole.GRANTOR);
+        var repository=mock(RemoteAccessSwitchRepository.class);
+        when(repository.get()).thenReturn(new RemoteAccessSwitchState(RemoteAccessSwitchStatus.DISABLING,1));
+        when(identity.getOrCreate()).thenReturn(GRANTOR);
+        when(sessions.findLocal(GRANTOR)).thenReturn(List.of(before));
+        var sut=new RemoteAccessGrantorPairing(invitations,sessions,identity,tokens,invitationGrants,
+                sessionGrants,provisioning,workloads,new RemoteAccessSwitch(repository),Clock.fixed(NOW,ZoneOffset.UTC),null,null);
+
+        sut.reconcile();
+
+        verifyNoInteractions(sessionGrants);
+        verify(sessions,never()).transition(any(),any());
     }
 
     @Test void lostActivationAcknowledgementResumesWithSameSessionKeyOnly() {
@@ -148,7 +212,7 @@ class RemoteAccessPairingLifecycleTest {
         when(sessions.transition(any(), any())).thenAnswer(call ->
                 stored.compareAndSet(call.getArgument(0), call.getArgument(1)));
 
-        var sut = new RemoteAccessAccessorPairing(sessions, identity, tokens, provisioning, transport, clock);
+        var sut = new RemoteAccessAccessorPairing(sessions, identity, tokens, provisioning, transport, RemoteAccessTestSwitch.enabled(), clock);
         var actual = sut.resume(SESSION);
 
         assertThat(now.get()).isAfter(before.provisioningExpiresAt());
@@ -249,10 +313,10 @@ class RemoteAccessPairingLifecycleTest {
     }
 
     private RemoteAccessGrantorPairing grantor(Instant now) {
-        return new RemoteAccessGrantorPairing(invitations,sessions,identity,tokens,invitationGrants,sessionGrants,provisioning,Clock.fixed(now,ZoneOffset.UTC));
+        return new RemoteAccessGrantorPairing(invitations,sessions,identity,tokens,invitationGrants,sessionGrants,provisioning,workloads,RemoteAccessTestSwitch.enabled(),Clock.fixed(now,ZoneOffset.UTC),null,null);
     }
     private RemoteAccessAccessorPairing accessor(Instant now) {
-        return new RemoteAccessAccessorPairing(sessions,identity,tokens,provisioning,transport,Clock.fixed(now,ZoneOffset.UTC));
+        return new RemoteAccessAccessorPairing(sessions,identity,tokens,provisioning,transport,RemoteAccessTestSwitch.enabled(),Clock.fixed(now,ZoneOffset.UTC));
     }
     private RemoteAccessInvitationBinding invBinding() {return new RemoteAccessInvitationBinding(GRANTOR,INVITATION,PAIR_FP);}
     private RemoteAccessKeyBinding keyBinding() {return new RemoteAccessKeyBinding(GRANTOR,SESSION,FP);}

@@ -26,6 +26,7 @@ public class RemoteAccessOperatorController {
         repository.saveToken(token,request,response);return new OperatorSession(token.getToken());
     }
     @GetMapping("/session") public OperatorSession session(HttpServletRequest request,HttpServletResponse response) {
+        authentication.localSession(request,response);
         return new OperatorSession(new HttpSessionCsrfTokenRepository().loadDeferredToken(request,response).get().getToken());
     }
     @PostMapping("/logout") public ResponseEntity<Void> logout(HttpServletRequest request) {

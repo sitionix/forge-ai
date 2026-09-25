@@ -11,6 +11,10 @@ export interface RemoteInvitation {
   endpoint: {host: string; port: number; username: string};
 }
 export interface RemoteCapabilities {ready: boolean; supportedOperations: string[]; diagnostics: string[];}
+export interface RemoteControl {
+  status: 'DISABLED' | 'ENABLED' | 'DISABLING'; ready: boolean;
+  pendingSessions: number; pendingInvitations: number; diagnostic: string | null;
+}
 export class RemoteAccessApi {
   constructor(options?: {fetcher?: (url: string, init: RequestInit) => Promise<Response>; location?: Pick<Location, 'pathname'>});
   clear(): void;
@@ -18,6 +22,9 @@ export class RemoteAccessApi {
   login(secret: string, signal?: AbortSignal): Promise<{csrfToken: string}>;
   logout(signal?: AbortSignal): Promise<unknown>;
   capabilities(signal?: AbortSignal): Promise<RemoteCapabilities>;
+  control(signal?: AbortSignal): Promise<RemoteControl>;
+  enable(signal?: AbortSignal): Promise<{status: number; body: RemoteControl}>;
+  disable(signal?: AbortSignal): Promise<{status: number; body: RemoteControl}>;
   invitations(signal?: AbortSignal): Promise<RemoteInvitation[]>;
   sessions(signal?: AbortSignal): Promise<RemoteSession[]>;
   invite(host?: string, signal?: AbortSignal): Promise<{status: number; body: {invitation: RemoteInvitation; token: string}}>;

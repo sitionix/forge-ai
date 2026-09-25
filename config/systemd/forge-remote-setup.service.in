@@ -1,0 +1,14 @@
+[Unit]
+Description=Prepare Forge Remote Access only after local Enable
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/libexec/forge-remote/prepare-enable.py run @FORGE_SYSTEMD_USER@
+RemainAfterExit=yes
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal

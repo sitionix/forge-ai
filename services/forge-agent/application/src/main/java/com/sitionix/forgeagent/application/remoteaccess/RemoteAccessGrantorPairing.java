@@ -20,9 +20,17 @@ public class RemoteAccessGrantorPairing implements RemoteAccessPeerPairing {
     private final RemoteAccessInvitationGrants invitationGrants;
     private final RemoteAccessSessionGrants sessionGrants;
     private final RemoteAccessProvisioningService provisioning;
+    private final RemoteAccessWorkloads workloads;
+    private final RemoteAccessSwitch access;
     private final Clock clock;
+    private final RemoteAccessPairRepository pairs;
+    private final RemoteAccessAccessorPairing accessorPairing;
 
     @Override public UUID redeem(RemoteAccessInvitationBinding binding, RemoteAccessPairingRequest request) {
+        return access.admit(() -> redeemEnabled(binding,request));
+    }
+
+    private UUID redeemEnabled(RemoteAccessInvitationBinding binding, RemoteAccessPairingRequest request) {
         UUID local=identity.getOrCreate();
         if (!local.equals(binding.grantorInstanceId()) || request==null || request.sessionId()==null
                 || request.accessorInstanceId()==null || local.equals(request.accessorInstanceId())) throw denied();
@@ -45,6 +53,10 @@ public class RemoteAccessGrantorPairing implements RemoteAccessPeerPairing {
     }
 
     @Override public Optional<RemoteAccessSessionStatus> confirm(RemoteAccessKeyBinding binding) {
+        return access.admit(() -> confirmEnabled(binding));
+    }
+
+    private Optional<RemoteAccessSessionStatus> confirmEnabled(RemoteAccessKeyBinding binding) {
         UUID local=identity.getOrCreate();
         if (!local.equals(binding.grantorInstanceId())) return Optional.empty();
         var candidate=sessions.findById(binding.sessionId()).filter(value -> value.localRole()==RemoteAccessRole.GRANTOR
@@ -54,9 +66,43 @@ public class RemoteAccessGrantorPairing implements RemoteAccessPeerPairing {
         if (session.status()==RemoteAccessSessionStatus.ACTIVE) return Optional.of(RemoteAccessSessionStatus.ACTIVE);
         var now=clock.instant();
         if (session.status()!=RemoteAccessSessionStatus.PROVISIONING || !now.isBefore(session.provisioningExpiresAt())) return Optional.empty();
+        workloads.prepare(session.id());
         if (sessions.transition(session,session.activate(now))) return Optional.of(RemoteAccessSessionStatus.ACTIVE);
         return sessions.findById(session.id()).filter(value -> value.status()==RemoteAccessSessionStatus.ACTIVE)
                 .map(RemoteAccessSession::status);
+    }
+
+    @Override public Optional<UUID> reverse(RemoteAccessKeyBinding binding,RemoteAccessReverseRequest request) {
+        return access.admit(() -> reverseEnabled(binding,request));
+    }
+
+    private Optional<UUID> reverseEnabled(RemoteAccessKeyBinding binding,RemoteAccessReverseRequest request) {
+        UUID local=identity.getOrCreate();
+        if (binding==null || request==null || request.pairId()==null || request.token()==null
+                || !local.equals(binding.grantorInstanceId())) return Optional.empty();
+        var forward=sessions.findById(binding.sessionId()).filter(value -> value.localRole()==RemoteAccessRole.GRANTOR
+                && value.grantorInstanceId().equals(local) && value.sessionFingerprint().equals(binding.fingerprint())
+                && value.invitationId().equals(request.pairId()) && value.status()==RemoteAccessSessionStatus.ACTIVE);
+        if (forward.isEmpty()) return Optional.empty();
+        try (var details=tokens.decode(request.token(),local)) {
+            if (!details.grantorInstanceId().equals(forward.get().accessorInstanceId())) return Optional.empty();
+        }
+        var reverse=accessorPairing.connect(request.token(),"Forge Remote Access");
+        if (reverse.status()!=RemoteAccessSessionStatus.ACTIVE) return Optional.empty();
+        if (sessions.findById(forward.get().id()).filter(value -> value.status()==RemoteAccessSessionStatus.ACTIVE).isEmpty())
+            return Optional.empty();
+        var pair=pairs.findById(request.pairId()).orElseGet(() -> {
+            var created=RemoteAccessPair.inviter(request.pairId(),forward.get().id(),clock.instant());
+            try { pairs.insert(created); return created; }
+            catch (RuntimeException concurrent) { return pairs.findById(request.pairId()).orElseThrow(() -> concurrent); }
+        });
+        if (pair.localForwardRole()!=RemoteAccessRole.GRANTOR || !forward.get().id().equals(pair.forwardSessionId()))
+            return Optional.empty();
+        if (pair.reverseSessionId()==null) {
+            pairs.transition(pair,pair.withReverseSession(reverse.id()));
+            pair=pairs.findById(pair.id()).orElseThrow();
+        }
+        return reverse.id().equals(pair.reverseSessionId()) ? Optional.of(reverse.id()) : Optional.empty();
     }
 
     public void reconcile() {
@@ -67,7 +113,10 @@ public class RemoteAccessGrantorPairing implements RemoteAccessPeerPairing {
             try {
                 if (session.status()==RemoteAccessSessionStatus.PROVISIONING) {
                     if (clock.instant().isBefore(session.provisioningExpiresAt())) {
-                        sessionGrants.install(session);
+                        if (access.status().status()!=RemoteAccessSwitchStatus.ENABLED) continue;
+                        var pending=session;
+                        try { access.admit(() -> sessionGrants.install(pending)); }
+                        catch (ConflictException disabled) { /* Disable owns cleanup; never restore a grant. */ }
                         continue;
                     }
                     if (!sessions.transition(session,session.requestRevoke(clock.instant()))) continue;

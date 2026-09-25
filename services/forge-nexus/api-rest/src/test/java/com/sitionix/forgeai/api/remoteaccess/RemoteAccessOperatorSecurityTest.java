@@ -53,4 +53,18 @@ class RemoteAccessOperatorSecurityTest {
         mvc.perform(post(BASE+"/operator/logout").session(session).header("Host","127.0.0.1:9099").header("Origin",ORIGIN).header("X-CSRF-TOKEN",csrf)).andExpect(status().isNoContent());
         assertThat(session.isInvalid()).isTrue();
     }
+    @Test void localBrowserOpensSessionWithoutAnExtraCredentialPrompt() throws Exception {
+        var opened=mvc.perform(get(BASE+"/operator/session").header("Host","127.0.0.1:9099")
+                .header("Sec-Fetch-Site","same-origin"))
+            .andExpect(status().isOk()).andReturn();
+        var session=(MockHttpSession)opened.getRequest().getSession(false);
+        assertThat(session).isNotNull();
+        String csrf=new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                opened.getResponse().getContentAsString(),RemoteAccessOperatorController.OperatorSession.class).csrfToken();
+        assertThat(csrf).isNotBlank();
+        var id=java.util.UUID.randomUUID();
+        mvc.perform(delete(BASE+"/invitations/"+id).session(session).header("Host","127.0.0.1:9099")
+                .header("Origin",ORIGIN).header("X-CSRF-TOKEN",csrf)).andExpect(status().isNoContent());
+        verify(context.getBean(RemoteAccessOperations.class)).cancel(id);
+    }
 }

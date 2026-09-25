@@ -21,5 +21,8 @@
   "lastSeenAt": null,
   "lastCheckedAt": null,
   "failureCode": null,
-  "failureMessage": null
+  "failureMessage": null,
+  "bridgeId": "22222222-2222-4222-8222-222222222222",
+  "bridgeReady": false,
+  "bridgeRevoked": true
 }

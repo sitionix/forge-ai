@@ -2,11 +2,15 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+# The main checkout and feature worktrees share Forge's single local Postgres.
+# Compose otherwise derives a new project name from each worktree directory.
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-forge-ai}"
 ACTION="${1:?Usage: systemd.sh validate|start|stop|status|logs [service]}"
 SERVICE="${2:-all}"
 RUNTIME_DIR="${FORGE_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"
 UNITS=(forge-knowledge.service forge-jarvis.service forge-agent.service forge-nexus.service)
-REVERSE_UNITS=(forge-nexus.service forge-agent.service forge-jarvis.service forge-knowledge.service)
+REMOTE_UNITS=(forge-remote-agent.service forge-remote-nexus.service)
+REVERSE_UNITS=(forge-remote-nexus.service forge-remote-agent.service forge-nexus.service forge-agent.service forge-jarvis.service forge-knowledge.service)
 USE_SUDO="${FORGE_SYSTEMD_USE_SUDO:-auto}"
 
 sudo_cmd=()
@@ -71,6 +75,16 @@ status() {
     printf '%-10s %s\n' "${name}" "${state:-unknown}"
     [[ "${state}" == "active" ]] || failed=1
   done
+  for unit in "${REMOTE_UNITS[@]}"; do
+    state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
+    name="${unit#forge-}"
+    name="${name%.service}"
+    if [[ "${state}" == "active" ]]; then
+      state="$(service_health "${name}" "$(health_url "${name}")")"
+    fi
+    printf '%-10s %s\n' "${name}" "${state:-inactive}"
+    [[ "${state}" == "unhealthy" ]] && failed=1
+  done
   if postgres_running; then
     printf '%-10s %s\n' postgres active
   else
@@ -86,6 +100,8 @@ health_url() {
     jarvis) printf 'http://127.0.0.1:7071/health' ;;
     agent) printf 'http://127.0.0.1:7091/actuator/health' ;;
     nexus) printf 'http://127.0.0.1:9099/fgaisox/actuator/health' ;;
+    remote-agent) printf 'http://127.0.0.1:7092/actuator/health' ;;
+    remote-nexus) printf 'http://127.0.0.1:9100/fgaisox/actuator/health' ;;
   esac
 }
 
@@ -95,6 +111,7 @@ case "${ACTION}" in
     validate_manager
     prepare
     "${ROOT}/scripts/systemd/install.sh"
+    privileged systemctl enable --now forge-remote-bootstrap.socket
     validate
     start_postgres
     # `start` is a no-op for active units. Restart so freshly built artifacts are always loaded.
@@ -109,8 +126,13 @@ case "${ACTION}" in
   logs)
     validate
     if [[ "${SERVICE}" == "postgres" ]]; then exec docker compose --project-directory "${ROOT}" logs --follow forge-agent-postgres; fi
-    if [[ "${SERVICE}" == "all" ]]; then privileged journalctl --follow --unit forge-knowledge.service --unit forge-jarvis.service --unit forge-agent.service --unit forge-nexus.service; exit $?; fi
-    [[ " ${UNITS[*]} " == *" forge-${SERVICE}.service "* ]] || { echo "Unknown service: ${SERVICE}" >&2; exit 2; }
+    if [[ "${SERVICE}" == "all" ]]; then
+      journal_args=()
+      for unit in "${UNITS[@]}" "${REMOTE_UNITS[@]}"; do journal_args+=(--unit "${unit}"); done
+      privileged journalctl --follow "${journal_args[@]}"
+      exit $?
+    fi
+    [[ " ${UNITS[*]} ${REMOTE_UNITS[*]} " == *" forge-${SERVICE}.service "* ]] || { echo "Unknown service: ${SERVICE}" >&2; exit 2; }
     privileged journalctl --follow --unit "forge-${SERVICE}.service"
     ;;
   *) echo "Unknown systemd action: ${ACTION}" >&2; exit 2 ;;

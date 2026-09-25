@@ -11,6 +11,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 public class RemoteAccessUseCase implements RemoteAccessOperations {
     private final RemoteAccessClient client;
     public RemoteAccessModels.Capabilities capabilities() { return client.capabilities(); }
+    public RemoteAccessModels.Control control() { return client.control(); }
+    public RemoteAccessModels.Control enable() { return client.enable(); }
+    public RemoteAccessModels.Control disable() { return client.disable(); }
     public List<RemoteAccessModels.Invitation> invitations() { return client.invitations(); }
     public RemoteAccessModels.InvitationCreated invite(RemoteAccessModels.InvitationRequest request) { return client.invite(request); }
     public void cancel(UUID id) { client.cancel(id); }

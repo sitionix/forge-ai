@@ -18,8 +18,7 @@ final class RemoteAccessSshCredentials implements AutoCloseable {
             Files.createFile(key,mode);Files.createFile(knownHosts,mode);
             byte[] bytes=privateKey.copyBytes();
             try { Files.write(key,bytes); } finally { Arrays.fill(bytes,(byte)0); }
-            Files.writeString(knownHosts,"["+session.endpoint().host()+"]:"+session.endpoint().port()+" "
-                    +LocalPairingTokens.validatedPublicKey(session.pinnedHostPublicKey())+"\n");
+            Files.writeString(knownHosts,RemoteAccessSshCommand.knownHostsLine(session.endpoint(),session.pinnedHostPublicKey()));
         } catch (IOException | RuntimeException failure) { close();throw failure; }
     }
     @Override public synchronized void close() throws IOException {

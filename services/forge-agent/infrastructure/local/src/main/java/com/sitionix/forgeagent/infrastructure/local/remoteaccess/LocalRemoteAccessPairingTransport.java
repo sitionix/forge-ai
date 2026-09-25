@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 
 /** One fixed SSH operation per call. Private credentials exist only in protected temporary files. */
 @Component
-public final class LocalRemoteAccessPairingTransport implements RemoteAccessPairingTransport, com.sitionix.forgeagent.domain.port.RemoteAccessRevokeTransport {
+public final class LocalRemoteAccessPairingTransport implements RemoteAccessPairingTransport, com.sitionix.forgeagent.domain.port.RemoteAccessRevokeTransport, com.sitionix.forgeagent.domain.port.RemoteAccessReverseExchange {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final RemoteAccessCredentialStore credentials;
     private final ControlProcess process;
@@ -26,7 +26,7 @@ public final class LocalRemoteAccessPairingTransport implements RemoteAccessPair
         String execute(List<String> command, byte[] input) throws Exception;
     }
     @Autowired public LocalRemoteAccessPairingTransport(RemoteAccessCredentialStore credentials) {
-        this(credentials,(command,input) -> RemoteAccessControlProcess.execute(command,input,Duration.ofSeconds(command.getLast().equals("revoke") ? 90 : 15)));
+        this(credentials,(command,input) -> RemoteAccessControlProcess.execute(command,input,Duration.ofSeconds(List.of("revoke","reverse").contains(command.getLast()) ? 90 : 15)));
     }
     LocalRemoteAccessPairingTransport(RemoteAccessCredentialStore credentials,ControlProcess process) {
         this.credentials=credentials;
@@ -48,6 +48,18 @@ public final class LocalRemoteAccessPairingTransport implements RemoteAccessPair
     @Override public RemoteAccessSessionStatus status(RemoteAccessSession session) { return sessionOperation(session,"status"); }
 
     @Override public RemoteAccessSessionStatus revoke(RemoteAccessSession session) { return sessionOperation(session,"revoke"); }
+
+    @Override public java.util.UUID exchange(RemoteAccessSession forwardSession,String reverseToken) {
+        try (var privateKey=credentials.read(forwardSession.localPrivateKeyReference())) {
+            var request=new RemoteAccessReverseRequest(forwardSession.invitationId(),reverseToken);
+            String response=invoke(forwardSession,privateKey,"reverse",JSON.writeValueAsBytes(request));
+            var match=java.util.regex.Pattern.compile("ACTIVE ([0-9a-f-]{36})\\n").matcher(response);
+            if (!match.matches()) throw new IllegalStateException("Reverse pairing was not confirmed");
+            var id=java.util.UUID.fromString(match.group(1));
+            if (!id.toString().equals(match.group(1))) throw new IllegalStateException("Invalid reverse session identity");
+            return id;
+        } catch (Exception failure) { throw unavailable(failure); }
+    }
 
     private RemoteAccessSessionStatus sessionOperation(RemoteAccessSession session,String operation) {
         try (var privateKey=credentials.read(session.localPrivateKeyReference())) {
