@@ -23,10 +23,18 @@ class McpClientConfigurationTest {
                 .hasRootCauseMessage("MCP probe duration exceeds the Nexus management HTTP budget");
     }
 
-    @Test void unboundedToolCallConfigurationFailsStartup() {
-        assertThatThrownBy(() -> context(Map.of("forge.mcp.enabled", "true",
-                "forge.mcp.tool-call-timeout", "6m")))
-                .hasRootCauseMessage("Invalid MCP client configuration");
+    @Test void positiveToolCallTimeoutAboveFiveMinutesIsAccepted() {
+        try (var context = context(Map.of("forge.mcp.enabled", "true",
+                "forge.mcp.tool-call-timeout", "6m"))) {
+            assertThat(context.getBean(McpRemoteToolClient.class)).isInstanceOf(SdkMcpRemoteClient.class);
+        }
+    }
+
+    @Test void zeroAndNegativeToolCallTimeoutsFailStartup() {
+        for (String timeout : new String[] {"0s", "-1s"})
+            assertThatThrownBy(() -> context(Map.of("forge.mcp.enabled", "true",
+                    "forge.mcp.tool-call-timeout", timeout)))
+                    .hasRootCauseMessage("Invalid MCP client configuration");
     }
 
     private AnnotationConfigApplicationContext context(Map<String, String> properties) {

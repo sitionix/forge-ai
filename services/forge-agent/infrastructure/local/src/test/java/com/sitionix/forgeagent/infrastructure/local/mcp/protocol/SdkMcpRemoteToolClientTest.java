@@ -114,6 +114,51 @@ class SdkMcpRemoteToolClientTest {
         } finally { server.stop(0); }
     }
 
+    @Test void responseLimitDoesNotRestrictValidToolArguments() throws Exception {
+        String arguments = json.writeValueAsString(java.util.Map.of("query", "x".repeat(1500)));
+        assertThat(arguments.getBytes(StandardCharsets.UTF_8).length).isGreaterThan(1024);
+        List<String> methods = Collections.synchronizedList(new ArrayList<>());
+        var server = fixture(methods, false, false, 0, 0, arguments);
+        try {
+            int port = server.getAddress().getPort();
+            var client = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 1024, 2, 10,
+                    Set.of("127.0.0.1:" + port));
+            var result = client.call(URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.NONE,
+                    null, "search", SCHEMA, arguments);
+            assertThat(result.isError()).isFalse();
+            assertThat(methods).contains("tools/call");
+        } finally { server.stop(0); }
+    }
+
+    @Test void onlyOneCompleteJsonObjectIsAcceptedAsArguments() throws Exception {
+        for (String arguments : new String[] {"{}", "{\"x\":1}"}) {
+            List<String> methods = Collections.synchronizedList(new ArrayList<>());
+            var server = fixture(methods, false, false, 0, 0, arguments);
+            try {
+                int port = server.getAddress().getPort();
+                var client = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+                        Set.of("127.0.0.1:" + port));
+                client.call(URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.NONE,
+                        null, "search", SCHEMA, arguments);
+                assertThat(methods).contains("tools/call");
+            } finally { server.stop(0); }
+        }
+
+        List<String> methods = Collections.synchronizedList(new ArrayList<>());
+        var server = fixture(methods, false, false);
+        try {
+            int port = server.getAddress().getPort();
+            var client = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+                    Set.of("127.0.0.1:" + port));
+            for (String arguments : new String[] {"[]", "\"foo\"", "[]{}", "{}{}", "{\"x\":1} trailing"}) {
+                assertThatThrownBy(() -> client.call(URI.create("http://127.0.0.1:" + port + "/mcp"),
+                        McpAuthType.NONE, null, "search", SCHEMA, arguments))
+                        .as("arguments: %s", arguments).isInstanceOf(IllegalArgumentException.class);
+                assertThat(methods).doesNotContain("tools/call");
+            }
+        } finally { server.stop(0); }
+    }
+
     private HttpServer fixture(List<String> methods, boolean toolError, boolean protocolError) throws Exception {
         return fixture(methods, toolError, protocolError, 0);
     }
@@ -125,6 +170,11 @@ class SdkMcpRemoteToolClientTest {
 
     private HttpServer fixture(List<String> methods, boolean toolError, boolean protocolError,
                                long listDelayMillis, long callDelayMillis) throws Exception {
+        return fixture(methods, toolError, protocolError, listDelayMillis, callDelayMillis, "{\"query\":\"hello\"}");
+    }
+
+    private HttpServer fixture(List<String> methods, boolean toolError, boolean protocolError,
+                               long listDelayMillis, long callDelayMillis, String expectedArguments) throws Exception {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/mcp", exchange -> {
             try {
@@ -150,7 +200,7 @@ class SdkMcpRemoteToolClientTest {
                     case "tools/call" -> {
                         assertThat(message.path("params").path("name").asText()).isEqualTo("search");
                         if (!protocolError)
-                            assertThat(message.path("params").path("arguments").path("query").asText()).isEqualTo("hello");
+                            assertThat(message.path("params").path("arguments")).isEqualTo(json.readTree(expectedArguments));
                         if (callDelayMillis > 0) {
                             try { Thread.sleep(callDelayMillis); }
                             catch (InterruptedException interrupted) {

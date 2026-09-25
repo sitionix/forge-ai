@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.infrastructure.local.mcp.protocol;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
 import com.sitionix.forgeagent.domain.exception.McpProbeException;
 import com.sitionix.forgeagent.domain.exception.McpToolCallException;
@@ -61,7 +62,6 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         if (connectTimeout == null || connectTimeout.isNegative() || connectTimeout.isZero()
                 || requestTimeout == null || requestTimeout.isNegative() || requestTimeout.isZero()
                 || toolCallTimeout == null || toolCallTimeout.isNegative() || toolCallTimeout.isZero()
-                || toolCallTimeout.compareTo(Duration.ofMinutes(5)) > 0
                 || maxResponseBytes < 1024 || maxPages < 1 || maxTools < 1
                 || allowedPrivateEndpoints == null || objectMapper == null)
             throw new IllegalArgumentException("Invalid MCP client configuration");
@@ -97,13 +97,15 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
     @Override public McpToolCallResult call(URI endpoint, McpAuthType authType, byte[] credential,
                                             String toolName, String expectedSchemaFingerprint, String argumentsJson) {
         if (toolName == null || toolName.isBlank() || expectedSchemaFingerprint == null
-                || !expectedSchemaFingerprint.matches("sha256:[0-9a-f]{64}") || argumentsJson == null
-                || argumentsJson.getBytes(StandardCharsets.UTF_8).length > maxResponseBytes)
+                || !expectedSchemaFingerprint.matches("sha256:[0-9a-f]{64}") || argumentsJson == null)
             throw new IllegalArgumentException("Invalid MCP tool call");
         Map<String, Object> arguments;
         try {
-            if (!canonical.readTree(argumentsJson).isObject()) throw new IllegalArgumentException("Invalid MCP arguments");
-            arguments = canonical.readValue(argumentsJson, new TypeReference<Map<String, Object>>() {});
+            var argumentObject = canonical.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                    .readTree(argumentsJson);
+            if (argumentObject == null || !argumentObject.isObject())
+                throw new IllegalArgumentException("Invalid MCP arguments");
+            arguments = canonical.convertValue(argumentObject, new TypeReference<Map<String, Object>>() {});
         } catch (java.io.IOException exception) {
             throw new IllegalArgumentException("Invalid MCP arguments");
         }
