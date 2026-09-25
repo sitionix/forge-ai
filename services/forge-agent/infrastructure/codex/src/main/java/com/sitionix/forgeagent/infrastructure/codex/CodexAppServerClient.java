@@ -5,9 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeagent.domain.model.McpRuntimeLaunchGrants;
+import com.sitionix.forgeagent.domain.model.McpExecutionSelection;
 import com.sitionix.forgeagent.domain.port.McpGatewayAddress;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.stream.Collectors;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -23,7 +26,7 @@ import org.springframework.stereotype.Component;
 final class CodexAppServerClient implements CodexClient {
 
     private static final Pattern USER_AGENT_VERSION = Pattern.compile("^[^/]+/([^\\s]+).*");
-    static final String SUPPORTED_DURABLE_VERSION = "0.154.0";
+    static final String SUPPORTED_DURABLE_VERSION = "0.157.0";
     static final String SUPPORTED_RECOVERY_VERSION = SUPPORTED_DURABLE_VERSION;
 
     private final ObjectMapper objectMapper;
@@ -117,7 +120,13 @@ final class CodexAppServerClient implements CodexClient {
                                    final McpRuntimeLaunchGrants grants) {
         if (grants == null || (request.mcpSelection() == null && !grants.isEmpty()))
             throw new CodexTransportException("Codex MCP configuration is unavailable");
-        if (request.mcpSelection() != null) this.threadStartParams(request);
+        if (request.mcpSelection() != null) {
+            var aliases = request.mcpSelection().entries().stream()
+                    .map(McpExecutionSelection.Entry::alias).collect(Collectors.toSet());
+            if (!aliases.equals(grants.tokens().keySet()))
+                throw new CodexTransportException("Codex MCP launch grants do not match selection");
+            this.threadStartParams(request);
+        }
         final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
         final CodexExecutionEventObserver eventObserver = new CodexExecutionEventObserver(
                 new CodexAgentExecutionEventMapper(this.objectMapper), callbacks);
@@ -260,7 +269,7 @@ final class CodexAppServerClient implements CodexClient {
                                 ? sessionProtocol.resumeThread(current, existingThreadId,
                                         request.sharedSessionGroup() || request.mcpSelection() != null
                                                 ? this.developerInstructions(request) : null,
-                                        request.mcpSelection() == null ? null : this.threadStartParams(request).path("config"),
+                                        request.mcpSelection() == null ? null : this.threadStartParams(request),
                                         this.properties.getRequestTimeout())
                                 : this.startThread(current, turnStateTracker, request);
             } catch (final CodexExecutionException exception) {
@@ -276,7 +285,7 @@ final class CodexAppServerClient implements CodexClient {
                 var inventory = this.inventoryVerifier.verify(current, threadId, request.mcpSelection(),
                         this.properties.getRequestTimeout());
                 eventObserver.allowMcpTools(inventory.effectiveTools());
-                var diagnostics = new java.util.ArrayList<>(request.mcpSelection().diagnostics());
+                var diagnostics = new ArrayList<>(request.mcpSelection().diagnostics());
                 diagnostics.addAll(inventory.diagnostics());
                 eventObserver.mcpDiagnostics(diagnostics);
             }

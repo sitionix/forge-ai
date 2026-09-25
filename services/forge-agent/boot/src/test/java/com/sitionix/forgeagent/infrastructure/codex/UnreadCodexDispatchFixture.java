@@ -26,7 +26,7 @@ public final class UnreadCodexDispatchFixture implements AutoCloseable {
     public UnreadCodexDispatchFixture(final AgentSessionLeaseService leases, final AgentExecutionDispatchGuard guard) throws IOException {
         this.process = new ProcessBuilder("/bin/sh", "-c", """
                 IFS= read -r initialize
-                printf '%s\\n' '{"id":"1","result":{"userAgent":"codex/0.154.0"}}'
+                printf '%s\\n' '{"id":"1","result":{"userAgent":"codex/0.157.0"}}'
                 IFS= read -r initialized
                 IFS= read -r thread
                 sleep 30 <&0 &

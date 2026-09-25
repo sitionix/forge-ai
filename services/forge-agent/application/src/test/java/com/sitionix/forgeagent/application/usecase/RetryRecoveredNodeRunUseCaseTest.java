@@ -279,7 +279,7 @@ class RetryRecoveredNodeRunUseCaseTest {
     private AgentExecutionAllocation allocation(final NodeRun node, final ProviderTurnRecoveryState recoveryState,
                                                 final AgentExecutionSessionStatus sessionStatus, final Instant resetAt) {
         final AgentExecutionSession session = new AgentExecutionSession(SESSION_ID, RUN_ID, node.sourceNodeId(),
-                node.sourceAgentId(), node.repositoryId(), "codex", "thread-1", "0.154.0", node.contextMode(),
+                node.sourceAgentId(), node.repositoryId(), "codex", "thread-1", "0.157.0", node.contextMode(),
                 sessionStatus, null, null, null, 4, null, null, null, NOW.minusSeconds(25), NOW.minusSeconds(9),
                 sessionStatus == AgentExecutionSessionStatus.CLOSED ? NOW.minusSeconds(9) : null, resetAt);
         final AgentExecutionTurn turn = new AgentExecutionTurn(UUID.randomUUID(), SESSION_ID, node.id(), "turn-1", 1,

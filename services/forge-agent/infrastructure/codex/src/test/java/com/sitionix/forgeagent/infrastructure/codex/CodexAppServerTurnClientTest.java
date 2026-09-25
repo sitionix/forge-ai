@@ -62,6 +62,7 @@ class CodexAppServerTurnClientTest {
         var client = new CodexAppServerClient(this.objectMapper, starter, properties,
                 new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
         JsonNode originalConfig = null;
+        JsonNode originalThreadParams = null;
         for (int index = 0; index < 2; index++) {
             final int turn = index;
             var process = index == 0 ? first : second;
@@ -85,8 +86,15 @@ class CodexAppServerTurnClientTest {
                     .isEqualTo(grantName);
             assertThat(config.path("sandbox_workspace_write.network_access").asBoolean()).isFalse();
             assertThat(thread.toString()).doesNotContain(token);
-            if (originalConfig == null) originalConfig = config;
-            else assertThat(config).isEqualTo(originalConfig);
+            if (originalConfig == null) {
+                originalConfig = config;
+                originalThreadParams = thread.path("params");
+            } else {
+                assertThat(config).isEqualTo(originalConfig);
+                for (String field : List.of("cwd", "sandbox", "approvalPolicy", "runtimeWorkspaceRoots")) {
+                    assertThat(thread.path("params").path(field)).isEqualTo(originalThreadParams.path(field));
+                }
+            }
             this.replyThread(process, thread, "thread-durable");
             var inventory = this.readRequest(process);
             assertThat(inventory.path("method").asText()).isEqualTo("mcpServerStatus/list");
@@ -116,7 +124,8 @@ class CodexAppServerTurnClientTest {
         var request = new CodexTurnRequest("Read.", "Instructions.", "model-a", null,
                 this.schemaUnchecked(), this.workspace(), false, selection);
         var result = CompletableFuture.supplyAsync(() -> client.execute(request,
-                new McpRuntimeLaunchGrants(Map.of())));
+                new McpRuntimeLaunchGrants(Map.of("forge_0123456789ab4cde80123456789abcde",
+                        "synthetic-grant"))));
         this.initialize(process);
         var thread = this.readRequest(process);
         this.replyThread(process, thread, "thread-a");
@@ -132,6 +141,54 @@ class CodexAppServerTurnClientTest {
         assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
                 .hasRootCauseMessage("Codex MCP inventory did not match issued grants");
         assertThat(process.pendingClientRequestBytes()).isZero();
+        client.close();
+    }
+
+    @Test
+    void mismatchedSelectionAndLaunchGrantsFailBeforeStartingProcess() {
+        var properties = this.properties();
+        var starter = new FakeStarter(new FakeCodexProcess(false, true));
+        var client = new CodexAppServerClient(this.objectMapper, starter, properties,
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+        var selected = new McpExecutionSelection(List.of(new McpExecutionSelection.Entry(
+                "forge_0123456789ab4cde80123456789abcde",
+                UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"), "Search",
+                Set.of(new McpAllowedTool("search", "sha256:fingerprint")))), List.of());
+        var request = new CodexTurnRequest("Read.", "Instructions.", "model-a", null,
+                this.schemaUnchecked(), this.workspace(), false, selected);
+        var wrong = new McpRuntimeLaunchGrants(Map.of(
+                "forge_1123456789ab4cde80123456789abcde", "synthetic-grant"));
+
+        assertThatThrownBy(() -> client.execute(request, wrong))
+                .hasMessage("Codex MCP launch grants do not match selection");
+        assertThat(starter.starts()).isZero();
+    }
+
+    @Test
+    void noEligibleMcpConnectionRequiresEmptyInventoryAndStillRunsTurn() throws Exception {
+        var process = new FakeCodexProcess(false, true);
+        var properties = this.properties();
+        var client = new CodexAppServerClient(this.objectMapper, new FakeStarter(process), properties,
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+        var request = new CodexTurnRequest("Read.", "Instructions.", "model-a", null,
+                this.schemaUnchecked(), this.workspace(), false,
+                new McpExecutionSelection(List.of(), List.of()));
+        var result = CompletableFuture.supplyAsync(() -> client.execute(request,
+                new McpRuntimeLaunchGrants(Map.of())));
+        this.initialize(process);
+        var thread = this.readRequest(process);
+        assertThat(thread.path("params").path("config").path("mcp_servers").size()).isZero();
+        this.replyThread(process, thread, "thread-no-mcp");
+        var inventory = this.readRequest(process);
+        assertThat(inventory.path("method").asText()).isEqualTo("mcpServerStatus/list");
+        process.writeStdout("{\"id\":\"" + inventory.path("id").asText()
+                + "\",\"result\":{\"data\":[],\"nextCursor\":null}}");
+        var turn = this.readRequest(process);
+        assertThat(turn.path("method").asText()).isEqualTo("turn/start");
+        this.replyTurn(process, turn, "turn-no-mcp");
+        this.complete(process, "thread-no-mcp", "turn-no-mcp",
+                "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+        assertThat(result.get(1, TimeUnit.SECONDS)).contains("OK");
         client.close();
     }
 
@@ -493,7 +550,7 @@ class CodexAppServerTurnClientTest {
         this.readRequest(process);
 
         assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
-                .hasRootCauseMessage("Codex durable context requires audited CLI version 0.154.0; found 0.155.0");
+                .hasRootCauseMessage("Codex durable context requires audited CLI version 0.157.0; found 0.155.0");
         assertThat(process.pendingClientRequestBytes()).isZero();
         client.close();
     }
@@ -514,7 +571,7 @@ class CodexAppServerTurnClientTest {
         this.initialize(process);
 
         assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
-                .hasRootCauseMessage("Codex durable context version changed from 0.152.0 to 0.154.0")
+                .hasRootCauseMessage("Codex durable context version changed from 0.152.0 to 0.157.0")
                 .hasRootCauseInstanceOf(CodexExecutionException.class);
         assertThat(process.pendingClientRequestBytes()).isZero();
         client.close();
@@ -1215,7 +1272,7 @@ class CodexAppServerTurnClientTest {
     private void initialize(final FakeCodexProcess process) throws Exception {
         final JsonNode initialize = this.readRequest(process);
         assertThat(initialize.path("method").asText()).isEqualTo("initialize");
-        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/0.154.0\"}}");
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/0.157.0\"}}");
         final JsonNode initialized = this.readRequest(process);
         assertThat(initialized.path("method").asText()).isEqualTo("initialized");
     }

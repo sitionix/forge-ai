@@ -22,15 +22,17 @@ import org.springframework.boot.web.servlet.context.ServletWebServerApplicationC
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.ApplicationContext;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
 class AgentMcpGatewayConfiguration {
-    @Bean McpGatewayAddress mcpGatewayAddress(ServletWebServerApplicationContext context) {
+    @Bean McpGatewayAddress mcpGatewayAddress(ApplicationContext context) {
         return () -> {
-            if (context.getWebServer() == null || context.getWebServer().getPort() <= 0)
+            if (!(context instanceof ServletWebServerApplicationContext servlet)
+                    || servlet.getWebServer() == null || servlet.getWebServer().getPort() <= 0)
                 throw new IllegalStateException("MCP gateway connector is unavailable");
-            return URI.create("http://127.0.0.1:" + context.getWebServer().getPort());
+            return URI.create("http://127.0.0.1:" + servlet.getWebServer().getPort());
         };
     }
 

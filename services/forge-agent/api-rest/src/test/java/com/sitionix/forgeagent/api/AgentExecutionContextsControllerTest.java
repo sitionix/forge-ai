@@ -75,7 +75,7 @@ class AgentExecutionContextsControllerTest {
         final var now = Instant.now();
         for (final Instant resetAt : new Instant[] { null, now }) {
             final var shared = new AgentExecutionSession(UUID.randomUUID(), UUID.randomUUID(), null, null, null,
-                    "codex", "shared-thread", "0.154.0", NodeContextMode.SHARED_SESSION_GROUP,
+                    "codex", "shared-thread", "0.157.0", NodeContextMode.SHARED_SESSION_GROUP,
                     AgentExecutionSessionStatus.IDLE, null, null, null, 1,
                     null, null, null, now, now, null, resetAt, iterationId, "implementation-loop");
             final var first = allocation(shared, AgentExecutionTurnStatus.SUCCEEDED, 1);
@@ -100,7 +100,7 @@ class AgentExecutionContextsControllerTest {
 
     private static AgentExecutionSession session(final NodeContextMode mode, final Instant resetAt) {
         return new AgentExecutionSession(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null,
-                "codex", "thread-original", "0.154.0", mode, AgentExecutionSessionStatus.IDLE, null, null, null, 1,
+                "codex", "thread-original", "0.157.0", mode, AgentExecutionSessionStatus.IDLE, null, null, null, 1,
                 null, null, null, Instant.now(), Instant.now(), null, resetAt);
     }
 

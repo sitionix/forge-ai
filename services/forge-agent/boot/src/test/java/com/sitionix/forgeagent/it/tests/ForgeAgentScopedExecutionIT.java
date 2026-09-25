@@ -275,7 +275,7 @@ class ForgeAgentScopedExecutionIT {
         final String conversation = global ? "retry-review" : "retry-" + REPOSITORY_A;
         if (lease.providerConversationId() == null) {
             assertThat(this.agentExecutionSessionRepository.persistProviderConversation(lease.sessionId(), lease.leaseOwnerId(),
-                    lease.leaseToken(), conversation, "0.154.0")).isTrue();
+                    lease.leaseToken(), conversation, "0.157.0")).isTrue();
         }
         assertThat(this.agentExecutionSessionRepository.persistProviderTurn(lease.sessionId(), lease.turnId(),
                 lease.leaseOwnerId(), lease.leaseToken(), "lost-provider-turn")).isTrue();
@@ -464,7 +464,7 @@ class ForgeAgentScopedExecutionIT {
         }
         if (lease.providerConversationId() == null) {
             assertThat(this.agentExecutionSessionRepository.persistProviderConversation(lease.sessionId(), lease.leaseOwnerId(),
-                    lease.leaseToken(), conversation, "0.154.0")).isTrue();
+                    lease.leaseToken(), conversation, "0.157.0")).isTrue();
         } else {
             assertThat(lease.providerConversationId()).isEqualTo(conversation);
         }
@@ -629,7 +629,7 @@ class ForgeAgentScopedExecutionIT {
         final var claim = this.lifecycle.tryStart(nodeRun.id()).orElseThrow();
         final var lease = claim.agentSessionClaim();
         assertThat(this.agentExecutionSessionRepository.persistProviderConversation(lease.sessionId(), lease.leaseOwnerId(),
-                lease.leaseToken(), conversationId, "0.154.0")).isTrue();
+                lease.leaseToken(), conversationId, "0.157.0")).isTrue();
         assertThat(this.agentExecutionSessionRepository.persistProviderTurn(lease.sessionId(), lease.turnId(),
                 lease.leaseOwnerId(), lease.leaseToken(), "turn-" + nodeRun.id())).isTrue();
         this.lifecycle.succeed(nodeRun.id(), new AgentExecutionResult(new NodeRunOutput("{\"answer\":\"done\"}"), null), lease);
