@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.mcp.McpGatewayService;
+import com.sitionix.forgeagent.application.mcp.McpExecutionSelectionService;
 import com.sitionix.forgeagent.domain.port.*;
 import com.sitionix.forgeagent.infrastructure.local.mcp.gateway.InMemoryMcpRuntimeGrantRepository;
 import com.sitionix.forgeagent.infrastructure.local.mcp.gateway.SdkMcpGatewayToolView;
@@ -39,6 +40,12 @@ class AgentMcpGatewayConfiguration {
             McpCredentialCipher cipher, McpRemoteToolClient remote, Clock clock) {
         return new McpGatewayService(sessions, nodes, workflows, projects, connections, identity,
                 grants, views, cipher, remote, clock);
+    }
+
+    @Bean McpExecutionSelectionService mcpExecutionSelectionService(WorkflowRunRepository workflows,
+            McpConnectionRepository connections, ForgeInstanceIdentityRepository identity,
+            McpGatewayService gateway) {
+        return new McpExecutionSelectionService(workflows, connections, identity, gateway);
     }
 
     @Bean McpGatewayProtocolAdapter mcpGatewayProtocolAdapter(McpGatewayService runtime,
