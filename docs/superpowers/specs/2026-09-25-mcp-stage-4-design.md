@@ -1,6 +1,6 @@
 # Stage 4 — Codex MCP runtime design
 
-Status: design approved in conversation; written spec awaiting review. Scope is [MCP roadmap Stage 4](../../mcp-integrations/roadmap.md). Stage 3's execution-scoped gateway is the runtime authority. Settings UI, OAuth, catalog changes, new providers, and sandbox network changes are outside this stage.
+Status: written spec approved for implementation planning. Scope is [MCP roadmap Stage 4](../../mcp-integrations/roadmap.md). Stage 3's execution-scoped gateway is the runtime authority. Settings UI, OAuth, catalog changes, new providers, and sandbox network changes are outside this stage.
 
 ## Outcome
 
