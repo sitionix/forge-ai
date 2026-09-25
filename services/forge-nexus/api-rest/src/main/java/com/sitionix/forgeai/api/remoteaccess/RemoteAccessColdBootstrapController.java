@@ -12,6 +12,7 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
@@ -91,7 +92,10 @@ public class RemoteAccessColdBootstrapController {
         } catch (Exception invalid) { return false; }
     }
 
-    private static final class SystemBridge implements Bridge {
+    static final class SystemBridge implements Bridge {
+        private final Path socketPath;
+        SystemBridge() { this(Path.of("/run/forge-remote-bootstrap.sock")); }
+        SystemBridge(Path socketPath) { this.socketPath=socketPath; }
         public boolean ready() {
             try {
                 var connection=(HttpURLConnection)new URL("http://127.0.0.1:9100/fgaisox/actuator/health").openConnection();
@@ -114,12 +118,13 @@ public class RemoteAccessColdBootstrapController {
             try (var channel=SocketChannel.open(StandardProtocolFamily.UNIX)) {
                 long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(15);
                 channel.configureBlocking(false);
-                if (!channel.connect(UnixDomainSocketAddress.of("/run/forge-remote-bootstrap.sock"))) {
+                if (!channel.connect(UnixDomainSocketAddress.of(socketPath))) {
                     await(channel,SelectionKey.OP_CONNECT,deadline);
                     if (!channel.finishConnect()) throw new IllegalStateException("Bootstrap connection unavailable");
                 }
                 var request=ByteBuffer.wrap("ENABLE\n".getBytes(StandardCharsets.US_ASCII));
                 while(request.hasRemaining()) { await(channel,SelectionKey.OP_WRITE,deadline);channel.write(request); }
+                channel.shutdownOutput();
                 var reply=ByteBuffer.allocate(32);
                 while (reply.position()<32) {
                     await(channel,SelectionKey.OP_READ,deadline);

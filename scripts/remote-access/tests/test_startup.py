@@ -252,11 +252,17 @@ class RemoteAccessStartupTest(unittest.TestCase):
             root = pathlib.Path(directory)
             test_jar = root / 'agent.jar'
             test_jar.write_bytes(b'synthetic-test-jar')
+            commands = root / 'commands'
+            commands.mkdir()
+            systemctl = commands / 'systemctl'
+            systemctl.write_text('#!/bin/sh\nexit 3\n')
+            systemctl.chmod(0o755)
             environment = os.environ.copy()
             environment.update(FORGE_SYSTEMD_USE_SUDO='0',
                                FORGE_REMOTE_ACCESS_PACKAGE_DIR=str(root / 'package'),
                                FORGE_REMOTE_ACCESS_JAR_DIR=str(root / 'jars'),
-                               FORGE_REMOTE_ACCESS_AGENT_JAR_SOURCE=str(test_jar))
+                               FORGE_REMOTE_ACCESS_AGENT_JAR_SOURCE=str(test_jar),
+                               PATH=str(commands) + os.pathsep + environment['PATH'])
             staged = ROOT / 'scripts/runtime/stage-remote-access.sh'
             self.assertTrue(staged.is_file(), 'startup package staging script must exist')
             subprocess.run([str(staged)], cwd=ROOT, env=environment,

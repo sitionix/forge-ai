@@ -91,7 +91,7 @@ class Stage4HelperTest(unittest.TestCase):
     def test_exact_stage3_artifacts_upgrade_and_unknown_bytes_conflict(self):
         import tempfile
         setup=load('install')
-        with tempfile.TemporaryDirectory() as temp, patch.object(setup,'require_root_owned'), patch.object(setup,'LIB',pathlib.Path(temp)):
+        with tempfile.TemporaryDirectory() as temp, patch.object(setup,'require_root_owned'), patch.object(setup,'LIB',pathlib.Path(temp)), patch.object(setup,'RUN',pathlib.Path(temp)/'run'):
             for name,source,fixture,installer in [('forced-command','forced_command.py','stage3-forced-command.py',setup.install_forced_command),('invitation-supervisor','invitation_supervisor.py','stage3-invitation-supervisor.py',setup.install_invitation_supervisor)]:
                 target=pathlib.Path(temp)/name
                 target.write_bytes((BASE/'tests'/'fixtures'/fixture).read_bytes());target.chmod(0o755)

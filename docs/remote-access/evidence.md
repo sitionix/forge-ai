@@ -1205,6 +1205,45 @@ it is not a two-physical-machine E2E. The privileged
 cancel, revoke, descendant cleanup, and unrelated-session isolation in one
 direction. `git diff --check` PASS.
 
-Real two-machine pairing, commands in both directions in one run, browser
-Enable against this host, and live Codex acceptance remain NOT_RUN. The
-operator host's system `ssh.service` has not been started by this worktree.
+At this revision, real two-machine pairing, commands in both directions in
+one run, browser Enable against this host, and live Codex acceptance were
+NOT_RUN. The subsequent host attempt is recorded below.
+
+## Host startup attempt (2026-09-25)
+
+`just start` from this worktree installed the bootstrap socket and new Nexus;
+`GET /fgaisox/api/v1/infrastructure/agents/remote-access/bootstrap` returned
+`COLD`, and the served page contains the Enable control. Full startup did not
+pass health checks. The worktree Python environments had FastAPI 0.125.0 with
+Pydantic 1.10.26, causing Knowledge and Jarvis imports to fail; their local
+environments were restored to the already-working FastAPI 0.103.2 version.
+The shared Agent database has an applied version 39 migration described as
+`add mcp tool inventory`, while the initial PR revision also assigned V39 to
+the Remote Access switch. The exact V39 source was recovered from the
+previously running Agent artifact and compared byte-for-byte; the new Remote
+Access migrations were renumbered to V40 and V41. No Flyway repair or
+DB-history edit was performed.
+
+After rebuilding, the shared Agent reached `UP` and the database recorded
+successful V39, V40 and V41 migrations. The first live browser-style Enable
+request exposed a Unix-socket framing bug: Nexus waited for a reply without
+closing its request output, while the bootstrap gate waited for EOF. A real
+Unix-domain socket regression now covers the half-close; the repeated request
+returned `202 PREPARING`. The pinned package manifest was refreshed after the
+rebuild. An existing endpoint file then failed closed with
+`REMOTE_ACCESS_ENDPOINT_CONFLICT`; there were zero invitations, sessions and
+pairs in the shared Agent DB, so the stale file was backed up before running
+the normal preparation again. No SSH grant was removed.
+
+Final host smoke: `forge-remote-setup.service`, `ssh.service`, the dedicated
+Agent and Nexus are active; the cold endpoint returned `READY`; all seven
+`just status` services were active. The dedicated Nexus health was `UP`, a
+same-origin local operator session was established without another password,
+and capabilities returned `ready=true`. The persisted control switched from
+`DISABLED` to `ENABLED`; Give Access returned a token with the expected
+versioned envelope, and the smoke invitation was cancelled. The token was not
+printed or retained. Full Agent and Nexus Maven verify, Console 588 tests,
+and the Python suite (106 passed, 2 skipped) passed. The Python fixture was
+adjusted to isolate its mocked runtime from this now-running host.
+
+Two-physical-machine pairing and live Codex acceptance remain NOT_RUN.

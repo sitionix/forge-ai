@@ -3,12 +3,39 @@ package com.sitionix.forgeai.api.remoteaccess;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import jakarta.servlet.http.HttpServletRequest;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 class RemoteAccessColdBootstrapControllerTest {
+    @Test void realBootstrapSocketReceivesCompleteRequestBeforeClientWaitsForReply(@TempDir Path directory) throws Exception {
+        var path=directory.resolve("bootstrap.sock");
+        try (var server=ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+            server.bind(UnixDomainSocketAddress.of(path));
+            var received=CompletableFuture.supplyAsync(() -> {
+                try (var peer=server.accept()) {
+                    var request=ByteBuffer.allocate(32);
+                    while (peer.read(request)>=0) { }
+                    peer.write(ByteBuffer.wrap("PREPARING\n".getBytes(StandardCharsets.US_ASCII)));
+                    request.flip();
+                    return StandardCharsets.US_ASCII.decode(request).toString();
+                } catch (Exception failure) { throw new IllegalStateException(failure); }
+            });
+            new RemoteAccessColdBootstrapController.SystemBridge(path).prepare();
+            assertThat(received.get(3,TimeUnit.SECONDS)).isEqualTo("ENABLE\n");
+        }
+    }
+
     @Test void oneLocalBrowserActionStartsOnlyTheFixedSetup() {
         var calls=new AtomicInteger();
         var controller=new RemoteAccessColdBootstrapController(new RemoteAccessColdBootstrapController.Bridge() {
