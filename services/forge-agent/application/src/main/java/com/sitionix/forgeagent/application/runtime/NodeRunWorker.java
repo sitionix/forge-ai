@@ -64,7 +64,10 @@ public class NodeRunWorker {
                 result = this.agentExecutor.execute(claim);
                 if (heartbeat != null) heartbeat.verifyOwnership();
             } catch (final RuntimeException exception) {
-                log.error(
+                if (this.mcpFailure(exception)) {
+                    log.warn("MCP execution failed nodeRunId={} workflowRunId={}",
+                            claim.nodeRunId(), claim.workflowRunId());
+                } else log.error(
                         "Agent executor failed nodeRunId={} workflowRunId={} agentId={} agentName={} providerId={} modelId={}",
                         claim.nodeRunId(),
                         claim.workflowRunId(),
@@ -92,8 +95,14 @@ public class NodeRunWorker {
     }
 
     private String failureMessage(final RuntimeException exception) {
+        if (this.mcpFailure(exception)) return "MCP execution failed.";
         final String message = exception.getMessage();
         return message == null || message.isBlank() ? "Agent execution failed." : message;
+    }
+
+    private boolean mcpFailure(final RuntimeException exception) {
+        return exception instanceof com.sitionix.forgeagent.domain.exception.ForgeAgentException typed
+                && "MCP_EXECUTION_FAILED".equals(typed.code());
     }
 
     private String failureCode(final RuntimeException exception) {

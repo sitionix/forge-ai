@@ -258,7 +258,8 @@ final class CodexAppServerClient implements CodexClient {
                             ? sessionProtocol.startDurableThread(current, this.threadStartParams(request), this.properties.getRequestTimeout())
                             : existingThreadId != null
                                 ? sessionProtocol.resumeThread(current, existingThreadId,
-                                        request.sharedSessionGroup() ? request.developerInstructions() : null,
+                                        request.sharedSessionGroup() || request.mcpSelection() != null
+                                                ? this.developerInstructions(request) : null,
                                         request.mcpSelection() == null ? null : this.threadStartParams(request).path("config"),
                                         this.properties.getRequestTimeout())
                                 : this.startThread(current, turnStateTracker, request);
@@ -272,8 +273,12 @@ final class CodexAppServerClient implements CodexClient {
             eventObserver.bindThread(threadId);
             if (callbacks != null && existingThreadId == null) callbacks.conversationStarted(threadId, providerVersion);
             if (request.mcpSelection() != null) {
-                this.inventoryVerifier.verify(current, threadId, request.mcpSelection(),
+                var inventory = this.inventoryVerifier.verify(current, threadId, request.mcpSelection(),
                         this.properties.getRequestTimeout());
+                eventObserver.allowMcpTools(inventory.effectiveTools());
+                var diagnostics = new java.util.ArrayList<>(request.mcpSelection().diagnostics());
+                diagnostics.addAll(inventory.diagnostics());
+                eventObserver.mcpDiagnostics(diagnostics);
             }
             state = turnStateTracker.register(threadId);
             final String turnId;
@@ -420,7 +425,7 @@ final class CodexAppServerClient implements CodexClient {
     private ObjectNode threadStartParams(final CodexTurnRequest request) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         params.put("model", request.modelId());
-        params.put("developerInstructions", request.developerInstructions());
+        params.put("developerInstructions", this.developerInstructions(request));
         params.put("approvalPolicy", CodexProtocol.APPROVAL_POLICY_NEVER);
         params.put("sandbox", CodexProtocol.SANDBOX_WORKSPACE_WRITE);
         params.put("cwd", request.executionWorkspace().cwd().toString());
@@ -435,6 +440,12 @@ final class CodexAppServerClient implements CodexClient {
         }
         params.set("config", config);
         return params;
+    }
+
+    private String developerInstructions(final CodexTurnRequest request) {
+        if (request.mcpSelection() == null) return request.developerInstructions();
+        return request.developerInstructions()
+                + "\n\nApproved Forge MCP tools are available as native tools. Use only approved tools when useful.";
     }
 
     private ObjectNode turnStartParams(final String threadId, final CodexTurnRequest request) {

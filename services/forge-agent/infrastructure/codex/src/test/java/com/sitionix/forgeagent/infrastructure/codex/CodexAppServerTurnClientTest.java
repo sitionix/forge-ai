@@ -66,7 +66,7 @@ class CodexAppServerTurnClientTest {
             final int turn = index;
             var process = index == 0 ? first : second;
             var token = "synthetic-grant-" + index;
-            var grants = new McpRuntimeLaunchGrants(Map.of(grantName, token));
+            var grants = new McpRuntimeLaunchGrants(Map.of(alias, token));
             var request = new CodexTurnRequest("Read.", "Instructions.", "model-a", null,
                     this.schemaUnchecked(), this.workspace(), false, selection);
             var result = CompletableFuture.supplyAsync(() -> client.executeDurable(request,
@@ -77,6 +77,9 @@ class CodexAppServerTurnClientTest {
             this.initialize(process);
             var thread = this.readRequest(process);
             assertThat(thread.path("method").asText()).isEqualTo(index == 0 ? "thread/start" : "thread/resume");
+            if (index == 0) assertThat(thread.path("params").path("developerInstructions").asText())
+                    .contains("Approved Forge MCP tools are available as native tools.")
+                    .doesNotContain("synthetic-grant");
             var config = thread.path("params").path("config");
             assertThat(config.path("mcp_servers").path(alias).path("bearer_token_env_var").asText())
                     .isEqualTo(grantName);
@@ -95,7 +98,7 @@ class CodexAppServerTurnClientTest {
             this.replyTurn(process, turnRequest, "turn-" + index);
             this.complete(process, "thread-durable", "turn-" + index, "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
             assertThat(result.get(1, TimeUnit.SECONDS)).contains("OK");
-            assertThat(starter.grants.get(index).tokens().get(grantName)).isEqualTo(token);
+            assertThat(starter.grants.get(index).tokens().get(alias)).isEqualTo(token);
         }
         client.close();
     }

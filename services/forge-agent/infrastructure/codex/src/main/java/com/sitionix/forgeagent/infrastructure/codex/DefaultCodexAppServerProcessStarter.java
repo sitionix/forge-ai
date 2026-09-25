@@ -41,7 +41,7 @@ final class DefaultCodexAppServerProcessStarter implements CodexAppServerProcess
         }
         try {
             if (this.launcher.enabled()) {
-                return new StartedCodexAppServer(this.launcher.startCodex(launchDirectory, grants.tokens()),
+                return new StartedCodexAppServer(this.launcher.startCodex(launchDirectory, grants.environment()),
                     List.of("codex", "app-server", "--stdio"), Instant.now());
             }
             if (!grants.isEmpty()) throw new CodexTransportException("Isolated Codex runtime is unavailable");

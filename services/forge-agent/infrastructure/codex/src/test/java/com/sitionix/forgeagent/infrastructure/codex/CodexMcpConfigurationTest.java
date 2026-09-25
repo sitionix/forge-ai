@@ -24,6 +24,14 @@ class CodexMcpConfigurationTest {
         assertThat(new McpRuntimeLaunchGrants(Map.of()).isEmpty()).isTrue();
     }
 
+    @Test void launchAliasesBecomeOnlyFixedCredentialEnvironmentNames() {
+        var grants = new McpRuntimeLaunchGrants(Map.of(
+                "forge_0123456789ab4cde80123456789abcde", "synthetic-grant"));
+        assertThat(grants.environment()).containsOnlyKeys(
+                "FORGE_MCP_GRANT_0123456789AB4CDE80123456789ABCDE");
+        assertThat(grants.toString()).doesNotContain("synthetic-grant");
+    }
+
     @Test void addsOnlyApprovedToolsAndEnvironmentReference() {
         var config = json.createObjectNode();
         var entry = new McpExecutionSelection.Entry("forge_0123456789ab4cde80123456789abcde",

@@ -8,10 +8,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
+import com.sitionix.forgeagent.domain.model.McpExecutionSelection;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Map;
 
 final class CodexAgentExecutionEventMapper {
     private static final int MAX_PAYLOAD_BYTES = 120_000;
@@ -29,9 +31,30 @@ final class CodexAgentExecutionEventMapper {
 
     private final ObjectMapper objectMapper;
     private final CodexEventPayloadSanitizer sanitizer = new CodexEventPayloadSanitizer();
+    private Map<String, Set<String>> activeMcpTools = Map.of();
+    private boolean mcpMode;
 
     CodexAgentExecutionEventMapper(final ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
+    }
+
+    void allowMcpTools(final Map<String, Set<String>> tools) {
+        this.activeMcpTools = Map.copyOf(tools);
+        this.mcpMode = true;
+    }
+
+    AgentExecutionEventCandidate mcpDiagnostic(final McpExecutionSelection.Diagnostic diagnostic,
+                                                final Instant observedAt) {
+        final String code = switch (diagnostic.code()) {
+            case "CONNECTION_UNAVAILABLE", "MCP_CONNECTION_UNAVAILABLE", "MCP_TOOL_UNAVAILABLE" -> diagnostic.code();
+            default -> "MCP_UNAVAILABLE";
+        };
+        final ObjectNode payload = this.objectMapper.createObjectNode();
+        payload.put("connectionId", diagnostic.connectionId().toString());
+        payload.put("code", code);
+        payload.put("message", "MCP connection or approved tool unavailable.");
+        return this.event(AgentExecutionEventType.WARNING, null, null,
+                "mcp:" + diagnostic.connectionId() + ":" + code, payload, observedAt);
     }
 
     AgentExecutionEventCandidate turnStarted(final String turnId, final Instant observedAt) {
@@ -45,7 +68,8 @@ final class CodexAgentExecutionEventMapper {
     AgentExecutionEventCandidate turnFailed(final String turnId, final String message, final Instant observedAt) {
         final ObjectNode payload = this.objectMapper.createObjectNode();
         payload.put("providerTurnId", turnId);
-        if (message != null && !message.isBlank()) this.putBounded(payload, "message", message);
+        if (this.mcpMode) payload.put("message", "MCP execution failed.");
+        else if (message != null && !message.isBlank()) this.putBounded(payload, "message", message);
         return this.event(AgentExecutionEventType.TURN, AgentExecutionEventStatus.FAILED, null,
                 "turn:" + turnId + ":failed", payload, observedAt);
     }
@@ -107,8 +131,8 @@ final class CodexAgentExecutionEventMapper {
             case "reasoning" -> completed ? this.reasoning(item, key, observedAt) : Optional.empty();
             case "commandExecution" -> Optional.of(this.command(item, completed, key, observedAt));
             case "fileChange" -> completed ? Optional.of(this.fileChange(item, key, observedAt)) : Optional.empty();
-            case "mcpToolCall", "dynamicToolCall" -> Optional.of(this.tool(
-                    item, type, completed, key, observedAt));
+            case "mcpToolCall" -> this.mcpTool(item, completed, key, observedAt);
+            case "dynamicToolCall" -> Optional.of(this.tool(item, type, completed, key, observedAt));
             case "agentMessage" -> completed ? this.agentMessage(item, key, observedAt) : Optional.empty();
             case "contextCompaction" -> Optional.of(this.event(
                     AgentExecutionEventType.CONTEXT_COMPACTION,
@@ -184,6 +208,28 @@ final class CodexAgentExecutionEventMapper {
                 null, key, payload, observedAt);
     }
 
+    private Optional<AgentExecutionEventCandidate> mcpTool(final JsonNode item, final boolean completed,
+                                                            final String key, final Instant observedAt) {
+        final String alias = text(item.path("server"));
+        final String name = firstText(item, "tool", "name");
+        if (alias == null || name == null || !this.activeMcpTools.getOrDefault(alias, Set.of()).contains(name))
+            return Optional.empty();
+        final boolean failed = "failed".equals(item.path("status").asText());
+        final String outcome = !completed ? "started" : failed ? "failed"
+                : item.path("isError").asBoolean(false) || item.path("result").path("isError").asBoolean(false)
+                    ? "tool_error" : "completed";
+        final ObjectNode payload = this.objectMapper.createObjectNode();
+        payload.put("toolKind", "MCP");
+        payload.put("server", alias);
+        payload.put("tool", name.length() > 128 ? name.substring(0, 128) : name);
+        payload.put("providerStatus", outcome);
+        payload.put("responseSummary", outcome);
+        return Optional.of(this.event(AgentExecutionEventType.TOOL_CALL,
+                !completed ? AgentExecutionEventStatus.STARTED
+                        : failed ? AgentExecutionEventStatus.FAILED : AgentExecutionEventStatus.COMPLETED,
+                null, key, payload, observedAt));
+    }
+
     private Optional<AgentExecutionEventCandidate> agentMessage(final JsonNode item, final String key,
                                                                  final Instant observedAt) {
         final String phase = text(item.path("phase"));
@@ -228,6 +274,12 @@ final class CodexAgentExecutionEventMapper {
     private Optional<AgentExecutionEventCandidate> diagnostic(final AgentExecutionEventType type,
                                                                final JsonNode params,
                                                                final Instant observedAt) {
+        if (this.mcpMode) {
+            final ObjectNode payload = this.objectMapper.createObjectNode();
+            payload.put("message", "MCP provider diagnostic.");
+            return Optional.of(this.event(type, type == AgentExecutionEventType.ERROR
+                    ? AgentExecutionEventStatus.FAILED : null, null, null, payload, observedAt));
+        }
         final String message = firstText(params.path("error"), "message");
         final String resolved = message == null ? firstText(params, "message", "summary") : message;
         if (resolved == null) return Optional.empty();

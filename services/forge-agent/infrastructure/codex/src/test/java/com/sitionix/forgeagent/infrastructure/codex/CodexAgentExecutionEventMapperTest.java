@@ -9,6 +9,8 @@ import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CodexAgentExecutionEventMapperTest {
@@ -76,6 +78,7 @@ class CodexAgentExecutionEventMapperTest {
         assertThat(fileChange.type()).isEqualTo(AgentExecutionEventType.FILE_CHANGE);
         assertThat(this.payload(fileChange).toString()).contains("src/App.java").doesNotContain("raw patch", "content");
 
+        this.mapper.allowMcpTools(Map.of("drive", Set.of("search")));
         final AgentExecutionEventCandidate tool = map("item/completed", """
                 {"threadId":"t","turnId":"u","item":{"id":"m1","type":"mcpToolCall","server":"drive",
                  "tool":"search","operation":"files.search","status":"completed",
@@ -86,9 +89,9 @@ class CodexAgentExecutionEventMapperTest {
         assertThat(this.payload(tool).path("toolKind").asText()).isEqualTo("MCP");
         assertThat(this.payload(tool).path("tool").asText()).isEqualTo("search");
         assertThat(this.payload(tool).path("server").asText()).isEqualTo("drive");
-        assertThat(this.payload(tool).path("operation").asText()).isEqualTo("files.search");
-        assertThat(this.payload(tool).toString()).contains("[REDACTED]", "found")
-                .doesNotContain("do-not-store", "private input", "arguments", "requestSummary", "\"secret\"");
+        assertThat(this.payload(tool).path("responseSummary").asText()).isEqualTo("completed");
+        assertThat(this.payload(tool).toString()).doesNotContain("files.search", "found",
+                "do-not-store", "private input", "arguments", "requestSummary", "\"secret\"");
 
         final AgentExecutionEventCandidate message = map("item/completed", """
                 {"threadId":"t","turnId":"u","item":{"id":"a1","type":"agentMessage","phase":"final_answer","text":"done"}}
@@ -114,6 +117,26 @@ class CodexAgentExecutionEventMapperTest {
         assertThat(map("item/completed", """
                 {"threadId":"t","turnId":"u","item":{"id":"c1","type":"contextCompaction","status":"completed"}}
                 """).type()).isEqualTo(AgentExecutionEventType.CONTEXT_COMPACTION);
+    }
+
+    @Test
+    void mcpActivityIgnoresRawResultFailureAndUnknownTools() throws Exception {
+        this.mapper.allowMcpTools(Map.of("forge_allowed", Set.of("search")));
+        var event = map("item/completed", """
+                {"threadId":"t","turnId":"u","item":{"id":"m1","type":"mcpToolCall",
+                 "server":"forge_allowed","tool":"search","status":"synthetic-canary",
+                 "result":{"text":"synthetic-canary"},"error":{"message":"synthetic-canary"}}}
+                """);
+        assertThat(event.payload()).doesNotContain("synthetic-canary");
+        assertThat(optional("item/completed", """
+                {"threadId":"t","turnId":"u","item":{"id":"m2","type":"mcpToolCall",
+                 "server":"unapproved","tool":"search","result":"synthetic-canary"}}
+                """)).isEmpty();
+        assertThat(this.mapper.turnFailed("turn-1", "synthetic-canary", OBSERVED_AT).payload())
+                .doesNotContain("synthetic-canary");
+        assertThat(map("error", """
+                {"threadId":"t","turnId":"u","message":"synthetic-canary"}
+                """).payload()).doesNotContain("synthetic-canary");
     }
 
     @Test
@@ -148,18 +171,18 @@ class CodexAgentExecutionEventMapperTest {
     }
 
     @Test
-    void boundsLargeStructuredPayloadWithExplicitMetadata() throws Exception {
+    void largeMcpResultIsNeverStoredInActivity() throws Exception {
+        this.mapper.allowMcpTools(Map.of("forge_allowed", Set.of("search")));
         final JsonNode params = this.json.createObjectNode()
                 .put("threadId", "t").put("turnId", "u")
                 .set("item", this.json.createObjectNode().put("id", "tool").put("type", "mcpToolCall")
-                        .put("tool", "search").put("status", "completed")
+                        .put("server", "forge_allowed").put("tool", "search").put("status", "completed")
                         .set("result", this.json.createObjectNode().put("summary", "x".repeat(140_000))));
 
         final JsonNode payload = this.payload(this.mapper.map("item/completed", params, OBSERVED_AT).orElseThrow());
 
-        assertThat(payload.path("truncated").asBoolean()).isTrue();
-        assertThat(payload.path("originalBytes").asLong()).isGreaterThan(payload.path("storedBytes").asLong());
-        assertThat(payload.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length).isLessThan(131_072);
+        assertThat(payload.path("responseSummary").asText()).isEqualTo("completed");
+        assertThat(payload.toString()).doesNotContain("xxx");
     }
 
     private AgentExecutionEventCandidate map(final String method, final String params) throws Exception {
