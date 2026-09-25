@@ -1,7 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.local.mcp.protocol;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeagent.domain.port.McpRemoteProbe;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Set;
@@ -15,11 +14,12 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
-class McpProbeConfiguration {
+class McpClientConfiguration {
     private static final Duration MAX_MANAGEMENT_PROBE_BUDGET = Duration.ofSeconds(25);
-    @Bean McpRemoteProbe mcpRemoteProbe(
+    @Bean SdkMcpRemoteClient mcpRemoteClient(
             @Value("${forge.mcp.probe.connect-timeout:2s}") Duration connectTimeout,
             @Value("${forge.mcp.probe.request-timeout:3s}") Duration requestTimeout,
+            @Value("${forge.mcp.tool-call-timeout:30s}") Duration toolCallTimeout,
             @Value("${forge.mcp.probe.max-response-bytes:1048576}") int maxResponseBytes,
             @Value("${forge.mcp.probe.max-pages:5}") int maxPages,
             @Value("${forge.mcp.probe.max-tools:500}") int maxTools,
@@ -37,7 +37,7 @@ class McpProbeConfiguration {
             if (available == null) throw new IllegalStateException("MCP SSL bundle is unavailable");
             context = available.getBundle(sslBundle).createSslContext();
         }
-        return new SdkMcpRemoteProbe(connectTimeout, requestTimeout, maxResponseBytes,
-                maxPages, maxTools, allowances, context, objectMapper);
+        return new SdkMcpRemoteClient(connectTimeout, requestTimeout, maxResponseBytes,
+                maxPages, maxTools, allowances, context, objectMapper, toolCallTimeout);
     }
 }

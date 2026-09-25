@@ -13,7 +13,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 
 /** Narrow SDK seam: retain HTTP 401/403 as typed status without reading or logging response bodies. */
-final class McpProbeHttpClientBuilder implements HttpClient.Builder {
+final class McpHttpClientBuilder implements HttpClient.Builder {
     private final HttpClient.Builder delegate = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NEVER).proxy(HttpClient.Builder.NO_PROXY);
     private volatile int authStatus;
@@ -39,7 +39,10 @@ final class McpProbeHttpClientBuilder implements HttpClient.Builder {
     }
     @Override public HttpClient.Builder version(HttpClient.Version value) { delegate.version(value); return this; }
     @Override public HttpClient.Builder priority(int value) { delegate.priority(value); return this; }
-    @Override public HttpClient.Builder proxy(ProxySelector value) { delegate.proxy(value); return this; }
+    @Override public HttpClient.Builder proxy(ProxySelector value) {
+        if (value != HttpClient.Builder.NO_PROXY) throw new IllegalArgumentException("MCP proxies are forbidden");
+        return this;
+    }
     @Override public HttpClient.Builder authenticator(Authenticator value) { delegate.authenticator(value); return this; }
     @Override public HttpClient build() { return new StatusClient(delegate.build()); }
 
@@ -70,6 +73,8 @@ final class McpProbeHttpClientBuilder implements HttpClient.Builder {
         @Override public void close() { delegate.close(); }
         private <T> HttpResponse.BodyHandler<T> observe(HttpRequest request, HttpResponse.BodyHandler<T> handler) {
             return info -> {
+                if (request.method().equals("POST") && (info.statusCode() == 401 || info.statusCode() == 403))
+                    authStatus = info.statusCode();
                 if (request.method().equals("POST") && info.statusCode() >= 200 && info.statusCode() < 300) {
                     sawSuccessfulPost = true;
                 }

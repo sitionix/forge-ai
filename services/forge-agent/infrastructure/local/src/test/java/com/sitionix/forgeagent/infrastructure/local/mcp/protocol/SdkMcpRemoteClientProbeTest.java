@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
-class SdkMcpRemoteProbeTest {
+class SdkMcpRemoteClientProbeTest {
     @Test void initializesAndCollectsAllToolPagesWithoutCallingTools() throws Exception {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         var pages = new AtomicInteger();
@@ -46,7 +46,7 @@ class SdkMcpRemoteProbeTest {
         server.start();
         try {
             int port = server.getAddress().getPort();
-            var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(2), Duration.ofSeconds(3), 65536, 4, 10,
+            var probe = new SdkMcpRemoteClient(Duration.ofSeconds(2), Duration.ofSeconds(3), 65536, 4, 10,
                     Set.of("127.0.0.1:" + port));
             var report = probe.probe(URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.BEARER,
                     "synthetic-token".getBytes(StandardCharsets.UTF_8));
@@ -59,7 +59,7 @@ class SdkMcpRemoteProbeTest {
     }
 
     @Test void rejectsPrivateAddressWithoutExplicitHostPortAllowance() {
-        var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(1), Duration.ofSeconds(1), 65536, 4, 10, Set.of());
+        var probe = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(1), 65536, 4, 10, Set.of());
         for (String endpoint : new String[]{"http://127.0.0.1:9999/mcp", "http://[::1]/mcp",
                 "http://169.254.169.254/mcp", "http://[fe80::1]/mcp", "https://user:pass@example.org/mcp",
                 "https://example.org/mcp?token=secret", "file:///tmp/mcp"}) {
@@ -80,7 +80,7 @@ class SdkMcpRemoteProbeTest {
             server.start();
             try {
                 int port = server.getAddress().getPort();
-                var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+                var probe = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
                         Set.of("127.0.0.1:" + port));
                 assertThatThrownBy(() -> probe.probe(URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.NONE, null))
                         .isInstanceOf(McpProbeException.class).extracting("reason")
@@ -106,7 +106,7 @@ class SdkMcpRemoteProbeTest {
         server.start();
         try {
             int port = server.getAddress().getPort();
-            var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+            var probe = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
                     Set.of("127.0.0.1:" + port));
             assertThatThrownBy(() -> probe.probe(URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.NONE, null))
                     .isInstanceOf(McpProbeException.class).extracting("reason")
@@ -130,7 +130,7 @@ class SdkMcpRemoteProbeTest {
         server.start();
         try {
             int port = server.getAddress().getPort();
-            var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+            var probe = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
                     Set.of("127.0.0.1:" + port));
             assertThatThrownBy(() -> probe.probe(URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.NONE, null))
                     .isInstanceOf(McpProbeException.class).extracting("reason")
@@ -155,7 +155,7 @@ class SdkMcpRemoteProbeTest {
         server.start();
         try {
             int port = server.getAddress().getPort();
-            var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+            var probe = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
                     Set.of("127.0.0.1:" + port));
             assertThatThrownBy(() -> probe.probe(URI.create("http://127.0.0.1:" + port + "/mcp"),
                     McpAuthType.BEARER, "synthetic-redirect-secret".getBytes(StandardCharsets.UTF_8)))
@@ -195,7 +195,7 @@ class SdkMcpRemoteProbeTest {
         server.start();
         try {
             int port = server.getAddress().getPort();
-            var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+            var probe = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
                     Set.of("127.0.0.1:" + port));
             var report = probe.probe(URI.create("http://127.0.0.1:" + port + "/mcp"),
                     McpAuthType.SECRET_HEADERS, McpCredentialSecret.headers(Map.of("X-Synthetic-Key", "synthetic-header-secret")).bytes());
@@ -220,7 +220,7 @@ class SdkMcpRemoteProbeTest {
         server.start();
         try {
             int port = server.getAddress().getPort();
-            var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(1), Duration.ofSeconds(2), 1024, 2, 10,
+            var probe = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 1024, 2, 10,
                     Set.of("127.0.0.1:" + port));
             assertThatThrownBy(() -> probe.probe(URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.NONE, null))
                     .isInstanceOf(McpProbeException.class).extracting("reason")
@@ -252,7 +252,7 @@ class SdkMcpRemoteProbeTest {
         server.start();
         try {
             int port = server.getAddress().getPort();
-            var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+            var probe = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
                     Set.of("127.0.0.1:" + port));
             assertThat(probe.probe(URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.NONE, null).tools()).isEmpty();
         } finally { server.stop(0); }
@@ -282,7 +282,7 @@ class SdkMcpRemoteProbeTest {
         server.start();
         try {
             int port = server.getAddress().getPort();
-            var probe = new SdkMcpRemoteProbe(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+            var probe = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
                     Set.of("127.0.0.1:" + port));
             assertThatThrownBy(() -> probe.probe(URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.NONE, null))
                     .isInstanceOf(McpProbeException.class).extracting("reason")

@@ -64,4 +64,4 @@
 
 ## Найближча робота
 
-Stage 1 уже дає збереження й management API. Flow 1 «доступні MCP» реалізовано окремо: він лише читає Registry і не змінює connections. Наступний backend зріз Flow 2 — Test connection, inventory та явне підтвердження tools; UI й runtime виконуються у відповідних наступних stages.
+Stage 1 уже дає збереження й management API. Flow 1 «доступні MCP» лише читає Registry і не змінює connections. Backend Flow 2 дає Test connection, inventory та явне підтвердження tools; Stage 2 також має internal SDK tool-call boundary. UI й runtime виконуються у відповідних наступних stages.

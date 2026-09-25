@@ -30,6 +30,7 @@ management:
 forge:
   mcp:
     enabled: ${FORGE_MCP_ENABLED:false}
+    tool-call-timeout: ${FORGE_MCP_TOOL_CALL_TIMEOUT:30s}
     probe:
       connect-timeout: ${FORGE_MCP_PROBE_CONNECT_TIMEOUT:2s}
       request-timeout: ${FORGE_MCP_PROBE_REQUEST_TIMEOUT:3s}
