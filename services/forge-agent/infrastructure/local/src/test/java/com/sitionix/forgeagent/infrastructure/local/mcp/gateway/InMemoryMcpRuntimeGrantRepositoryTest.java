@@ -12,6 +12,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class InMemoryMcpRuntimeGrantRepositoryTest {
@@ -59,6 +62,53 @@ class InMemoryMcpRuntimeGrantRepositoryTest {
         assertThatThrownBy(() -> store.issue(grant(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(store.resolve(issued.token(), first.connectionId())).contains(first);
+    }
+
+    @Test void overlappingTurnsOnSameConnectionRemainIsolated() {
+        var store = store(10);
+        UUID connection = UUID.randomUUID();
+        var first = grant(connection, UUID.randomUUID(), UUID.randomUUID());
+        var second = grant(connection, UUID.randomUUID(), UUID.randomUUID());
+        var firstToken = store.issue(first).token();
+        var secondToken = store.issue(second).token();
+        assertThat(store.resolve(firstToken, connection)).contains(first);
+        assertThat(store.resolve(secondToken, connection)).contains(second);
+        store.revokeExecution(first.turnId());
+        assertThat(store.resolve(firstToken, connection)).isEmpty();
+        assertThat(store.resolve(secondToken, connection)).contains(second);
+    }
+
+    @Test void admissionAndRevocationAreOrderedAndLaterCallsAreDenied() {
+        var store = store(10);
+        var grant = grant(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        String token = store.issue(grant).token();
+        assertThat(store.admit(token, grant.connectionId())).isTrue();
+        store.revokeConnection(grant.connectionId());
+        assertThat(store.admit(token, grant.connectionId())).isFalse();
+        assertThat(store.admit(token, UUID.randomUUID())).isFalse();
+    }
+
+    @Test void concurrentRevokeCannotAdmitASecondCallAfterFirstWasAdmitted() throws Exception {
+        var store = store(10);
+        var grant = grant(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        String token = store.issue(grant).token();
+        var firstAdmitted = new CountDownLatch(1);
+        var finishFirst = new CountDownLatch(1);
+        try (var worker = Executors.newSingleThreadExecutor()) {
+            var first = worker.submit(() -> {
+                boolean allowed = store.admit(token, grant.connectionId());
+                firstAdmitted.countDown();
+                if (!finishFirst.await(3, TimeUnit.SECONDS)) throw new IllegalStateException("fixture timeout");
+                return allowed;
+            });
+            assertThat(firstAdmitted.await(3, TimeUnit.SECONDS)).isTrue();
+            store.revokeConnection(grant.connectionId());
+            assertThat(store.admit(token, grant.connectionId())).isFalse();
+            finishFirst.countDown();
+            assertThat(first.get(3, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            finishFirst.countDown();
+        }
     }
 
     private InMemoryMcpRuntimeGrantRepository store(int capacity) {

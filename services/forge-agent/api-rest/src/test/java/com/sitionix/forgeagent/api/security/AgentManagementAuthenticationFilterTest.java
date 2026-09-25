@@ -53,6 +53,28 @@ class AgentManagementAuthenticationFilterTest {
             assertThat(chain.getRequest()).isNull();
         }
     }
+
+    @Test void onlyExactRuntimeMcpRouteIsDelegatedToItsOwnGuard() throws Exception {
+        byte[] secret = new byte[32]; Arrays.fill(secret, (byte) 17);
+        Path file = directory.resolve("service");
+        Files.writeString(file, Base64.getUrlEncoder().withoutPadding().encodeToString(secret));
+        Files.setPosixFilePermissions(file, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
+        var filter = new AgentManagementAuthenticationFilter(new ProtectedCredentialFile(file));
+        String id = UUID.randomUUID().toString();
+        for (String path : List.of("/internal/mcp/connections/" + id + "/test",
+                "/internal/mcp/connections/" + id + "/", "/internal/mcp/%63onnections/" + id,
+                "/api/v1/integrations/mcp/connections/" + id)) {
+            var request = new MockHttpServletRequest("POST", path);
+            request.addHeader("Authorization", "Bearer runtime-token");
+            var chain = new MockFilterChain();
+            filter.doFilter(request, new MockHttpServletResponse(), chain);
+            assertThat(chain.getRequest()).as(path).isNull();
+        }
+        var exact = new MockHttpServletRequest("POST", "/internal/mcp/connections/" + id);
+        var delegated = new MockFilterChain();
+        filter.doFilter(exact, new MockHttpServletResponse(), delegated);
+        assertThat(delegated.getRequest()).isSameAs(exact);
+    }
     @Test void combinedOwnershipRechecksEveryDispatchAndAlias() throws Exception {
         byte[] raw=new byte[32]; Arrays.fill(raw,(byte)7);
         String general=Base64.getUrlEncoder().withoutPadding().encodeToString(raw), remote="r".repeat(43);

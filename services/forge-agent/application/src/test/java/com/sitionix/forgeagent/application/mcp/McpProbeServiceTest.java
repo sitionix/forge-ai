@@ -58,4 +58,24 @@ class McpProbeServiceTest {
         assertThat(plaintext).containsOnly((byte) 0);
         verifyNoInteractions(inventory);
     }
+
+    @Test void changedInventoryRevokesButUnchangedTestRetainsGrant() {
+        var gateway = mock(McpGatewayService.class);
+        var protectedService = new McpProbeService(repository, () -> installation, cipher, remote, inventory, gateway);
+        var encrypted = new McpEncryptedCredential("test", new byte[]{1});
+        var report = new McpProbeReport("2025-06-18", List.of(new McpToolSummary("read", "Read", "sha256:abc")));
+        var changed = new McpConnection(id, installation, "test", connection.endpoint(), connection.authType(),
+                connection.enabled(), connection.projectAccess(),
+                Set.of(new McpAllowedTool("read", "sha256:abc")), true,
+                connection.createdAt(), connection.updatedAt(), null, null);
+        when(repository.findById(installation, id)).thenReturn(Optional.of(connection), Optional.of(connection),
+                Optional.of(connection), Optional.of(changed));
+        when(repository.credential(installation, id)).thenReturn(Optional.of(encrypted));
+        when(cipher.decrypt(installation, id, "credential", encrypted)).thenReturn(new byte[]{2});
+        when(remote.probe(any(), any(), any())).thenReturn(report);
+        protectedService.test(id);
+        verifyNoInteractions(gateway);
+        protectedService.test(id);
+        verify(gateway).revokeConnection(id);
+    }
 }

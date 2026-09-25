@@ -89,6 +89,29 @@ class AgentMcpManagementGuardIT {
   @SpyBean McpRemoteProbe remoteProbe;
   @Autowired JdbcTemplate jdbc;
 
+  @Test void runtimeRouteHasItsOwnBearerAndDoesNotOpenManagementAliases() {
+    var path = PathParams.create().add("id", UUID.randomUUID());
+    String serviceBearer = "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE);
+    clearInvocations(remoteProbe);
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.RUNTIME_MCP_DENIED)
+        .withPathParameters(path).header("Host", "localhost")
+        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.RUNTIME_MCP_DENIED)
+        .withPathParameters(path).header("Host", "localhost")
+        .header("Authorization", serviceBearer)
+        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.RUNTIME_MCP_DENIED)
+        .withPathParameters(path).header("Host", "localhost")
+        .header("Origin", "https://attacker.example")
+        .header("Authorization", "Bearer runtime-canary")
+        .expectStatus(HttpStatus.FORBIDDEN).assertAndCreate();
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.RUNTIME_MCP_ALTERNATIVE)
+        .withPathParameters(path).header("Host", "localhost")
+        .header("Authorization", "Bearer runtime-canary")
+        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
+    verifyNoInteractions(remoteProbe);
+  }
+
   @Test void probeRouteRequiresServiceBearerBeforeApplication() {
     var path = PathParams.create().add("id", UUID.randomUUID());
     clearInvocations(probeService);

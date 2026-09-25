@@ -54,11 +54,16 @@ public final class InMemoryMcpRuntimeGrantRepository implements McpRuntimeGrantR
         String hash = hash(token);
         Entry entry = grants.get(hash);
         if (entry == null) return Optional.empty();
-        if (ticker.getAsLong() - entry.expiresAtNanos() >= 0 || !clock.instant().isBefore(entry.grant().deadline())) {
+        if (expired(entry)) {
             grants.remove(hash);
             return Optional.empty();
         }
         return entry.grant().connectionId().equals(connectionId) ? Optional.of(entry.grant()) : Optional.empty();
+    }
+
+    /** Admission and revocation use the same short critical section; accepted calls are in flight. */
+    @Override public synchronized boolean admit(String token, UUID connectionId) {
+        return resolve(token, connectionId).isPresent();
     }
 
     @Override public synchronized void revokeConnection(UUID connectionId) {
@@ -79,6 +84,12 @@ public final class InMemoryMcpRuntimeGrantRepository implements McpRuntimeGrantR
         long now = ticker.getAsLong();
         grants.values().removeIf(entry -> now - entry.expiresAtNanos() >= 0 || !clock.instant().isBefore(entry.grant().deadline()));
     }
+
+    private boolean expired(Entry entry) {
+        return ticker.getAsLong() - entry.expiresAtNanos() >= 0
+                || !clock.instant().isBefore(entry.grant().deadline());
+    }
+
 
     private static String hash(String token) {
         try {

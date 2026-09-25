@@ -31,6 +31,10 @@ forge:
   mcp:
     enabled: ${FORGE_MCP_ENABLED:false}
     tool-call-timeout: ${FORGE_MCP_TOOL_CALL_TIMEOUT:30s}
+    gateway:
+      max-grants: ${FORGE_MCP_GATEWAY_MAX_GRANTS:1000}
+      max-request-bytes: ${FORGE_MCP_GATEWAY_MAX_REQUEST_BYTES:1048576}
+      allowed-hosts: ${FORGE_MCP_GATEWAY_ALLOWED_HOSTS:localhost,127.0.0.1}
     probe:
       connect-timeout: ${FORGE_MCP_PROBE_CONNECT_TIMEOUT:2s}
       request-timeout: ${FORGE_MCP_PROBE_REQUEST_TIMEOUT:3s}

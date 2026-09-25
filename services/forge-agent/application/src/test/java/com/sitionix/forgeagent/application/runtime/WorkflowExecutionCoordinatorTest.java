@@ -196,6 +196,26 @@ class WorkflowExecutionCoordinatorTest {
         assertThat(this.savedWorkflowRun().status()).isEqualTo(WorkflowRunStatus.FAILED);
     }
 
+    @Test void cancelledTrackedTurnRevokesItsRuntimeGrant() {
+        var gateway = org.mockito.Mockito.mock(com.sitionix.forgeagent.application.mcp.McpGatewayService.class);
+        @SuppressWarnings("unchecked") org.springframework.beans.factory.ObjectProvider<com.sitionix.forgeagent.application.mcp.McpGatewayService> provider =
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(gateway);
+        var withGateway = new WorkflowExecutionCoordinator(workflowRunRepository, graphRepository,
+                nodeRunRepository, completionPolicy, CLOCK, sessionRepository, provider);
+        var tracked = trackedNodeRun(NodeRunStatus.RUNNING);
+        UUID turnId = UUID.randomUUID();
+        var turn = new com.sitionix.forgeagent.domain.model.AgentExecutionTurn(turnId, UUID.randomUUID(),
+                tracked.id(), null, 1, com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus.ACTIVE,
+                null, null, null, null, null, NOW, null, NOW, NOW);
+        when(nodeRunRepository.findByWorkflowRunId(WORKFLOW_RUN_ID)).thenReturn(List.of(tracked));
+        when(sessionRepository.findByNodeRunId(tracked.id())).thenReturn(Optional.of(
+                new com.sitionix.forgeagent.domain.model.AgentExecutionAllocation(null, turn)));
+        when(sessionRepository.cancel(tracked.id())).thenReturn(true);
+        assertThat(withGateway.cancelActiveNodeRuns(workflowRun(null))).isTrue();
+        verify(gateway).revokeExecution(turnId);
+    }
+
     @Test
     void reconcileByIdLocksAndEvaluatesCurrentWorkflow() {
         final WorkflowRun workflowRun = this.workflowRun(null);

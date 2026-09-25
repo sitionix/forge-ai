@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.application.mcp;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.*;
@@ -47,6 +48,20 @@ class McpConnectionServiceTest {
         public void deleteById(UUID id) {}
     };
     private final McpConnectionService service = new McpConnectionService(repository, projects, () -> installation, cipher);
+
+    @Test void managementMutationRevokesRuntimeGrant() {
+        var gateway = mock(McpGatewayService.class);
+        var protectedService = new McpConnectionService(repository, projects, () -> installation, cipher, gateway);
+        var created = protectedService.create("test", URI.create("https://example.org/mcp"),
+                McpAuthType.NONE, McpProjectAccess.all(), null);
+        protectedService.setEnabled(created.id(), true);
+        verifyNoInteractions(gateway);
+        protectedService.setEnabled(created.id(), false);
+        protectedService.update(created.id(), "renamed", created.endpoint(), McpAuthType.NONE,
+                McpProjectAccess.all(), McpCredentialChange.KEEP, null);
+        protectedService.remove(created.id());
+        verify(gateway, times(3)).revokeConnection(created.id());
+    }
 
     @Test void selectedEmptyDeniesAndForeignProjectRejected() {
         var c = service.create("Example", URI.create("https://example.org/mcp"), McpAuthType.NONE, McpProjectAccess.selected(Set.of()), null);

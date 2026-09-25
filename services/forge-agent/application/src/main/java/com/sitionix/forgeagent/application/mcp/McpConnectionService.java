@@ -119,6 +119,7 @@ public class McpConnectionService {
             try { return new McpConnectionState(current,cipher.encrypt(current.installationId(),id,PURPOSE,plaintext)); }
             finally { Arrays.fill(plaintext,(byte)0); }
         }).orElseThrow(() -> new NoSuchElementException("MCP connection not found"));
+        if (gateway != null) gateway.revokeConnection(id);
     }
 
     private void validate(String name, URI endpoint, McpAuthType authType, McpProjectAccess access) {

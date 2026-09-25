@@ -42,6 +42,7 @@ class McpGatewayServiceTest {
     private final McpEncryptedCredential encrypted = new McpEncryptedCredential("test", new byte[]{1, 2, 3});
 
     @BeforeEach void activeExecution() {
+        when(grants.admit(anyString(), any())).thenReturn(true);
         when(sessions.findSession(sessionId)).thenReturn(Optional.of(session(nodeId, now.plusSeconds(60))));
         when(sessions.findByNodeRunId(nodeId)).thenReturn(Optional.of(new AgentExecutionAllocation(session(nodeId, now.plusSeconds(60)), turn)));
         when(sessions.lockCurrentLease(sessionId, "owner", 7L)).thenReturn(true);
@@ -103,14 +104,17 @@ class McpGatewayServiceTest {
         byte[] callCredential = {8, 9};
         when(cipher.decrypt(installation, connectionId, "credential", encrypted)).thenReturn(callCredential);
         var result = new McpToolCallResult(false, "[]", null);
-        when(remote.call(grant.endpoint(), grant.authType(), callCredential, tool.name(),
-                tool.schemaFingerprint(), "{}")) .thenReturn(result);
+        when(remote.call(eq(grant.endpoint()), eq(grant.authType()), same(callCredential), eq(tool.name()),
+                eq(tool.schemaFingerprint()), eq("{}"), any())).thenAnswer(invocation -> {
+            assertThat(invocation.<java.util.function.BooleanSupplier>getArgument(6).getAsBoolean()).isTrue();
+            return result;
+        });
         assertThat(service.call("synthetic-token", connectionId, tool.name(), tool.schemaFingerprint(), "{}"))
                 .isEqualTo(result);
         assertThat(callCredential).containsOnly((byte) 0);
         assertThatThrownBy(() -> service.call("synthetic-token", connectionId, "write", tool.schemaFingerprint(), "{}"))
                 .isInstanceOf(McpGatewayAccessException.class);
-        verify(remote, times(1)).call(any(), any(), any(), any(), any(), any());
+        verify(remote, times(1)).call(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test void disableThenReenableDoesNotReviveOldGrant() {
@@ -139,6 +143,25 @@ class McpGatewayServiceTest {
         assertThatThrownBy(() -> service.authorize("synthetic-token", connectionId))
                 .isInstanceOf(McpGatewayAccessException.class);
         verifyNoInteractions(remote);
+    }
+
+    @Test void credentialReplacementBetweenPolicyCheckAndCallNeverUsesNewSecretWithOldGrant() {
+        var grant = issuedGrant();
+        when(grants.resolve("synthetic-token", connectionId)).thenReturn(Optional.of(grant));
+        var changed = new McpEncryptedCredential("test", new byte[]{9, 9, 9});
+        when(connections.credential(installation, connectionId))
+                .thenReturn(Optional.of(encrypted), Optional.of(changed));
+        assertThatThrownBy(() -> service.call("synthetic-token", connectionId,
+                tool.name(), tool.schemaFingerprint(), "{}"))
+                .isInstanceOf(McpGatewayAccessException.class);
+        verifyNoInteractions(remote);
+    }
+
+    @Test void exhaustedGrantCapacityStopsBeforeUpstreamDiscoveryOrDecryption() {
+        when(grants.issue(any())).thenThrow(new IllegalStateException("MCP runtime grant capacity reached"));
+        assertThatThrownBy(() -> service.issue(claim, now.plusSeconds(120), connectionId))
+                .isInstanceOf(IllegalStateException.class);
+        verifyNoInteractions(views, cipher, remote);
     }
 
     private McpRuntimeGrant issuedGrant() {

@@ -1,6 +1,6 @@
 # Stage 3 — execution-scoped MCP gateway design
 
-Status: proposed. Scope is Stage 3 of [roadmap.md](roadmap.md); Stage 4 Codex configuration and Stage 5 UI are separate.
+Status: approved for Stage 3 implementation. Scope is Stage 3 of [roadmap.md](roadmap.md); Stage 4 Codex configuration and Stage 5 UI are separate.
 
 ## Outcome and boundaries
 
@@ -24,7 +24,7 @@ Each grant has a separate SDK server view of the tools approved at issuance. Inf
 
 ## Failure and cleanup
 
-Unknown, expired, revoked, wrong-connection and wrong-execution grants fail without upstream calls. Cancellation and terminal execution cleanup revoke grants. A request already sent upstream before revoke may complete; subsequent calls fail. Timeouts and connection resets have an unknown write outcome and are not replayed. Safe telemetry records execution/connection/tool identifiers, duration and outcome only; no arguments, response body, bearer or external credential.
+Unknown, expired, revoked, wrong-connection and wrong-execution grants fail without upstream calls. Cancellation and terminal execution cleanup revoke grants. The SDK checks admission after the same-session schema recheck, immediately before `tools/call`; admission and revoke use one short store lock. A call admitted before revoke is in flight and may complete; calls reaching admission afterward fail. Timeouts and connection resets have an unknown write outcome and are not replayed. Safe telemetry records execution/connection/tool identifiers, duration and outcome only; no arguments, response body, bearer or external credential.
 
 ## Verification
 

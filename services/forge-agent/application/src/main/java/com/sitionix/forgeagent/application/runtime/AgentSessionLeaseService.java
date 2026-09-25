@@ -6,15 +6,28 @@ import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import java.util.Optional;
 import java.util.UUID;
 import com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus;
-import lombok.RequiredArgsConstructor;
+import com.sitionix.forgeagent.application.mcp.McpGatewayService;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
-@RequiredArgsConstructor
 public class AgentSessionLeaseService {
     public static final int LEASE_SECONDS = 30;
     public static final int HEARTBEAT_SECONDS = 10;
     private final AgentExecutionSessionRepository repository;
+    private final McpGatewayService gateway;
+
+    @Autowired public AgentSessionLeaseService(AgentExecutionSessionRepository repository,
+                                                ObjectProvider<McpGatewayService> gateway) {
+        this.repository = repository;
+        this.gateway = gateway.getIfAvailable();
+    }
+
+    public AgentSessionLeaseService(AgentExecutionSessionRepository repository) {
+        this.repository = repository;
+        this.gateway = null;
+    }
 
     public Optional<AgentSessionExecutionClaim> claim(final UUID nodeRunId, final String ownerId) {
         if (ownerId == null || ownerId.isBlank()) throw new IllegalArgumentException("ownerId must not be blank");
@@ -43,6 +56,7 @@ public class AgentSessionLeaseService {
                        final String failureCode, final String failureMessage, final boolean sessionCorrupting) {
         if (!this.repository.finish(claim.sessionId(), claim.turnId(), claim.leaseOwnerId(), claim.leaseToken(),
                 status, failureCode, failureMessage, sessionCorrupting)) stale();
+        if (gateway != null) gateway.revokeExecution(claim.turnId());
     }
 
     private static void stale() { throw new ConflictException("STALE_AGENT_SESSION_LEASE", "Agent context ownership was lost."); }

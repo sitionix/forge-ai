@@ -70,6 +70,21 @@ class SdkMcpRemoteToolClientTest {
         } finally { server.stop(0); }
     }
 
+    @Test void revokedDuringDiscoveryCannotDispatchToolCall() throws Exception {
+        List<String> methods = Collections.synchronizedList(new ArrayList<>());
+        var server = fixture(methods, false, false);
+        try {
+            int port = server.getAddress().getPort();
+            var client = new SdkMcpRemoteClient(Duration.ofSeconds(1), Duration.ofSeconds(2), 65536, 2, 10,
+                    Set.of("127.0.0.1:" + port));
+            assertThatThrownBy(() -> client.call(URI.create("http://127.0.0.1:" + port + "/mcp"),
+                    McpAuthType.NONE, null, "search", SCHEMA, "{}", () -> false))
+                    .isInstanceOf(McpProbeException.class)
+                    .extracting("reason").isEqualTo(McpProbeException.Reason.UNAVAILABLE);
+            assertThat(methods).contains("tools/list").doesNotContain("tools/call");
+        } finally { server.stop(0); }
+    }
+
     @Test void toolCallCanOutliveTheShortProbeRequestTimeout() throws Exception {
         List<String> methods = Collections.synchronizedList(new ArrayList<>());
         var server = fixture(methods, false, false, 1200);

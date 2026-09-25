@@ -6,9 +6,11 @@ import static org.mockito.Mockito.*;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
+import com.sitionix.forgeagent.application.mcp.McpGatewayService;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 
 class AgentSessionLeaseServiceTest {
     private final AgentExecutionSessionRepository repository=mock(AgentExecutionSessionRepository.class);
@@ -29,5 +31,21 @@ class AgentSessionLeaseServiceTest {
         service.renew(claim);
         verify(repository).renew(claim.sessionId(),"worker-a",7);
         verifyNoMoreInteractions(repository);
+    }
+
+    @Test void completedTurnRevokesRuntimeGrantButFailedFinishDoesNot() {
+        var gateway = mock(McpGatewayService.class);
+        @SuppressWarnings("unchecked") ObjectProvider<McpGatewayService> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(gateway);
+        var withGateway = new AgentSessionLeaseService(repository, provider);
+        when(repository.finish(eq(claim.sessionId()), eq(claim.turnId()), eq("worker-a"), eq(7L),
+                any(), isNull(), isNull(), eq(false))).thenReturn(false, true);
+        assertThatThrownBy(() -> withGateway.finish(claim,
+                com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus.SUCCEEDED, null, null, false))
+                .isInstanceOf(ConflictException.class);
+        verifyNoInteractions(gateway);
+        withGateway.finish(claim, com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus.SUCCEEDED,
+                null, null, false);
+        verify(gateway).revokeExecution(claim.turnId());
     }
 }

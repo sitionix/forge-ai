@@ -10,6 +10,7 @@ import org.springframework.web.util.pattern.PathPatternParser;
 /** Uses the current dispatch target, including servlet include targets. */
 public final class AgentManagementRoutePolicy {
     private static final PathPattern REMOTE=PathPatternParser.defaultInstance.parse("/api/v1/remote-access/{*path}");
+    private static final PathPattern RUNTIME_MCP=PathPatternParser.defaultInstance.parse("/internal/mcp/connections/{connectionId}");
     private AgentManagementRoutePolicy() { }
     public static String path(HttpServletRequest request) {
         String uri=request.getRequestURI();
@@ -23,5 +24,10 @@ public final class AgentManagementRoutePolicy {
     }
     public static boolean remoteAccess(HttpServletRequest request) {
         return REMOTE.matches(RequestPath.parse(path(request),"").pathWithinApplication());
+    }
+    public static boolean runtimeMcp(HttpServletRequest request) {
+        String target = path(request);
+        return !target.contains("%") && !target.contains(";") && !target.contains("\\")
+                && RUNTIME_MCP.matches(RequestPath.parse(target,"").pathWithinApplication());
     }
 }

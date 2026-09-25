@@ -11,10 +11,13 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** The trusted execution and live connection policy owner for runtime MCP grants. */
-public final class McpGatewayService {
+public class McpGatewayService implements McpGatewayRuntime {
     private static final String CREDENTIAL_PURPOSE = "credential";
+    private static final Logger log = LoggerFactory.getLogger(McpGatewayService.class);
     private final AgentExecutionSessionRepository sessions;
     private final NodeRunRepository nodes;
     private final WorkflowRunRepository workflows;
@@ -66,12 +69,15 @@ public final class McpGatewayService {
                 claim.nodeRunId(), session.workflowRunId(), workflow.projectId(), claim.leaseOwnerId(),
                 claim.leaseToken(), connectionId, connection.endpoint(), connection.authType(),
                 credentialIdentity(encrypted), connection.allowedTools(), deadline);
-        byte[] plaintext = decrypt(grant, encrypted);
+        McpRuntimeGrantHandle handle = grants.issue(grant);
+        byte[] plaintext = null;
         try {
+            plaintext = decrypt(grant, encrypted);
             views.prepare(grant, plaintext);
             validate(grant);
-            return grants.issue(grant);
+            return handle;
         } catch (RuntimeException failure) {
+            grants.remove(grant.id());
             views.remove(grant.id());
             throw failure;
         } finally {
@@ -80,7 +86,7 @@ public final class McpGatewayService {
     }
 
     /** Used before every SDK initialize/list and again immediately before call. */
-    public McpRuntimeGrant authorize(String token, UUID connectionId) {
+    @Override public McpRuntimeGrant authorize(String token, UUID connectionId) {
         var grant = grants.resolve(token, connectionId).orElseThrow(McpGatewayService::denied);
         try {
             validate(grant);
@@ -92,16 +98,33 @@ public final class McpGatewayService {
         }
     }
 
-    public McpToolCallResult call(String token, UUID connectionId, String toolName,
+    @Override public McpToolCallResult call(String token, UUID connectionId, String toolName,
                                   String fingerprint, String argumentsJson) {
         var grant = authorize(token, connectionId);
         if (toolName == null || fingerprint == null
                 || !grant.tools().contains(new McpAllowedTool(toolName, fingerprint))) throw denied();
         var connection = connections.findById(grant.installationId(), connectionId)
                 .orElseThrow(McpGatewayService::denied);
-        byte[] plaintext = decrypt(grant, credential(grant.installationId(), connection));
+        var encrypted = credential(grant.installationId(), connection);
+        if (!connection.endpoint().equals(grant.endpoint()) || connection.authType() != grant.authType()
+                || !credentialIdentity(encrypted).equals(grant.credentialIdentity())) throw denied();
+        byte[] plaintext = decrypt(grant, encrypted);
+        long started = System.nanoTime();
         try {
-            return remote.call(grant.endpoint(), grant.authType(), plaintext, toolName, fingerprint, argumentsJson);
+            var result = remote.call(grant.endpoint(), grant.authType(), plaintext,
+                    toolName, fingerprint, argumentsJson, () -> {
+                        try {
+                            authorize(token, connectionId);
+                            return grants.admit(token, connectionId);
+                        } catch (McpGatewayAccessException denial) {
+                            return false;
+                        }
+                    });
+            telemetry(grant, toolName, started, result.isError() ? "TOOL_ERROR" : "OK");
+            return result;
+        } catch (RuntimeException failure) {
+            telemetry(grant, toolName, started, "FAILED");
+            throw failure;
         } finally {
             if (plaintext != null) Arrays.fill(plaintext, (byte) 0);
         }
@@ -151,7 +174,10 @@ public final class McpGatewayService {
     }
 
     private McpEncryptedCredential credential(UUID installation, McpConnection connection) {
-        if (connection.authType() == McpAuthType.NONE) return null;
+        if (connection.authType() == McpAuthType.NONE) {
+            if (connection.credentialConfigured()) throw denied();
+            return null;
+        }
         if (!connection.credentialConfigured()) throw denied();
         return connections.credential(installation, connection.id()).orElseThrow(McpGatewayService::denied);
     }
@@ -175,4 +201,19 @@ public final class McpGatewayService {
     }
 
     private static McpGatewayAccessException denied() { return new McpGatewayAccessException(); }
+
+    private static void telemetry(McpRuntimeGrant grant, String toolName, long started, String outcome) {
+        log.info("MCP runtime call connection={} turn={} toolId={} durationMs={} outcome={}",
+                grant.connectionId(), grant.turnId(), toolId(toolName),
+                java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started), outcome);
+    }
+
+    private static String toolId(String name) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(name.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException failure) {
+            throw new IllegalStateException("SHA-256 is unavailable", failure);
+        }
+    }
 }
