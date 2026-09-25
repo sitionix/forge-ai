@@ -87,7 +87,7 @@ public final class RecoveryDispatchFixture implements AutoCloseable {
                     }
                     methods.add(method);
                     switch (method) {
-                        case "initialize" -> reply(request, "{\"userAgent\":\"codex/0.154.0\"}");
+                        case "initialize" -> reply(request, "{\"userAgent\":\"codex/0.157.0\"}");
                         case "thread/start" -> reply(request, "{\"thread\":{\"id\":\"thread-fence\"}}");
                         default -> { }
                     }

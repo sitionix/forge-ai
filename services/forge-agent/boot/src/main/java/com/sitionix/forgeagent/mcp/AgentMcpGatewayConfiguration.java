@@ -2,6 +2,7 @@ package com.sitionix.forgeagent.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.application.mcp.McpGatewayService;
+import com.sitionix.forgeagent.application.mcp.McpExecutionSelectionService;
 import com.sitionix.forgeagent.domain.port.*;
 import com.sitionix.forgeagent.infrastructure.local.mcp.gateway.InMemoryMcpRuntimeGrantRepository;
 import com.sitionix.forgeagent.infrastructure.local.mcp.gateway.SdkMcpGatewayToolView;
@@ -9,6 +10,7 @@ import com.sitionix.forgeagent.infrastructure.local.mcp.protocol.SdkMcpRemoteCli
 import jakarta.servlet.DispatcherType;
 import java.time.Clock;
 import java.time.Duration;
+import java.net.URI;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Locale;
@@ -16,13 +18,24 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.ApplicationContext;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
 class AgentMcpGatewayConfiguration {
+    @Bean McpGatewayAddress mcpGatewayAddress(ApplicationContext context) {
+        return () -> {
+            if (!(context instanceof ServletWebServerApplicationContext servlet)
+                    || servlet.getWebServer() == null || servlet.getWebServer().getPort() <= 0)
+                throw new IllegalStateException("MCP gateway connector is unavailable");
+            return URI.create("http://127.0.0.1:" + servlet.getWebServer().getPort());
+        };
+    }
+
     @Bean McpRuntimeGrantRepository mcpRuntimeGrantRepository(Clock clock,
             @Value("${forge.mcp.gateway.max-grants:1000}") int capacity) {
         return new InMemoryMcpRuntimeGrantRepository(clock, System::nanoTime, capacity);
@@ -39,6 +52,12 @@ class AgentMcpGatewayConfiguration {
             McpCredentialCipher cipher, McpRemoteToolClient remote, Clock clock) {
         return new McpGatewayService(sessions, nodes, workflows, projects, connections, identity,
                 grants, views, cipher, remote, clock);
+    }
+
+    @Bean McpExecutionSelectionService mcpExecutionSelectionService(WorkflowRunRepository workflows,
+            McpConnectionRepository connections, ForgeInstanceIdentityRepository identity,
+            McpGatewayService gateway) {
+        return new McpExecutionSelectionService(workflows, connections, identity, gateway);
     }
 
     @Bean McpGatewayProtocolAdapter mcpGatewayProtocolAdapter(McpGatewayService runtime,

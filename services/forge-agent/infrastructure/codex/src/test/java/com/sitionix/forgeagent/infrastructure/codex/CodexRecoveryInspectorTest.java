@@ -34,10 +34,10 @@ class CodexRecoveryInspectorTest {
         final RecordingStarter starter = new RecordingStarter();
         final CodexRecoveryInspector inspector = this.inspector(starter);
 
-        assertThat(inspector.supports("codex", "0.154.0")).isTrue();
-        assertThat(inspector.supports("CODEX", "0.154.0")).isFalse();
+        assertThat(inspector.supports("codex", "0.157.0")).isTrue();
+        assertThat(inspector.supports("CODEX", "0.157.0")).isFalse();
         assertThat(inspector.supports("codex", "0.153.2")).isFalse();
-        assertThat(inspector.supports(null, "0.154.0")).isFalse();
+        assertThat(inspector.supports(null, "0.157.0")).isFalse();
         assertThat(inspector.supports("codex", null)).isFalse();
         assertThat(starter.processes()).isEmpty();
     }
@@ -56,12 +56,12 @@ class CodexRecoveryInspectorTest {
     void freshProcessInitializesThenInspectsExactTurnAndAlwaysCloses() throws Exception {
         final RecordingStarter starter = new RecordingStarter();
         final CompletableFuture<ProviderTurnRecoveryResult> recovered = CompletableFuture.supplyAsync(
-                () -> this.inspector(starter).inspect(this.inspection("0.154.0")));
+                () -> this.inspector(starter).inspect(this.inspection("0.157.0")));
 
         final FakeCodexProcess process = starter.awaitProcess();
         final JsonNode initialize = this.readRequest(process);
         assertThat(initialize.path("method").asText()).isEqualTo("initialize");
-        this.reply(process, initialize, "{\"userAgent\":\"codex/0.154.0\"}");
+        this.reply(process, initialize, "{\"userAgent\":\"codex/0.157.0\"}");
         final JsonNode initialized = this.readRequest(process);
         assertThat(initialized.path("method").asText()).isEqualTo("initialized");
         final JsonNode turns = this.readRequest(process);
@@ -79,7 +79,7 @@ class CodexRecoveryInspectorTest {
     void mismatchedLiveVersionReturnsUnknownAndClosesWithoutInspectionRequest() throws Exception {
         final RecordingStarter starter = new RecordingStarter();
         final CompletableFuture<ProviderTurnRecoveryResult> recovered = CompletableFuture.supplyAsync(
-                () -> this.inspector(starter).inspect(this.inspection("0.154.0")));
+                () -> this.inspector(starter).inspect(this.inspection("0.157.0")));
 
         final FakeCodexProcess process = starter.awaitProcess();
         final JsonNode initialize = this.readRequest(process);
@@ -96,7 +96,7 @@ class CodexRecoveryInspectorTest {
     void malformedIdentityReturnsUnknownWithoutStartingProcess() {
         final RecordingStarter starter = new RecordingStarter();
         final AgentExecutionRecoveryInspection inspection = new AgentExecutionRecoveryInspection(
-                "codex", "0.154.0", " ", "turn-target", this.workspace, Instant.now().plusSeconds(5));
+                "codex", "0.157.0", " ", "turn-target", this.workspace, Instant.now().plusSeconds(5));
 
         assertThat(this.inspector(starter).inspect(inspection).state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
         assertThat(starter.processes()).isEmpty();
@@ -108,7 +108,7 @@ class CodexRecoveryInspectorTest {
         final OutputStreamFailingProcess process = new OutputStreamFailingProcess(delegate);
         try {
             final ProviderTurnRecoveryResult result = this.inspector(new FixedStarter(process))
-                    .inspect(this.inspection("0.154.0"));
+                    .inspect(this.inspection("0.157.0"));
 
             assertThat(result.state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
             assertThat(delegate.destroyed()).isTrue();
@@ -123,9 +123,9 @@ class CodexRecoveryInspectorTest {
         final FakeCodexProcess process = new FakeCodexProcess(false, false);
         try {
             final CompletableFuture<ProviderTurnRecoveryResult> recovered = CompletableFuture.supplyAsync(
-                    () -> this.inspector(new FixedStarter(process)).inspect(this.inspection("0.154.0")));
+                    () -> this.inspector(new FixedStarter(process)).inspect(this.inspection("0.157.0")));
             final JsonNode initialize = this.readRequest(process);
-            this.reply(process, initialize, "{\"userAgent\":\"codex/0.154.0\"}");
+            this.reply(process, initialize, "{\"userAgent\":\"codex/0.157.0\"}");
             assertThat(this.readRequest(process).path("method").asText()).isEqualTo("initialized");
             final JsonNode turns = this.readRequest(process);
             this.reply(process, turns,
@@ -145,7 +145,7 @@ class CodexRecoveryInspectorTest {
         final long startedAt = System.nanoTime();
 
         final ProviderTurnRecoveryResult result = this.inspector(starter).inspect(new AgentExecutionRecoveryInspection(
-                "codex", "0.154.0", "thread-target", "turn-target", this.workspace,
+                "codex", "0.157.0", "thread-target", "turn-target", this.workspace,
                 Instant.now().plusMillis(90)));
 
         assertThat(result.state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
@@ -208,7 +208,7 @@ class CodexRecoveryInspectorTest {
 
         try {
             final JsonNode initialize = this.readRequest(process.delegate());
-            this.reply(process.delegate(), initialize, "{\"userAgent\":\"codex/0.154.0\"}");
+            this.reply(process.delegate(), initialize, "{\"userAgent\":\"codex/0.157.0\"}");
             assertThat(this.readRequest(process.delegate()).path("method").asText()).isEqualTo("initialized");
             final JsonNode turns = this.readRequest(process.delegate());
             this.reply(process.delegate(), turns,
@@ -244,7 +244,7 @@ class CodexRecoveryInspectorTest {
     }
 
     private AgentExecutionRecoveryInspection inspection(final Instant deadline) {
-        return this.inspection("0.154.0", deadline);
+        return this.inspection("0.157.0", deadline);
     }
 
     private AgentExecutionRecoveryInspection inspection(final String version, final Instant deadline) {
