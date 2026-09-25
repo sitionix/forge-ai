@@ -66,6 +66,63 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(command[command.index('--')+1:][:4],
                          [str(pathlib.Path(sys.executable).resolve()), '-I', str(SOURCE), '--runtime-codex'])
 
+    def test_legacy_profile_and_codex_start_do_not_require_mcp_mount_sources(self):
+        config = dict(installation='01234567-89ab-4cde-8012-3456789abcde', control_uid=2001,
+                      runtime_uid=2002, runtime_gid=2002, runtime_home='/srv/forge/runtime',
+                      workspace_roots=['/srv/forge/workspaces'], agent_unit='forge-agent.service',
+                      max_lifetime_seconds=7200, codex_binary='/opt/forge/codex',
+                      git_binary='/usr/bin/git', env_binary='/usr/bin/env')
+        self.assertFalse(self.launcher.has_codex_isolation_config(config))
+        execution='01234567-89ab-4cde-8012-3456789abcdf'
+        with patch.object(self.launcher, 'load_config', return_value=config), patch.object(
+                self.launcher, 'caller'), patch.object(self.launcher, 'workspace', return_value='/srv/forge/workspaces/x'), patch.object(
+                self.launcher, 'start', return_value=0) as start, patch.object(
+                self.launcher, 'read_startup_envelope') as read:
+            self.assertEqual(self.launcher.main(['start','codex',execution,'/srv/forge/workspaces/x']),0)
+        start.assert_called_once_with(config, execution, '/srv/forge/workspaces/x',
+                                      ['/opt/forge/codex','app-server','--stdio'])
+        read.assert_not_called()
+
+    def test_mcp_codex_start_requires_complete_isolation_config(self):
+        config = dict(installation='01234567-89ab-4cde-8012-3456789abcde', control_uid=2001,
+                      runtime_uid=2002, runtime_gid=2002, runtime_home='/srv/forge/runtime',
+                      workspace_roots=['/srv/forge/workspaces'], agent_unit='forge-agent.service',
+                      max_lifetime_seconds=7200, codex_binary='/opt/forge/codex',
+                      git_binary='/usr/bin/git', env_binary='/usr/bin/env')
+        with self.assertRaises(ValueError):
+            self.launcher.has_codex_isolation_config(dict(config, codex_config='/etc/forge/base.toml'))
+        with self.assertRaises(ValueError):
+            self.launcher.service_command(config, '01234567-89ab-4cde-8012-3456789abcdf',
+                    '/srv/forge/workspaces/x', ['/opt/forge/codex'], '/run/forge-runtime/grant')
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            self.launcher.validate_codex_isolation_config(dict(config,
+                    codex_config='/etc/forge/nonexistent-stage4-base.toml',
+                    empty_system_config='/etc/forge/nonexistent-stage4-empty.toml'))
+        with patch.object(self.launcher, 'locked_receipt') as receipt:
+            with self.assertRaises((ValueError, FileNotFoundError)):
+                self.launcher.start(dict(config,
+                        codex_config='/etc/forge/nonexistent-stage4-base.toml',
+                        empty_system_config='/etc/forge/nonexistent-stage4-empty.toml'),
+                        '01234567-89ab-4cde-8012-3456789abcdf', '/srv/forge/workspaces/x',
+                        ['/opt/forge/codex'], codex_grants={})
+            receipt.assert_not_called()
+
+    def test_explicit_mcp_start_reads_grants_before_isolated_launch(self):
+        config = {'codex_binary':'/opt/forge/codex', 'codex_config':'/etc/forge/base.toml',
+                  'empty_system_config':'/etc/forge/empty.toml'}
+        execution='01234567-89ab-4cde-8012-3456789abcdf'
+        grants={'FORGE_MCP_GRANT_0123456789ABCDEF0123456789ABCDEF':'synthetic-grant'}
+        with patch.object(self.launcher, 'load_config', return_value=config), patch.object(
+                self.launcher, 'caller'), patch.object(self.launcher, 'workspace', return_value='/srv/forge/workspaces/x'), patch.object(
+                self.launcher, 'start', return_value=0) as start, patch.object(
+                self.launcher, 'read_startup_envelope', return_value=grants) as read, patch.object(
+                self.launcher.os, 'dup', return_value=7), patch.object(
+                self.launcher.os, 'fdopen', return_value=io.BytesIO(b'{}\n')):
+            self.assertEqual(self.launcher.main(['start','codex',execution,'/srv/forge/workspaces/x','--mcp']),0)
+        read.assert_called_once()
+        start.assert_called_once_with(config, execution, '/srv/forge/workspaces/x',
+                                      ['/opt/forge/codex','app-server','--stdio'], codex_grants=grants)
+
     def test_startup_envelope_rejects_unsafe_names_and_values_before_launch(self):
         valid=b'{"FORGE_MCP_GRANT_0123456789ABCDEF0123456789ABCDEF":"synthetic-grant"}\n'
         self.assertEqual(self.launcher.read_startup_envelope(io.BytesIO(valid)),

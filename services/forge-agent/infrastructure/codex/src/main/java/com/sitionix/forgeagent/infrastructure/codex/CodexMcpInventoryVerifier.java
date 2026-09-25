@@ -74,7 +74,7 @@ final class CodexMcpInventoryVerifier {
                             "MCP_CONNECTION_UNAVAILABLE"));
                     continue;
                 }
-                if (!tools.isObject()) throw mismatch();
+                if (!tools.isObject() || names.size() != allowed.size()) throw mismatch();
                 effective.put(alias, Set.copyOf(names));
             }
             JsonNode next = page.path("nextCursor");
@@ -84,8 +84,7 @@ final class CodexMcpInventoryVerifier {
             if (pageNumber == MAX_PAGES - 1) throw mismatch();
         }
         for (var entry : selection.entries()) {
-            Set<String> active = effective.get(entry.alias());
-            if (!seen.contains(entry.alias()) || active != null && active.size() != entry.tools().size()) {
+            if (!seen.contains(entry.alias())) {
                 diagnostics.add(new McpExecutionSelection.Diagnostic(entry.connectionId(), "MCP_TOOL_UNAVAILABLE"));
             }
         }

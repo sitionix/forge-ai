@@ -25,11 +25,13 @@ public class RuntimeProcessLauncher {
     void markReady() { ready = true; }
 
     public ManagedRuntimeProcess startCodex(Path directory) throws IOException {
-        return startCodex(directory, Map.of());
+        return start(List.of("codex", UUID.randomUUID().toString(), directory.toAbsolutePath().normalize().toString()),
+                null);
     }
 
     public ManagedRuntimeProcess startCodex(Path directory, Map<String, String> grantEnvironment) throws IOException {
-        return start(List.of("codex", UUID.randomUUID().toString(), directory.toAbsolutePath().normalize().toString()),
+        return start(List.of("codex", UUID.randomUUID().toString(), directory.toAbsolutePath().normalize().toString(),
+                        "--mcp"),
                 grantEnvironment);
     }
 

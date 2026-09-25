@@ -75,7 +75,7 @@ class CodexMcpInventoryVerifierTest {
         }
     }
 
-    @Test void unexpectedToolFailsAndMissingApprovedToolGetsDiagnostic() throws Exception {
+    @Test void unexpectedOrMissingApprovedToolFailsClosed() throws Exception {
         try (var harness = new Harness()) {
             var result = CompletableFuture.supplyAsync(() -> verifier.verify(harness.transport, "thread-a",
                     selected, Duration.ofSeconds(1)));
@@ -90,9 +90,8 @@ class CodexMcpInventoryVerifierTest {
             var request = harness.request();
             harness.reply(request, "{\"data\":[{\"name\":\"" + alias
                     + "\",\"runtimeStatus\":\"connected\",\"tools\":{}}],\"nextCursor\":null}");
-            var inventory = result.get(1, TimeUnit.SECONDS);
-            assertThat(inventory.effectiveTools().get(alias)).isEmpty();
-            assertThat(inventory.diagnostics()).hasSize(1);
+            assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
+                    .hasRootCauseMessage("Codex MCP inventory did not match issued grants");
         }
     }
 

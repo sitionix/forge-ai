@@ -145,6 +145,36 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
+    void partiallyAvailableApprovedToolsPreventTurnStart() throws Exception {
+        var process = new FakeCodexProcess(false, true);
+        var properties = this.properties();
+        var client = new CodexAppServerClient(this.objectMapper, new FakeStarter(process), properties,
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+        var alias = "forge_0123456789ab4cde80123456789abcde";
+        var selection = new McpExecutionSelection(List.of(new McpExecutionSelection.Entry(alias,
+                UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"), "Search",
+                Set.of(new McpAllowedTool("search", "sha256:search"),
+                        new McpAllowedTool("read", "sha256:read")))), List.of());
+        var request = new CodexTurnRequest("Read.", "Instructions.", "model-a", null,
+                this.schemaUnchecked(), this.workspace(), false, selection);
+        var result = CompletableFuture.supplyAsync(() -> client.execute(request,
+                new McpRuntimeLaunchGrants(Map.of(alias, "synthetic-grant"))));
+        this.initialize(process);
+        var thread = this.readRequest(process);
+        this.replyThread(process, thread, "thread-partial");
+        var inventory = this.readRequest(process);
+        assertThat(inventory.path("method").asText()).isEqualTo("mcpServerStatus/list");
+        process.writeStdout("{\"id\":\"" + inventory.path("id").asText()
+                + "\",\"result\":{\"data\":[{\"name\":\"" + alias
+                + "\",\"runtimeStatus\":\"connected\",\"tools\":{\"search\":{\"name\":\"search\"}}}],"
+                + "\"nextCursor\":null}}");
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
+                .hasRootCauseMessage("Codex MCP inventory did not match issued grants");
+        assertThat(process.pendingClientRequestBytes()).isZero();
+        client.close();
+    }
+
+    @Test
     void mismatchedSelectionAndLaunchGrantsFailBeforeStartingProcess() {
         var properties = this.properties();
         var starter = new FakeStarter(new FakeCodexProcess(false, true));
