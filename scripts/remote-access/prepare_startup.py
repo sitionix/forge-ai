@@ -85,6 +85,16 @@ def select_address(routes, interfaces, requested):
     return candidates.pop()
 
 
+def startup_address(routes, interfaces):
+    """Defer ambiguous LAN selection to the existing Give Access form."""
+    try:
+        return select_address(routes, interfaces, None)
+    except ValueError as failure:
+        if str(failure) != 'REMOTE_ACCESS_ADDRESS_REQUIRED':
+            raise
+        return None
+
+
 def ensure_database(jdbc_url, username, password):
     """Create only the dedicated database using a fixed SQL identifier."""
     if not jdbc_url.startswith('jdbc:'):
@@ -219,19 +229,14 @@ def main():
         environment = read_control_env(control_path)
         routes = ip_state('route', 'show', 'default')
         addresses = ip_state('address', 'show')
-        try:
-            address = select_address(routes, addresses, args.listen_address)
-        except ValueError:
-            if not sys.stdin.isatty() or args.listen_address is not None:
-                raise
-            print('Select this machine\'s reachable LAN IP address:', file=sys.stderr)
-            requested = input('LAN IP: ').strip()
-            address = select_address(routes, addresses, requested)
+        address = (select_address(routes, addresses, args.listen_address)
+                   if args.listen_address is not None else startup_address(routes, addresses))
         prepare_services(package, args.operator_user, address,
                          environment['FORGE_AGENT_DB_URL'],
                          environment['FORGE_AGENT_DB_USERNAME'],
                          environment['FORGE_AGENT_DB_PASSWORD'])
-        write_endpoint_env(Path('/etc/forge-ai/forge-remote-endpoint.env'), address)
+        if address is not None:
+            write_endpoint_env(Path('/etc/forge-ai/forge-remote-endpoint.env'), address)
         subprocess.run(['/usr/bin/python3', '-I', str(package / 'prepare_rootfs.py')],
                        stdin=subprocess.DEVNULL, capture_output=True,
                        text=True, check=True, timeout=1200)

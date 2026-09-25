@@ -44,4 +44,22 @@ describe('cold Remote Access entry', () => {
     expect(dom.window.document.getElementById('remoteError')?.textContent).toContain('failed on this machine');
     dom.window.close();
   });
+
+  it('keeps waiting when fresh preparation exceeds three minutes', async () => {
+    const dom=new JSDOM(readFileSync('src/operator/remote-access.html','utf8'));
+    const assign=vi.fn();
+    const window={location:{pathname:'/fgaisox/operator/remote-access.html',assign},setTimeout};
+    const states=['COLD','COLD','READY'];
+    const fetcher=vi.fn(async (_url:string,options:RequestInit) => new Response(JSON.stringify(
+      options.method==='POST'?{status:'PREPARING'}:{status:states.shift(),csrfToken:'csrf'}),{status:options.method==='POST'?202:200}));
+    const now=vi.spyOn(Date,'now');
+    let elapsed=0;
+    now.mockImplementation(()=>elapsed);
+    try {
+      const page=mountColdRemoteAccess({document:dom.window.document,window,fetcher,delay:async()=>{elapsed+=181000;}});
+      await page.start('give');
+      expect(assign).toHaveBeenCalledWith('http://127.0.0.1:9100/fgaisox/operator/remote-access.html#give');
+      expect(dom.window.document.getElementById('remoteError')?.hidden).toBe(true);
+    } finally { now.mockRestore();dom.window.close(); }
+  });
 });

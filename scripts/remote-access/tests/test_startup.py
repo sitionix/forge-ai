@@ -201,6 +201,37 @@ class RemoteAccessStartupTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'REMOTE_ACCESS_ADDRESS_REQUIRED'):
             prepare_startup.select_address(routes, addresses, '0.0.0.0')
 
+    def test_ambiguous_startup_address_defers_selection_to_give_access(self):
+        import prepare_startup
+        addresses = [dict(ifname='wlp0', addr_info=[dict(family='inet', local='192.168.2.5')]),
+                     dict(ifname='enp0', addr_info=[dict(family='inet', local='10.0.0.5')])]
+        routes = [dict(dst='default', dev='wlp0', prefsrc='192.168.2.5'),
+                  dict(dst='default', dev='enp0', prefsrc='10.0.0.5')]
+        self.assertIsNone(prepare_startup.startup_address(routes, addresses))
+        self.assertIsNone(prepare_startup.startup_address([], addresses))
+        self.assertEqual('192.168.2.5', prepare_startup.startup_address(routes[:1], addresses))
+
+    def test_ambiguous_address_does_not_block_system_preparation_or_persist_an_endpoint(self):
+        import prepare_startup
+        addresses = [dict(ifname='wlp0', addr_info=[dict(family='inet', local='192.168.2.5')]),
+                     dict(ifname='enp0', addr_info=[dict(family='inet', local='10.0.0.5')])]
+        routes = [dict(dst='default', dev='wlp0', prefsrc='192.168.2.5'),
+                  dict(dst='default', dev='enp0', prefsrc='10.0.0.5')]
+        environment = dict(FORGE_AGENT_DB_URL='jdbc:postgresql://localhost:54329/forge_remote_access',
+                           FORGE_AGENT_DB_USERNAME='forge_agent', FORGE_AGENT_DB_PASSWORD='synthetic-secret')
+        with (mock.patch.object(prepare_startup.os, 'geteuid', return_value=0),
+              mock.patch.object(prepare_startup.sys, 'argv', ['prepare_startup.py', '--operator-user', 'local-operator']),
+              mock.patch.object(prepare_startup, 'require_protected_package'),
+              mock.patch.object(pathlib.Path, 'stat', return_value=mock.Mock(st_uid=0)),
+              mock.patch.object(prepare_startup, 'read_control_env', return_value=environment),
+              mock.patch.object(prepare_startup, 'ip_state', side_effect=[routes, addresses]),
+              mock.patch.object(prepare_startup, 'prepare_services') as services,
+              mock.patch.object(prepare_startup, 'write_endpoint_env') as endpoint,
+              mock.patch.object(prepare_startup.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0))):
+            self.assertEqual(0, prepare_startup.main())
+        services.assert_called_once()
+        endpoint.assert_not_called()
+
     def test_dedicated_database_creation_is_idempotent_and_does_not_log_password(self):
         import prepare_startup
         self.assertTrue(hasattr(prepare_startup, 'ensure_database'), 'database preparation must exist')

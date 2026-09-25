@@ -23,14 +23,15 @@ export function mountColdRemoteAccess({document,window,fetcher=window.fetch.bind
         const response=await fetcher(endpoint,{method:'POST',headers:{'X-CSRF-TOKEN':current.csrfToken,'Content-Type':'application/json'},
           cache:'no-store',credentials:'same-origin',redirect:'error',body:'{}'});
         if(!response.ok) throw new Error('Local Remote Access setup could not start.');
-        const deadline=Date.now()+180000;
+        // The on-demand systemd setup may spend up to 30 minutes preparing its first rootfs.
+        const deadline=Date.now()+1860000;
         while(Date.now()<deadline) {
           await delay(1500);
           current=await state();
           if(current.status==='FAILED') throw new Error('SSH preparation failed on this machine. Check Forge setup and retry.');
           if(current.status==='READY') break;
         }
-        if(current.status!=='READY') throw new Error('SSH preparation did not finish. Check the local Forge setup and retry.');
+        if(current.status!=='READY') throw new Error('SSH preparation status is still unconfirmed. Refresh to check it before retrying.');
       }
       const target=`http://127.0.0.1:9100${contextPathFromLocation(window.location)}/operator/remote-access.html#${intent}`;
       window.location.assign(target);
