@@ -27,7 +27,7 @@ Management routes on both services: `POST /connections/{id}/test`, `GET /connect
 
 | Command | Actual result |
 |---|---|
-| `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify` | **PASS** after merging current `main`, exit 0, 1342 tests, 0 failures/errors, 8 skips. Log: `/tmp/forge-mcp-agent-merge-final-verify.log`. |
+| `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify` | **PASS** after the HTTP-status race fix, exit 0, 1343 tests, 0 failures/errors, 8 skips. Log: `/tmp/forge-mcp-agent-auth-status-final-verify.log`. |
 | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/boot -am verify` | **PASS** after merging current `main`, exit 0, 378 tests, 0 failures/errors/skips. Log: `/tmp/forge-mcp-nexus-merge-final-verify.log`. |
 | Focused `McpConnectionPersistenceIT`, `AgentMcpManagementGuardIT`, `NexusOperatorSessionIT`, `SdkMcpRemoteProbeTest`, `McpProbeConfigurationTest`, mapper/adapter/service tests | **PASS**, exit 0 in their final focused runs. |
 | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/infrastructure/local -am dependency:analyze` | **PASS** command; no unused new MCP dependencies. Existing transitive Spring/JUnit warnings remain. |
@@ -35,6 +35,8 @@ Management routes on both services: `POST /connections/{id}/test`, `GET /connect
 | `git diff --check` | **PASS**. |
 
 Eight Agent skips are opt-in checks, **NOT_VERIFIED**, not PASS. An earlier Agent full verify failed on a misplaced ForgeIT request fixture; that path was corrected before the original successful full run. During the merge with newer `main`, its V39 migration introduced a strict schema-fingerprint constraint. One intermediate full run failed on old synthetic short fingerprints; the fixture was changed to valid SHA-256 values, then the focused persistence test and both full commands above passed. No personal Maven/Codex config or production secret was changed. Tests used disposable PostgreSQL/WireMock/local HTTP fixtures and synthetic credentials.
+
+The first CI run for PR #154 exposed a race in `McpProbeHttpClientBuilder`: dispatching another POST cleared an observed 403 before probe classification. `McpProbeHttpClientBuilderTest` deterministically failed on the old code (`expected 403, was 0`); removing that per-request reset made the focused test and full Agent verify pass. The same CI run also had a Forge Knowledge failure in `test_server_request_scope_and_unknown_fail_closed`; this branch has no Forge Knowledge code diff and the prior `main` CI passed, so the next CI run must verify whether that failure recurs.
 
 ## Remaining Stage 2 / runtime gaps
 

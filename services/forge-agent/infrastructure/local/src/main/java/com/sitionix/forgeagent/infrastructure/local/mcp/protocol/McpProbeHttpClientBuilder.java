@@ -57,27 +57,17 @@ final class McpProbeHttpClientBuilder implements HttpClient.Builder {
         @Override public Optional<Executor> executor() { return delegate.executor(); }
         @Override public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> handler)
                 throws IOException, InterruptedException {
-            prepare(request);
             return checked(delegate.send(request, observe(request, handler)));
         }
         @Override public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request, HttpResponse.BodyHandler<T> handler) {
-            prepare(request);
             return delegate.sendAsync(request, observe(request, handler)).thenApply(this::checked);
         }
         @Override public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request, HttpResponse.BodyHandler<T> handler,
                                                                           HttpResponse.PushPromiseHandler<T> push) {
-            prepare(request);
             return delegate.sendAsync(request, observe(request, handler), push).thenApply(this::checked);
         }
         @Override public WebSocket.Builder newWebSocketBuilder() { return delegate.newWebSocketBuilder(); }
         @Override public void close() { delegate.close(); }
-        private void prepare(HttpRequest request) {
-            if (request.method().equals("POST")) {
-                authStatus = 0;
-                completedSuccessfulPost = false;
-                sawSuccessfulPost = false;
-            }
-        }
         private <T> HttpResponse.BodyHandler<T> observe(HttpRequest request, HttpResponse.BodyHandler<T> handler) {
             return info -> {
                 if (request.method().equals("POST") && info.statusCode() >= 200 && info.statusCode() < 300) {
