@@ -29,6 +29,6 @@ Scope: [roadmap.md](roadmap.md) Stage 3 and the approved [design](stage-3-design
 | Full Nexus verify | **PASS**, exit 0, 378 tests, 0 failures/errors/skips; `/tmp/forge-stage3-nexus-verify.log`. Nexus production code was unchanged by this Stage 3 branch. |
 | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/infrastructure/local,services/forge-agent/boot -am dependency:analyze` | **PASS**, exit 0; `/tmp/forge-stage3-dependency-analyze-final.log`. All new SDK/Reactor/Jackson/SpringWeb/Servlet dependencies are used. Existing used-undeclared/unused warnings remain across the reactor, including transitive Spring/JUnit warnings in local and Boot; no new Stage 3 dependency is reported unused. |
 | `git diff --check` | **PASS** after the final edits. |
-| Fresh PR CI | **NOT_VERIFIED** — no PR CI result yet. |
+| PR #156 CI for code commit `07b2fe3e` | **PASS**, all five jobs: Forge Agent, Nexus, Console, Jarvis and Knowledge. [GitHub run](https://github.com/sitionix/forge-ai/actions/runs/36141729254). |
 
 Historical Stage 0/2 OS probes were not rerun. **NOT_VERIFIED:** live external MCP provider, DNS rebinding resistance of the accepted SDK transport, deployment TLS/private CA and runtime sandbox networking, Codex fresh/resume injection and production execution wiring (Stage 4), and browser UI/OAuth. The local fixture verifies the Agent gateway boundary, not those deployment paths.
