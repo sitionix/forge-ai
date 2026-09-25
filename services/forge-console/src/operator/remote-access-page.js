@@ -149,6 +149,7 @@ export class RemoteAccessPage {
   }
   closeDialog() {
     this.dialogGeneration += 1; this.dialogKind = null;
+    this.window.clearTimeout(this.inviteProgressTimer); this.inviteProgressTimer = null;
     this.el('remotePairingToken').value = ''; this.el('remotePeerPreview').textContent = '';
     this.el('remoteAdvertisedHost').value = ''; this.el('remoteDialog').hidden = true;
     this.clearIssuedToken(); this.el('remoteConnectSubmit').disabled = true;
@@ -217,12 +218,24 @@ export class RemoteAccessPage {
     if (this.control.status !== 'ENABLED' || this.dialogKind !== 'invite' || this.el('remoteInviteForm').hidden
         || !this.el('remoteInviteForm').reportValidity()) return;
     const host = this.el('remoteAdvertisedHost').value.trim();
-    return this.mutate(signal => this.api.invite(host || undefined,signal),result => {
+    const started=Date.now(), generation=this.dialogGeneration;
+    const request=this.mutate(signal => this.api.invite(host || undefined,signal),result => {
       this.#issuedToken = result.body.token; this.#issuedInvitation = result.body.invitation;
       this.invitations = [...this.invitations.filter(i => i.id !== result.body.invitation.id),result.body.invitation];
       this.el('remoteInviteForm').hidden = true; this.el('remoteTokenResult').hidden = false;
       this.el('remoteIssuedToken').value = this.#issuedToken; this.tickCountdown();
-    },true,true,'Generating your token… usually a few seconds, up to 30 seconds.');
+      this.notice('Token ready. Copy it and share it through a trusted channel.');
+    },true,true,'Generating your token…');
+    const tick=() => {
+      if (!this.pending || this.disposed || generation !== this.dialogGeneration) return;
+      const remaining=Math.max(0,Math.ceil((30000-(Date.now()-started))/1000));
+      this.notice(`Generating your token… ${remaining} seconds remaining.`);
+      if (remaining > 0) this.inviteProgressTimer=this.window.setTimeout(tick,1000);
+    };
+    tick();
+    return request.finally(() => {
+      this.window.clearTimeout(this.inviteProgressTimer); this.inviteProgressTimer=null;
+    });
   }
   connect() {
     if (this.control.status !== 'ENABLED' || this.pending || this.reconcileRequired || this.dialogKind !== 'connect' || !this.updatePreview()) return;
