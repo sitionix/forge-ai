@@ -7,8 +7,10 @@ import static org.mockito.Mockito.*;
 import com.sitionix.forgeai.domain.exception.AgentClientException;
 import com.sitionix.forgeai.domain.model.mcp.*;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionOutboundRequest;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.McpProbeInboundResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
+import java.util.UUID;
 import java.util.Set;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +21,20 @@ class ForgeAgentMcpClientAdapterTest {
     private final ForgeAgentHttpClient http=mock(ForgeAgentHttpClient.class);
     private final ForgeAgentClientCallExecutor executor=mock(ForgeAgentClientCallExecutor.class);
     private final ForgeAgentMcpClientAdapter adapter=new ForgeAgentMcpClientAdapter(http,executor,new McpClientMapper());
+
+    @Test void testConnectionUsesExecutorAndMapperWithoutLocalErrorRouting() {
+        var mapper = mock(McpClientMapper.class);
+        var tested = new ForgeAgentMcpClientAdapter(http, executor, mapper);
+        UUID id = UUID.randomUUID();
+        var inbound = new McpProbeInboundResponse("2025-11-25", List.of());
+        var mapped = new McpProbeReport("2025-11-25", List.of());
+        when(executor.execute(any())).thenReturn(inbound);
+        when(mapper.toDomain(inbound)).thenReturn(mapped);
+        assertThat(tested.test(id)).isSameAs(mapped);
+        verify(executor).execute(any());
+        verify(mapper).toDomain(inbound);
+        verifyNoInteractions(http);
+    }
 
     @Test void outboundBearerAndHeadersSerializeForAgentButNeverEnterToString() throws Exception {
         for (var input : List.of(new McpConnectionCommand("x",URI.create("https://mcp.example/path"),

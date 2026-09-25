@@ -17,6 +17,14 @@ public class ForgeAiMcpConnectionsController {
     public ForgeAiMcpConnectionsController(ManageAgentMcpConnections useCase,McpApiMapper mapper){this.useCase=useCase;this.mapper=mapper;}
     @GetMapping public List<McpConnectionResponse> list(){return useCase.list().stream().map(mapper::toResponse).toList();}
     @GetMapping("/{id}") public McpConnectionResponse get(@PathVariable UUID id){return mapper.toResponse(useCase.get(id));}
+    @PostMapping("/{id}/test") public McpProbeResponse test(@PathVariable UUID id){return McpProbeResponse.from(useCase.test(id));}
+    @GetMapping("/{id}/tools") public List<McpProbeResponse.Tool> inventory(@PathVariable UUID id){
+        return useCase.inventory(id).stream().map(tool -> new McpProbeResponse.Tool(tool.name(),tool.description(),tool.schemaFingerprint())).toList();
+    }
+    @PutMapping("/{id}/allowed-tools") public McpConnectionResponse approve(@PathVariable UUID id,@RequestBody Approvals request){
+        if(request==null || request.tools()==null)throw new IllegalArgumentException("Invalid MCP tool approval");
+        return mapper.toResponse(useCase.approve(id,request.tools()));
+    }
     @PostMapping public ResponseEntity<McpConnectionResponse> create(@RequestBody McpConnectionRequest request){
         if(request==null) throw new IllegalArgumentException("Invalid MCP request");
         return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toResponse(useCase.create(mapper.toCommand(request))));
@@ -32,4 +40,5 @@ public class ForgeAiMcpConnectionsController {
     @DeleteMapping("/{id}") @ResponseStatus(HttpStatus.NO_CONTENT) public void delete(@PathVariable UUID id){useCase.delete(id);}
     @PostMapping("/{id}/reencrypt") @ResponseStatus(HttpStatus.NO_CONTENT) public void reencrypt(@PathVariable UUID id){useCase.reencrypt(id);}
     public record Enabled(Boolean enabled){}
+    public record Approvals(java.util.Set<McpConnection.AllowedTool> tools){}
 }

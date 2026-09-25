@@ -14,6 +14,15 @@ public class AgentMcpConnectionsUseCase implements ManageAgentMcpConnections {
     public AgentMcpConnectionsUseCase(ForgeAgentMcpClient client){this.client=client;}
     public List<McpConnection> list(){return client.list();}
     public McpConnection get(UUID id){requireId(id);return client.get(id);}
+    public McpProbeReport test(UUID id){requireId(id);return client.test(id);}
+    public List<McpProbeReport.Tool> inventory(UUID id){requireId(id);return client.inventory(id);}
+    public McpConnection approve(UUID id, Set<McpConnection.AllowedTool> tools){
+        requireId(id);
+        if (tools == null || tools.stream().anyMatch(tool -> tool == null || tool.name() == null
+                || tool.name().isBlank() || tool.schemaFingerprint() == null || tool.schemaFingerprint().isBlank()))
+            throw new IllegalArgumentException("Invalid MCP tool approval");
+        return client.approve(id, tools);
+    }
     public McpConnection create(McpConnectionCommand command){validate(command,false);return client.create(command);}
     public McpConnection update(UUID id,McpConnectionCommand command){requireId(id);validate(command,true);return client.update(id,command);}
     public McpConnection setEnabled(UUID id,boolean enabled){requireId(id);return client.setEnabled(id,enabled);}

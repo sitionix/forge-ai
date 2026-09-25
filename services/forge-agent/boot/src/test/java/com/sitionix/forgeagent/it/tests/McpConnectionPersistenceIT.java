@@ -8,6 +8,7 @@ import com.sitionix.forgeagent.domain.port.*;
 import com.sitionix.forgeagent.application.mcp.McpConnectionService;
 import com.sitionix.forgeagent.infrastructure.local.mcp.*;
 import com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresMcpConnectionRepository;
+import com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresMcpToolInventoryRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresForgeInstanceIdentityRepository;
 import com.sitionix.forgeagent.AgentMcpDowngradeConfiguration;
 import com.sitionix.forgeagent.RemoteAccessPairingReconciliation;
@@ -27,10 +28,77 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 @IntegrationTest
 class McpConnectionPersistenceIT {
+    private static final String FP_ONE = "sha256:" + "a".repeat(64);
+    private static final String FP_TWO = "sha256:" + "b".repeat(64);
+    private static final String FP_THREE = "sha256:" + "c".repeat(64);
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private PlatformTransactionManager transactions;
     @Autowired private ProjectRepository projects;
+
+    @Test void inventoryIsStoredAndSchemaChangeRevokesOnlyChangedApproval() {
+        var connections = new PostgresMcpConnectionRepository(jdbc, transactions);
+        var inventory = new PostgresMcpToolInventoryRepository(jdbc, connections, transactions);
+        UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
+        UUID id = UUID.randomUUID();
+        Instant now = Instant.now();
+        URI endpoint = URI.create("https://example.org/mcp");
+        var connection = new McpConnection(id, installation, "inventory", endpoint, McpAuthType.NONE,
+                false, McpProjectAccess.all(), Set.of(), false, now, now, null, null);
+        connections.insert(new McpConnectionState(connection, null));
+        inventory.replace(installation, id, endpoint, McpAuthType.NONE, null, List.of(
+                new McpToolSummary("read", "Read", FP_ONE),
+                new McpToolSummary("write", "Write", FP_TWO)));
+        var approved = inventory.approve(installation, id, Set.of(
+                new McpAllowedTool("read", FP_ONE), new McpAllowedTool("write", FP_TWO)));
+        assertThat(approved.allowedTools()).hasSize(2);
+        assertThat(approved.checkedAt()).isNotNull();
+        inventory.replace(installation, id, endpoint, McpAuthType.NONE, null, List.of(
+                new McpToolSummary("read", "Read", FP_ONE),
+                new McpToolSummary("write", "Changed", FP_THREE)));
+        assertThat(connections.findById(installation, id).orElseThrow().allowedTools())
+                .containsExactly(new McpAllowedTool("read", FP_ONE));
+        assertThatThrownBy(() -> inventory.approve(installation, id, Set.of(new McpAllowedTool("write", FP_TWO))))
+                .isInstanceOf(IllegalArgumentException.class);
+        URI changedEndpoint = URI.create("https://other.example.org/mcp");
+        connections.change(installation, id, state -> {
+            var c = state.connection();
+            return new McpConnectionState(new McpConnection(c.id(), c.installationId(), c.displayName(),
+                    changedEndpoint, c.authType(), c.enabled(), c.projectAccess(),
+                    Set.of(), c.credentialConfigured(), c.createdAt(), Instant.now(), null, null), null);
+        });
+        assertThat(inventory.list(installation, id)).isEmpty();
+        inventory.replace(installation, id, changedEndpoint, McpAuthType.NONE, null,
+                List.of(new McpToolSummary("read", "Read", FP_ONE)));
+        connections.change(installation, id, state -> {
+            var c = state.connection();
+            return new McpConnectionState(new McpConnection(c.id(), c.installationId(), c.displayName(),
+                    c.endpoint(), c.authType(), c.enabled(), c.projectAccess(), Set.of(),
+                    c.credentialConfigured(), c.createdAt(), Instant.now(), null, null), state.credential());
+        });
+        assertThat(inventory.list(installation, id)).isEmpty();
+        connections.delete(installation, id);
+    }
+
+    @Test void completedProbeCannotPublishInventoryForReplacedCredential() {
+        var connections = new PostgresMcpConnectionRepository(jdbc, transactions);
+        var inventory = new PostgresMcpToolInventoryRepository(jdbc, connections, transactions);
+        UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
+        UUID id = UUID.randomUUID();
+        URI endpoint = URI.create("https://example.org/mcp");
+        Instant now = Instant.now();
+        var oldCredential = new McpEncryptedCredential("test", new byte[]{1});
+        var connection = new McpConnection(id, installation, "credential-race", endpoint, McpAuthType.BEARER,
+                false, McpProjectAccess.all(), Set.of(), true, now, now, null, null);
+        connections.insert(new McpConnectionState(connection, oldCredential));
+        connections.change(installation, id, state ->
+                new McpConnectionState(state.connection(), new McpEncryptedCredential("test", new byte[]{2})));
+        assertThatThrownBy(() -> inventory.replace(installation, id, endpoint, McpAuthType.BEARER,
+                oldCredential, List.of(new McpToolSummary("read", null, FP_ONE))))
+                .isInstanceOf(IllegalStateException.class).hasMessage("MCP connection changed during probe");
+        assertThat(inventory.list(installation, id)).isEmpty();
+        connections.delete(installation, id);
+    }
 
     @Test void retainedCredentialProbeIgnoresConnectionEnableAndChecksBothStorageSignals() {
         var repository = new PostgresMcpConnectionRepository(jdbc,transactions);

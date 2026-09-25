@@ -32,6 +32,15 @@ import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 
 public final class ForgeAgentMockMvcEndpoint {
+    public static final Endpoint<Void, com.sitionix.forgeagent.api.mcp.McpProbeResponse> TEST_MCP_CONNECTION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/test", HttpMethod.POST,
+                    Void.class, com.sitionix.forgeagent.api.mcp.McpProbeResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> TEST_MCP_CONNECTION_ERROR =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/test", HttpMethod.POST,
+                    Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<com.fasterxml.jackson.databind.JsonNode, ForgeAgentErrorResponse> APPROVE_MCP_TOOLS_ERROR =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/allowed-tools", HttpMethod.PUT,
+                    com.fasterxml.jackson.databind.JsonNode.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<com.fasterxml.jackson.databind.JsonNode, com.sitionix.forgeagent.api.mcp.McpConnectionResponse> CREATE_MCP_CONNECTION =
             Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.POST, com.fasterxml.jackson.databind.JsonNode.class, com.sitionix.forgeagent.api.mcp.McpConnectionResponse.class);
     public static final Endpoint<com.fasterxml.jackson.databind.JsonNode, ForgeAgentErrorResponse> CREATE_MCP_CONNECTION_ERROR =

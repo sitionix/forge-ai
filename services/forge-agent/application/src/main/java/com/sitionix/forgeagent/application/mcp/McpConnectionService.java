@@ -71,7 +71,8 @@ public class McpConnectionService {
                 case REPLACE -> cipher.encrypt(installation,id,PURPOSE,replacement.bytes());
             };
             if (authType == McpAuthType.NONE) encrypted = null;
-            boolean identityChanged = current.authType() != authType || !current.endpoint().equals(endpoint);
+            boolean identityChanged = current.authType() != authType || !current.endpoint().equals(endpoint)
+                    || change != McpCredentialChange.KEEP;
             var updated = new McpConnection(id, installation, displayName.strip(), endpoint, authType,
                     current.enabled(), access, identityChanged ? Set.of() : current.allowedTools(), encrypted != null,
                     current.createdAt(), Instant.now(), identityChanged ? null : current.checkedAt(),

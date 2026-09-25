@@ -31,6 +31,23 @@ import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
 import org.springframework.http.HttpStatus;
 
 public final class ForgeAgentWireMockEndpoints {
+    public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.McpProbeInboundResponse> testMcpConnection() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/test", HttpMethod.POST,
+                Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.McpProbeInboundResponse.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("agent-mcp-probe-response.json"));
+    }
+    public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.McpProbeInboundResponse.Tool[]> listMcpTools() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/tools", HttpMethod.GET,
+                Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.McpProbeInboundResponse.Tool[].class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("agent-mcp-tools-response.json"));
+    }
+    public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentMcpClientAdapter.Approvals, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse> approveMcpTools() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/allowed-tools", HttpMethod.PUT,
+                com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentMcpClientAdapter.Approvals.class,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse.class,
+                (WiremockDefault) context -> context.plainUrl().matchesJson("agent-mcp-approve-tools-request.json")
+                        .responseStatus(200).responseBody("agent-mcp-enabled-response.json"));
+    }
     public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.McpAvailablePageInbound> listAvailableMcp() {
         return Endpoint.createContract("/api/v1/integrations/mcp/available?limit=20", HttpMethod.GET,
                 Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.McpAvailablePageInbound.class,

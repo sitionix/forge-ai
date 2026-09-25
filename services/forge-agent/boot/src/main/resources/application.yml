@@ -14,6 +14,9 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: validate
+logging:
+  level:
+    io.modelcontextprotocol: OFF
 management:
   endpoint:
     health:
@@ -27,6 +30,14 @@ management:
 forge:
   mcp:
     enabled: ${FORGE_MCP_ENABLED:false}
+    probe:
+      connect-timeout: ${FORGE_MCP_PROBE_CONNECT_TIMEOUT:2s}
+      request-timeout: ${FORGE_MCP_PROBE_REQUEST_TIMEOUT:3s}
+      max-response-bytes: ${FORGE_MCP_PROBE_MAX_RESPONSE_BYTES:1048576}
+      max-pages: ${FORGE_MCP_PROBE_MAX_PAGES:5}
+      max-tools: ${FORGE_MCP_PROBE_MAX_TOOLS:500}
+      allowed-private-endpoints: ${FORGE_MCP_PROBE_ALLOWED_PRIVATE_ENDPOINTS:}
+      ssl-bundle: ${FORGE_MCP_PROBE_SSL_BUNDLE:}
     registry:
       base-url: ${FORGE_MCP_REGISTRY_BASE_URL:https://registry.modelcontextprotocol.io}
       connect-timeout: ${FORGE_MCP_REGISTRY_CONNECT_TIMEOUT:3s}

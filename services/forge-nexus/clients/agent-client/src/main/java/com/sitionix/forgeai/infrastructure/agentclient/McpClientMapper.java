@@ -3,12 +3,32 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 import com.sitionix.forgeai.domain.model.mcp.McpConnection;
 import com.sitionix.forgeai.domain.model.mcp.McpAvailablePage;
 import com.sitionix.forgeai.domain.model.mcp.McpAvailableServer;
+import com.sitionix.forgeai.domain.model.mcp.McpProbeReport;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.McpAvailablePageInbound;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.McpProbeInboundResponse;
 import org.springframework.stereotype.Component;
 
 @Component
 public class McpClientMapper {
+    public McpProbeReport toDomain(McpProbeInboundResponse response) {
+        try {
+            if (response == null || response.tools() == null) throw new IllegalArgumentException();
+            return new McpProbeReport(response.protocolVersion(), response.tools().stream()
+                    .map(tool -> new McpProbeReport.Tool(tool.name(), tool.description(), tool.schemaFingerprint()))
+                    .toList());
+        } catch (RuntimeException exception) {
+            throw new IllegalStateException("Invalid MCP upstream response");
+        }
+    }
+    public java.util.List<McpProbeReport.Tool> toTools(java.util.List<McpProbeInboundResponse.Tool> response) {
+        try {
+            if (response == null) throw new IllegalArgumentException();
+            return response.stream().map(tool -> new McpProbeReport.Tool(tool.name(), tool.description(), tool.schemaFingerprint())).toList();
+        } catch (RuntimeException exception) {
+            throw new IllegalStateException("Invalid MCP upstream response");
+        }
+    }
     public McpAvailablePage toDomain(McpAvailablePageInbound response) {
         try {
             if (response == null || response.servers() == null) {

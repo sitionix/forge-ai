@@ -104,6 +104,18 @@ class McpConnectionServiceTest {
         assertThat(updated.allowedTools()).isEmpty();
     }
 
+    @Test void credentialReplacementClearsPreviousToolApprovals() {
+        var c = service.create("x", URI.create("https://example.org/mcp"), McpAuthType.BEARER,
+                McpProjectAccess.all(), McpCredentialSecret.bearer("first-synthetic"));
+        metadata.put(c.id(), new McpConnection(c.id(), c.installationId(), c.displayName(), c.endpoint(), c.authType(),
+                true, c.projectAccess(), Set.of(new McpAllowedTool("read", "sha256:old")), true,
+                c.createdAt(), c.updatedAt(), Instant.now(), null));
+        var replaced = service.update(c.id(), "x", c.endpoint(), McpAuthType.BEARER, McpProjectAccess.all(),
+                McpCredentialChange.REPLACE, McpCredentialSecret.bearer("second-synthetic"));
+        assertThat(replaced.allowedTools()).isEmpty();
+        assertThat(replaced.checkedAt()).isNull();
+    }
+
     @Test void enabledPolicyRequiresExactProjectToolAndCredential() {
         var c = service.create("x",URI.create("https://example.org"),McpAuthType.BEARER,
                 McpProjectAccess.selected(Set.of(project)),McpCredentialSecret.bearer("synthetic"));

@@ -4,11 +4,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sitionix.forgeai.infrastructure.agentclient.dto.McpAvailablePageInbound;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.McpProbeInboundResponse;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class McpClientMapperTest {
     private final McpClientMapper mapper = new McpClientMapper();
+
+    @Test void mapsTypedProbeAndRejectsMalformedUpstream() {
+        var report = mapper.toDomain(new McpProbeInboundResponse("2025-11-25",
+                List.of(new McpProbeInboundResponse.Tool("read", "Read", "sha256:one"))));
+        assertThat(report.protocolVersion()).isEqualTo("2025-11-25");
+        assertThat(report.tools().getFirst().schemaFingerprint()).isEqualTo("sha256:one");
+        assertThatThrownBy(() -> mapper.toDomain(new McpProbeInboundResponse("2025-11-25", null)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Invalid MCP upstream response");
+        assertThatThrownBy(() -> mapper.toTools(List.of(new McpProbeInboundResponse.Tool("", null, "sha256:one"))))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Invalid MCP upstream response");
+    }
 
     @Test
     void mapsAvailablePageAndKeepsTemplateEndpoint() {

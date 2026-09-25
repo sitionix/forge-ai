@@ -98,6 +98,53 @@ class NexusOperatorSessionIT {
   @Autowired ForgeAgentClientProperties agentClientProperties;
 
   @Test
+  void mcpProbeInventoryAndApprovalsUseExistingOperatorAndServiceGuards() throws Exception {
+    UUID id = UUID.fromString("11111111-1111-4111-8111-111111111111");
+    var path = PathParams.create().add("id", id);
+    var wirePath = WireMockPathParams.create().add("id", equalTo(id.toString()));
+    clearInvocations(mcpAdapter);
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.testMcpConnection(403))
+        .withPathParameters(path).header("Host", HOST).assertDefault();
+    verifyNoInteractions(mcpAdapter);
+    SessionTokens tokens = login();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.testMcpConnection(403))
+        .withPathParameters(path).header("Host", HOST).header("Origin", "http://evil.test")
+        .header("X-Forge-CSRF", tokens.csrf()).cookie("FG_SESSION", tokens.id()).assertDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.approveMcpTools(403))
+        .withPathParameters(path).header("Host", HOST).header("Origin", ORIGIN)
+        .cookie("FG_SESSION", tokens.id()).assertDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.approveMcpTools(400, "mcp-invalid-approve-tools-request.json"))
+        .withPathParameters(path).header("Host", HOST).header("Origin", ORIGIN)
+        .header("X-Forge-CSRF", tokens.csrf()).cookie("FG_SESSION", tokens.id()).assertDefault();
+    verifyNoInteractions(mcpAdapter);
+
+    String bearer = "Bearer " + encoded(SERVICE);
+    var probe = manager.wiremock().createMapping(ForgeAgentWireMockEndpoints.testMcpConnection())
+        .pathPattern(wirePath).header("Authorization", equalTo(bearer)).createDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.testMcpConnection(200))
+        .withPathParameters(path).header("Host", HOST).header("Origin", ORIGIN)
+        .header("X-Forge-CSRF", tokens.csrf()).cookie("FG_SESSION", tokens.id())
+        .andExpectPath(result -> assertThat(result.getResponse().getContentAsString())
+            .contains("2025-11-25", "sha256:one")).assertDefault();
+    probe.verify();
+
+    var inventory = manager.wiremock().createMapping(ForgeAgentWireMockEndpoints.listMcpTools())
+        .pathPattern(wirePath).header("Authorization", equalTo(bearer)).createDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.listMcpTools(200))
+        .withPathParameters(path).header("Host", HOST).cookie("FG_SESSION", tokens.id())
+        .andExpectPath(result -> assertThat(result.getResponse().getContentAsString()).contains("sha256:one"))
+        .assertDefault();
+    inventory.verify();
+
+    var approval = manager.wiremock().createMapping(ForgeAgentWireMockEndpoints.approveMcpTools())
+        .pathPattern(wirePath).header("Authorization", equalTo(bearer)).createDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.approveMcpTools(200))
+        .withPathParameters(path).header("Host", HOST).header("Origin", ORIGIN)
+        .header("X-Forge-CSRF", tokens.csrf()).cookie("FG_SESSION", tokens.id()).assertDefault();
+    approval.verify();
+  }
+
+  @Test
   void availableMcpUsesOperatorSessionAndServiceBearer() throws Exception {
     clearInvocations(availableAdapter);
     manager.mockMvc().ping(NexusAgentMockMvcEndpoints.listAvailableMcp(401))

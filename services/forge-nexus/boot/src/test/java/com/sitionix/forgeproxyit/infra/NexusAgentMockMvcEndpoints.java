@@ -31,6 +31,24 @@ import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
 import org.springframework.http.HttpStatus;
 
 public final class NexusAgentMockMvcEndpoints {
+    public static Endpoint<Void, com.sitionix.forgeai.api.mcp.McpProbeResponse> testMcpConnection(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}/test", HttpMethod.POST,
+                Void.class, com.sitionix.forgeai.api.mcp.McpProbeResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(status));
+    }
+    public static Endpoint<Void, com.sitionix.forgeai.api.mcp.McpProbeResponse.Tool[]> listMcpTools(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}/tools", HttpMethod.GET,
+                Void.class, com.sitionix.forgeai.api.mcp.McpProbeResponse.Tool[].class,
+                (MockmvcDefault) context -> context.expectStatus(status));
+    }
+    public static Endpoint<JsonNode, com.sitionix.forgeai.api.mcp.McpConnectionResponse> approveMcpTools(int status) {
+        return approveMcpTools(status, "mcp-approve-tools-request.json");
+    }
+    public static Endpoint<JsonNode, com.sitionix.forgeai.api.mcp.McpConnectionResponse> approveMcpTools(int status, String fixture) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}/allowed-tools", HttpMethod.PUT,
+                JsonNode.class, com.sitionix.forgeai.api.mcp.McpConnectionResponse.class,
+                (MockmvcDefault) context -> context.withRequest(fixture).expectStatus(status));
+    }
     public static Endpoint<Void, com.sitionix.forgeai.api.mcp.McpAvailablePageResponse> listAvailableMcp(int status) {
         return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/available", HttpMethod.GET,
                 Void.class, com.sitionix.forgeai.api.mcp.McpAvailablePageResponse.class,

@@ -3,6 +3,7 @@ package com.sitionix.forgeagent;
 import com.sitionix.forgeagent.api.security.McpManagementProperties;
 import com.sitionix.forgeagent.application.mcp.McpConnectionService;
 import com.sitionix.forgeagent.application.mcp.McpAvailableService;
+import com.sitionix.forgeagent.application.mcp.McpProbeService;
 import com.sitionix.forgeagent.domain.port.*;
 import com.sitionix.forgeagent.infrastructure.local.mcp.*;
 import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryVerifier;
@@ -56,5 +57,10 @@ public class AgentMcpProtectedConfiguration {
     }
     @Bean McpAvailableService mcpAvailableService(McpRegistryCatalog catalog) {
         return new McpAvailableService(catalog);
+    }
+    @Bean McpProbeService mcpProbeService(McpConnectionRepository repository,
+            ForgeInstanceIdentityRepository identity, McpCredentialCipher cipher, McpRemoteProbe remote,
+            McpToolInventoryRepository inventory) {
+        return new McpProbeService(repository, identity, cipher, remote, inventory);
     }
 }

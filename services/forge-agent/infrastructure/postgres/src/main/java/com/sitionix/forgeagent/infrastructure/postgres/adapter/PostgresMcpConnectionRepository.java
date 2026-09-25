@@ -67,6 +67,9 @@ public class PostgresMcpConnectionRepository implements McpConnectionRepository 
             }
             McpConnection c = next.connection();
             if (!c.id().equals(id) || !c.installationId().equals(installationId)) throw new IllegalArgumentException("MCP connection owner mismatch");
+            if (!current.connection().endpoint().equals(c.endpoint()) || current.connection().authType() != c.authType()
+                    || (current.connection().checkedAt() != null && c.checkedAt() == null))
+                jdbc.update("DELETE FROM mcp_discovered_tools WHERE connection_id=?", id);
             int affected = jdbc.update("UPDATE mcp_connections SET display_name=?,endpoint=?,auth_type=?,enabled=?,project_scope=?,credential_configured=?,updated_at=?,checked_at=?,safe_diagnostic=? WHERE installation_id=? AND id=?",
                     c.displayName(),c.endpoint().toString(),c.authType().name(),c.enabled(),c.projectAccess().scope().name(),c.credentialConfigured(),
                     Timestamp.from(c.updatedAt()),timestamp(c.checkedAt()),c.safeDiagnostic(),installationId,id);
