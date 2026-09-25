@@ -4,19 +4,22 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.sitionix.forgeagent.domain.model.McpRuntimeLaunchGrants;
+import com.sitionix.forgeagent.domain.port.McpGatewayAddress;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 final class CodexAppServerClient implements CodexClient {
 
     private static final Pattern USER_AGENT_VERSION = Pattern.compile("^[^/]+/([^\\s]+).*");
@@ -27,8 +30,26 @@ final class CodexAppServerClient implements CodexClient {
     private final CodexAppServerProcessStarter processStarter;
     private final CodexAppServerProperties properties;
     private final CodexRuntimeWorkspace runtimeWorkspace;
+    private final McpGatewayAddress gatewayAddress;
+    private final CodexMcpConfiguration mcpConfiguration = new CodexMcpConfiguration();
     private CodexJsonRpcTransport transport;
     private String codexVersion;
+
+    CodexAppServerClient(ObjectMapper objectMapper, CodexAppServerProcessStarter processStarter,
+                         CodexAppServerProperties properties, CodexRuntimeWorkspace runtimeWorkspace) {
+        this(objectMapper, processStarter, properties, runtimeWorkspace, null);
+    }
+
+    @Autowired
+    CodexAppServerClient(ObjectMapper objectMapper, CodexAppServerProcessStarter processStarter,
+                         CodexAppServerProperties properties, CodexRuntimeWorkspace runtimeWorkspace,
+                         @Nullable McpGatewayAddress gatewayAddress) {
+        this.objectMapper = objectMapper;
+        this.processStarter = processStarter;
+        this.properties = properties;
+        this.runtimeWorkspace = runtimeWorkspace;
+        this.gatewayAddress = gatewayAddress;
+    }
 
     @Override
     public synchronized String version() {
@@ -49,7 +70,12 @@ final class CodexAppServerClient implements CodexClient {
 
     @Override
     public String execute(final CodexTurnRequest request) {
-        return this.executeInternal(request, null, null);
+        return this.execute(request, new McpRuntimeLaunchGrants(Map.of()));
+    }
+
+    @Override
+    public String execute(final CodexTurnRequest request, final McpRuntimeLaunchGrants grants) {
+        return this.executeInternal(request, null, null, null, false, grants);
     }
 
     @Override
@@ -62,27 +88,40 @@ final class CodexAppServerClient implements CodexClient {
     public String executeDurable(final CodexTurnRequest request, final String existingThreadId,
                                  final String expectedProviderVersion,
                                  final CodexExecutionIdentityCallbacks callbacks) {
+        return this.executeDurable(request, existingThreadId, expectedProviderVersion,
+                new McpRuntimeLaunchGrants(Map.of()), callbacks);
+    }
+
+    @Override
+    public String executeDurable(final CodexTurnRequest request, final String existingThreadId,
+                                 final String expectedProviderVersion, final McpRuntimeLaunchGrants grants,
+                                 final CodexExecutionIdentityCallbacks callbacks) {
         if (callbacks == null) throw new IllegalArgumentException("identity callbacks are required");
-        return this.executeInternal(request, existingThreadId, expectedProviderVersion, callbacks, true);
+        return this.executeInternal(request, existingThreadId, expectedProviderVersion, callbacks, true, grants);
     }
 
     @Override public String executeTrackedFresh(final CodexTurnRequest request, final CodexExecutionIdentityCallbacks callbacks) {
-        return this.executeInternal(request, null, null, callbacks, false);
+        return this.executeTrackedFresh(request, new McpRuntimeLaunchGrants(Map.of()), callbacks);
     }
 
-    private String executeInternal(final CodexTurnRequest request, final String existingThreadId,
-                                   final CodexExecutionIdentityCallbacks callbacks) {
-        return this.executeInternal(request,existingThreadId,null,callbacks,false);
+    @Override public String executeTrackedFresh(final CodexTurnRequest request, final McpRuntimeLaunchGrants grants,
+                                                final CodexExecutionIdentityCallbacks callbacks) {
+        return this.executeInternal(request, null, null, callbacks, false, grants);
     }
 
     private String executeInternal(final CodexTurnRequest request, final String existingThreadId,
                                    final String expectedProviderVersion,
-                                   final CodexExecutionIdentityCallbacks callbacks, final boolean durable) {
+                                   final CodexExecutionIdentityCallbacks callbacks, final boolean durable,
+                                   final McpRuntimeLaunchGrants grants) {
+        if (grants == null || (request.mcpSelection() == null && !grants.isEmpty()))
+            throw new CodexTransportException("Codex MCP configuration is unavailable");
+        if (request.mcpSelection() != null) this.threadStartParams(request);
         final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
         final CodexExecutionEventObserver eventObserver = new CodexExecutionEventObserver(
                 new CodexAgentExecutionEventMapper(this.objectMapper), callbacks);
         final CodexJsonRpcTransport transport = this.startWorkspaceTransport(
-                request.executionWorkspace().cwd(), turnStateTracker, eventObserver);
+                request.executionWorkspace().cwd(), turnStateTracker, eventObserver, grants,
+                request.mcpSelection() != null);
         if (callbacks != null) callbacks.executionStarted(transport::close);
         CodexExecution execution = null;
         try {
@@ -165,8 +204,12 @@ final class CodexAppServerClient implements CodexClient {
 
     private CodexJsonRpcTransport startWorkspaceTransport(final Path workingDirectory,
                                                            final CodexTurnStateTracker turnStateTracker,
-                                                           final CodexExecutionEventObserver eventObserver) {
-        final StartedCodexAppServer started = this.processStarter.start(workingDirectory);
+                                                           final CodexExecutionEventObserver eventObserver,
+                                                           final McpRuntimeLaunchGrants grants,
+                                                           final boolean mcpConfigured) {
+        final StartedCodexAppServer started = mcpConfigured
+                ? this.processStarter.start(workingDirectory, grants)
+                : this.processStarter.start(workingDirectory);
         return new CodexJsonRpcTransport(
                 this.objectMapper,
                 started,
@@ -214,6 +257,7 @@ final class CodexAppServerClient implements CodexClient {
                             : existingThreadId != null
                                 ? sessionProtocol.resumeThread(current, existingThreadId,
                                         request.sharedSessionGroup() ? request.developerInstructions() : null,
+                                        request.mcpSelection() == null ? null : this.threadStartParams(request).path("config"),
                                         this.properties.getRequestTimeout())
                                 : this.startThread(current, turnStateTracker, request);
             } catch (final CodexExecutionException exception) {
@@ -376,7 +420,14 @@ final class CodexAppServerClient implements CodexClient {
         params.put("cwd", request.executionWorkspace().cwd().toString());
         params.set("runtimeWorkspaceRoots", this.runtimeWorkspaceRoots(request));
         params.put("ephemeral", true);
-        params.set("config", this.codexConfig());
+        final ObjectNode config = this.codexConfig();
+        if (request.mcpSelection() != null) {
+            if (this.gatewayAddress == null)
+                throw new CodexTransportException("Codex MCP gateway is unavailable");
+            this.mcpConfiguration.apply(config, request.mcpSelection(), this.gatewayAddress.baseUrl(),
+                    request.executionWorkspace().cwd());
+        }
+        params.set("config", config);
         return params;
     }
 

@@ -25,10 +25,16 @@ final class CodexSessionProtocol {
 
     String resumeThread(final CodexJsonRpcTransport transport, final String threadId,
                         final String developerInstructions, final Duration timeout) {
+        return this.resumeThread(transport, threadId, developerInstructions, null, timeout);
+    }
+
+    String resumeThread(final CodexJsonRpcTransport transport, final String threadId,
+                        final String developerInstructions, final JsonNode config, final Duration timeout) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         if (developerInstructions != null) params.put("developerInstructions", developerInstructions);
         params.put("threadId", requireIdentity(threadId, "Codex resume requires a valid threadId"));
         params.put("excludeTurns", true);
+        if (config != null) params.set("config", this.requireParams(config).deepCopy());
         final String resumedThreadId = requireThreadId(transport.request(CodexProtocol.THREAD_RESUME, params, timeout));
         if (!threadId.equals(resumedThreadId)) {
             throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,

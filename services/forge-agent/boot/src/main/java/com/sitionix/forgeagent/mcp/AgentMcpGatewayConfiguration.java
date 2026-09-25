@@ -10,6 +10,7 @@ import com.sitionix.forgeagent.infrastructure.local.mcp.protocol.SdkMcpRemoteCli
 import jakarta.servlet.DispatcherType;
 import java.time.Clock;
 import java.time.Duration;
+import java.net.URI;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Locale;
@@ -17,6 +18,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,6 +26,14 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
 class AgentMcpGatewayConfiguration {
+    @Bean McpGatewayAddress mcpGatewayAddress(ServletWebServerApplicationContext context) {
+        return () -> {
+            if (context.getWebServer() == null || context.getWebServer().getPort() <= 0)
+                throw new IllegalStateException("MCP gateway connector is unavailable");
+            return URI.create("http://127.0.0.1:" + context.getWebServer().getPort());
+        };
+    }
+
     @Bean McpRuntimeGrantRepository mcpRuntimeGrantRepository(Clock clock,
             @Value("${forge.mcp.gateway.max-grants:1000}") int capacity) {
         return new InMemoryMcpRuntimeGrantRepository(clock, System::nanoTime, capacity);

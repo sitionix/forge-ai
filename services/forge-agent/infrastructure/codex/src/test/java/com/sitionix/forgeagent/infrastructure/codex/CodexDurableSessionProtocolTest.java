@@ -54,6 +54,26 @@ class CodexDurableSessionProtocolTest {
     }
 
     @Test
+    void resumeCarriesInvocationConfigWithoutStartingAnotherThread() throws Exception {
+        final Harness harness = this.harness();
+        final JsonNode config = this.objectMapper.readTree("""
+                {"sandbox_workspace_write.network_access":false,"mcp_servers":{"forge_test":{"enabled_tools":["search"]}}}
+                """);
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> harness.protocol().resumeThread(
+                harness.transport(), "thread-durable-1", null, config, Duration.ofSeconds(1)));
+
+        final JsonNode request = this.readRequest(harness.process());
+        assertThat(request.path("method").asText()).isEqualTo("thread/resume");
+        assertThat(request.path("params").path("threadId").asText()).isEqualTo("thread-durable-1");
+        assertThat(request.path("params").path("config")).isEqualTo(config);
+        this.reply(harness.process(), request, "{\"thread\":{\"id\":\"thread-durable-1\"}}");
+
+        assertThat(result.get(1, TimeUnit.SECONDS)).isEqualTo("thread-durable-1");
+        assertThat(harness.process().pendingClientRequestBytes()).isZero();
+        harness.transport().close();
+    }
+
+    @Test
     void resumeRejectsMismatchedResponseIdentityWithoutStartingFreshThread() throws Exception {
         final Harness harness = this.harness();
         final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> harness.protocol().resumeThread(

@@ -7,7 +7,8 @@ public final class McpRuntimeLaunchGrants {
     private final Map<String, String> tokens;
 
     public McpRuntimeLaunchGrants(Map<String, String> tokens) {
-        if (tokens == null || tokens.containsKey(null) || tokens.containsValue(null))
+        if (tokens == null || tokens.entrySet().stream().anyMatch(entry ->
+                entry.getKey() == null || entry.getValue() == null))
             throw new IllegalArgumentException("Invalid MCP launch grants");
         this.tokens = Map.copyOf(tokens);
     }

@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import com.sitionix.forgeagent.domain.model.McpRuntimeLaunchGrants;
 import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeProcessLauncher;
 import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryProperties;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +29,11 @@ final class DefaultCodexAppServerProcessStarter implements CodexAppServerProcess
 
     @Override
     public StartedCodexAppServer start(final Path workingDirectory) {
+        return this.start(workingDirectory, new McpRuntimeLaunchGrants(java.util.Map.of()));
+    }
+
+    @Override
+    public StartedCodexAppServer start(final Path workingDirectory, final McpRuntimeLaunchGrants grants) {
         final List<String> command = List.copyOf(this.properties.getCommand());
         final Path launchDirectory = workingDirectory.toAbsolutePath().normalize();
         if (!Files.isDirectory(launchDirectory)) {
@@ -35,9 +41,10 @@ final class DefaultCodexAppServerProcessStarter implements CodexAppServerProcess
         }
         try {
             if (this.launcher.enabled()) {
-                return new StartedCodexAppServer(this.launcher.startCodex(launchDirectory),
+                return new StartedCodexAppServer(this.launcher.startCodex(launchDirectory, grants.tokens()),
                     List.of("codex", "app-server", "--stdio"), Instant.now());
             }
+            if (!grants.isEmpty()) throw new CodexTransportException("Isolated Codex runtime is unavailable");
             final ProcessBuilder builder = new ProcessBuilder(command);
             builder.directory(launchDirectory.toFile());
             final Process process = builder.start();

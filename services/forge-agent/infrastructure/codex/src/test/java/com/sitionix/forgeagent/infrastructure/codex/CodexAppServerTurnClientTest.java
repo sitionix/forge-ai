@@ -20,15 +20,21 @@ import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
+import com.sitionix.forgeagent.domain.model.McpAllowedTool;
+import com.sitionix.forgeagent.domain.model.McpExecutionSelection;
+import com.sitionix.forgeagent.domain.model.McpRuntimeLaunchGrants;
 import com.sitionix.forgeagent.domain.port.AgentExecutionEventRepository;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -41,6 +47,52 @@ import org.junit.jupiter.api.Test;
 class CodexAppServerTurnClientTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Test
+    void nativeMcpConfigurationAndDistinctLaunchGrantsReachFreshAndResume() throws Exception {
+        var connection = UUID.fromString("01234567-89ab-4cde-8012-3456789abcde");
+        var alias = "forge_0123456789ab4cde80123456789abcde";
+        var grantName = "FORGE_MCP_GRANT_0123456789AB4CDE80123456789ABCDE";
+        var selection = new McpExecutionSelection(List.of(new McpExecutionSelection.Entry(alias, connection,
+                "Search", Set.of(new McpAllowedTool("search", "sha256:fingerprint")))), List.of());
+        var first = new FakeCodexProcess(false, true);
+        var second = new FakeCodexProcess(false, true);
+        var starter = new FakeStarter(first, second);
+        var properties = this.properties();
+        var client = new CodexAppServerClient(this.objectMapper, starter, properties,
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+        JsonNode originalConfig = null;
+        for (int index = 0; index < 2; index++) {
+            final int turn = index;
+            var process = index == 0 ? first : second;
+            var token = "synthetic-grant-" + index;
+            var grants = new McpRuntimeLaunchGrants(Map.of(grantName, token));
+            var request = new CodexTurnRequest("Read.", "Instructions.", "model-a", null,
+                    this.schemaUnchecked(), this.workspace(), false, selection);
+            var result = CompletableFuture.supplyAsync(() -> client.executeDurable(request,
+                    turn == 0 ? null : "thread-durable", null, grants, new CodexExecutionIdentityCallbacks() {
+                        public void conversationStarted(String id, String version) { }
+                        public void turnStarted(String id) { }
+                    }));
+            this.initialize(process);
+            var thread = this.readRequest(process);
+            assertThat(thread.path("method").asText()).isEqualTo(index == 0 ? "thread/start" : "thread/resume");
+            var config = thread.path("params").path("config");
+            assertThat(config.path("mcp_servers").path(alias).path("bearer_token_env_var").asText())
+                    .isEqualTo(grantName);
+            assertThat(config.path("sandbox_workspace_write.network_access").asBoolean()).isFalse();
+            assertThat(thread.toString()).doesNotContain(token);
+            if (originalConfig == null) originalConfig = config;
+            else assertThat(config).isEqualTo(originalConfig);
+            this.replyThread(process, thread, "thread-durable");
+            var turnRequest = this.readRequest(process);
+            this.replyTurn(process, turnRequest, "turn-" + index);
+            this.complete(process, "thread-durable", "turn-" + index, "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+            assertThat(result.get(1, TimeUnit.SECONDS)).contains("OK");
+            assertThat(starter.grants.get(index).tokens().get(grantName)).isEqualTo(token);
+        }
+        client.close();
+    }
 
     @Test
     void bufferedActivityFlushesAfterTurnIdentityAndIdleCompletionLeavesResultUnchanged() throws Exception {
@@ -1383,6 +1435,7 @@ class CodexAppServerTurnClientTest {
         private final Queue<FakeCodexProcess> processes;
         private final List<Path> workingDirectories = new ArrayList<>();
         private final List<Launch> launches = new ArrayList<>();
+        private final List<McpRuntimeLaunchGrants> grants = new ArrayList<>();
         private int starts;
 
         private FakeStarter(final FakeCodexProcess... processes) {
@@ -1396,6 +1449,12 @@ class CodexAppServerTurnClientTest {
             final FakeCodexProcess process = this.processes.remove();
             this.launches.add(new Launch(process, workingDirectory));
             return new StartedCodexAppServer(process, List.of("codex", "app-server", "--stdio"), Instant.now());
+        }
+
+        @Override
+        public synchronized StartedCodexAppServer start(final Path workingDirectory, final McpRuntimeLaunchGrants grants) {
+            this.grants.add(grants);
+            return this.start(workingDirectory);
         }
 
         private int starts() {
