@@ -1,0 +1,1 @@
+{"servers":[{"name":"io.example/search","title":"Search","description":"Search records","version":"1.0.0","endpoint":"https://example.org/mcp"}],"nextCursor":"next-page"}

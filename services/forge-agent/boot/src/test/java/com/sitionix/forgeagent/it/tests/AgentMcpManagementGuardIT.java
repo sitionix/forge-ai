@@ -8,6 +8,7 @@ import com.sitionix.forgeagent.domain.port.McpCredentialCipher;
 import com.sitionix.forgeagent.domain.port.McpConnectionRepository;
 import com.sitionix.forgeagent.application.mcp.McpConnectionService;
 import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryVerifier;
+import com.sitionix.forgeagent.infrastructure.local.mcp.registry.McpRegistryHttpClient;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
@@ -77,8 +78,20 @@ class AgentMcpManagementGuardIT {
   @SpyBean ForgeAgentController controller;
   @SpyBean McpCredentialCipher cipher;
   @SpyBean McpConnectionRepository mcpRepository;
+  @MockBean McpRegistryHttpClient registryClient;
   @Autowired McpConnectionService mcpService;
   @Autowired JdbcTemplate jdbc;
+
+  @Test
+  void availableCatalogRejectsMissingServiceBearerAndInvalidLimitBeforeRegistry() {
+    clearInvocations(registryClient);
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.LIST_MCP_AVAILABLE_UNAUTHORIZED)
+        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.LIST_MCP_AVAILABLE_INVALID)
+        .header("Authorization", "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE))
+        .expectStatus(HttpStatus.BAD_REQUEST).assertAndCreate();
+    verifyNoInteractions(registryClient);
+  }
 
   @Test
   void cipherAndDatabaseFailuresHaveStaticHttpAndLogBoundary(CapturedOutput output) {

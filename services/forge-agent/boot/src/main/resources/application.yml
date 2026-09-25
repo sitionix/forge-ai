@@ -27,6 +27,10 @@ management:
 forge:
   mcp:
     enabled: ${FORGE_MCP_ENABLED:false}
+    registry:
+      base-url: ${FORGE_MCP_REGISTRY_BASE_URL:https://registry.modelcontextprotocol.io}
+      connect-timeout: ${FORGE_MCP_REGISTRY_CONNECT_TIMEOUT:3s}
+      read-timeout: ${FORGE_MCP_REGISTRY_READ_TIMEOUT:5s}
     runtime:
       helper: ${FORGE_MCP_RUNTIME_HELPER:/usr/local/libexec/forge-runtime-launcher}
   agent:

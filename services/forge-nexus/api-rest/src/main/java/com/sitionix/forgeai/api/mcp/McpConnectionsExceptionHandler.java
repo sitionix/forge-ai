@@ -26,7 +26,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 @Slf4j
 @RequiredArgsConstructor
 @Order(Ordered.HIGHEST_PRECEDENCE)
-@RestControllerAdvice(assignableTypes=ForgeAiMcpConnectionsController.class)
+@RestControllerAdvice(assignableTypes={ForgeAiMcpConnectionsController.class,ForgeAiMcpAvailableController.class})
 public class McpConnectionsExceptionHandler {
     private final ObjectMapper objectMapper;
 

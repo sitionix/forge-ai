@@ -38,6 +38,12 @@ public final class ForgeAgentMockMvcEndpoint {
             Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.POST, com.fasterxml.jackson.databind.JsonNode.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, com.sitionix.forgeagent.api.mcp.McpConnectionResponse[]> LIST_MCP_CONNECTIONS =
             Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.GET, Void.class, com.sitionix.forgeagent.api.mcp.McpConnectionResponse[].class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> LIST_MCP_AVAILABLE_INVALID =
+            Endpoint.createContract("/api/v1/integrations/mcp/available?limit=1001", HttpMethod.GET,
+                    Void.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void, ForgeAgentErrorResponse> LIST_MCP_AVAILABLE_UNAUTHORIZED =
+            Endpoint.createContract("/api/v1/integrations/mcp/available", HttpMethod.GET,
+                    Void.class, ForgeAgentErrorResponse.class);
     public static final Endpoint<Void, com.sitionix.forgeagent.api.mcp.McpConnectionResponse> GET_MCP_CONNECTION =
             Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}", HttpMethod.GET, Void.class, com.sitionix.forgeagent.api.mcp.McpConnectionResponse.class);
     public static final Endpoint<Void, ForgeAgentErrorResponse> GET_MCP_CONNECTION_ERROR =
