@@ -23,14 +23,22 @@ public final class McpProbeService {
     private final McpCredentialCipher cipher;
     private final McpRemoteProbe remote;
     private final McpToolInventoryRepository inventory;
+    private final McpGatewayService gateway;
 
     public McpProbeService(McpConnectionRepository connections, ForgeInstanceIdentityRepository identity,
                            McpCredentialCipher cipher, McpRemoteProbe remote, McpToolInventoryRepository inventory) {
+        this(connections, identity, cipher, remote, inventory, null);
+    }
+
+    public McpProbeService(McpConnectionRepository connections, ForgeInstanceIdentityRepository identity,
+                           McpCredentialCipher cipher, McpRemoteProbe remote, McpToolInventoryRepository inventory,
+                           McpGatewayService gateway) {
         this.connections = Objects.requireNonNull(connections);
         this.identity = Objects.requireNonNull(identity);
         this.cipher = Objects.requireNonNull(cipher);
         this.remote = Objects.requireNonNull(remote);
         this.inventory = Objects.requireNonNull(inventory);
+        this.gateway = gateway;
     }
 
     public McpProbeReport test(UUID id) {
@@ -47,6 +55,9 @@ public final class McpProbeService {
         try {
             McpProbeReport report = remote.probe(connection.endpoint(), connection.authType(), credential);
             inventory.replace(installation, id, connection.endpoint(), connection.authType(), encrypted, report.tools());
+            if (gateway != null && !connections.findById(installation, id)
+                    .map(after -> after.allowedTools().equals(connection.allowedTools())).orElse(false))
+                gateway.revokeConnection(id);
             return report;
         } finally {
             if (credential != null) Arrays.fill(credential, (byte) 0);
@@ -61,6 +72,11 @@ public final class McpProbeService {
 
     public McpConnection approve(UUID id, Set<McpAllowedTool> tools) {
         if (tools == null) throw new IllegalArgumentException("Invalid MCP tool approval");
-        return inventory.approve(identity.getOrCreate(), id, tools);
+        UUID installation = identity.getOrCreate();
+        var before = connections.findById(installation, id)
+                .orElseThrow(() -> new NoSuchElementException("MCP connection not found"));
+        var approved = inventory.approve(installation, id, tools);
+        if (gateway != null && !approved.allowedTools().equals(before.allowedTools())) gateway.revokeConnection(id);
+        return approved;
     }
 }

@@ -9,7 +9,8 @@ import java.util.UUID;
 /** The approved, execution-scoped snapshot; it never contains a credential or bearer. */
 public record McpRuntimeGrant(
         UUID id, UUID installationId, UUID sessionId, UUID turnId, UUID nodeRunId,
-        UUID workflowRunId, UUID projectId, UUID connectionId, URI endpoint,
+        UUID workflowRunId, UUID projectId, String leaseOwnerId, long leaseToken,
+        UUID connectionId, URI endpoint,
         McpAuthType authType, String credentialIdentity, Set<McpAllowedTool> tools,
         Instant deadline) {
     public McpRuntimeGrant {
@@ -20,6 +21,7 @@ public record McpRuntimeGrant(
         Objects.requireNonNull(nodeRunId);
         Objects.requireNonNull(workflowRunId);
         Objects.requireNonNull(projectId);
+        Objects.requireNonNull(leaseOwnerId);
         Objects.requireNonNull(connectionId);
         Objects.requireNonNull(endpoint);
         Objects.requireNonNull(authType);

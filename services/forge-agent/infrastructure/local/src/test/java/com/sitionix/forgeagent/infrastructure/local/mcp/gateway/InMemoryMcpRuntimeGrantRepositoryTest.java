@@ -67,7 +67,8 @@ class InMemoryMcpRuntimeGrantRepositoryTest {
 
     private McpRuntimeGrant grant(UUID connection, UUID turn, UUID project) {
         return new McpRuntimeGrant(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), turn,
-                UUID.randomUUID(), UUID.randomUUID(), project, connection, URI.create("https://mcp.example.test/mcp"),
+                UUID.randomUUID(), UUID.randomUUID(), project, "owner", 1L,
+                connection, URI.create("https://mcp.example.test/mcp"),
                 McpAuthType.BEARER, "credential-hash", Set.of(new McpAllowedTool("search", "sha256:" + "a".repeat(64))),
                 now.plusSeconds(60));
     }
