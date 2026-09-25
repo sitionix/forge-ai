@@ -100,4 +100,15 @@ describe('Remote Access management boundary', () => {
     expect(fetcher.mock.lastCall?.[1].headers['X-CSRF-TOKEN']).toBe('new-csrf');
   });
 
+  it('bounds token generation when the local management service stops responding', async () => {
+    const fetcher=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({csrfToken:'csrf-fixture'})));
+    const api=new RemoteAccessApi({fetcher,location:{pathname:'/fgaisox/operator/remote-access.html'},invitationTimeoutMs:20});
+    await api.operatorSession();
+    fetcher.mockImplementationOnce((_url:string,init:RequestInit)=>new Promise((_resolve,reject)=>{
+      init.signal?.addEventListener('abort',()=>reject(new DOMException('Request aborted','AbortError')),{once:true});
+    }));
+    await expect(api.invite()).rejects.toMatchObject({status:503,code:'REMOTE_ACCESS_UNAVAILABLE'});
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
 });

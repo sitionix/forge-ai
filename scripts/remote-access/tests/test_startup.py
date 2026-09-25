@@ -352,7 +352,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
         self.assertIn('REMOTE_ACCESS_REQUIRES_ROOT', result.stderr)
         self.assertNotIn('REMOTE_ACCESS_PREPARED', result.stdout)
 
-    def test_just_start_does_not_prepare_or_start_remote_access(self):
+    def test_just_start_refreshes_active_remote_nexus_without_provisioning_remote_access(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             binaries = root / 'bin'
@@ -401,7 +401,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
             starts = '\n'.join(line for line in calls.splitlines()
                                if 'systemctl start ' in line or 'systemctl restart ' in line)
             self.assertNotIn('forge-remote-agent.service', starts)
-            self.assertNotIn('forge-remote-nexus.service', starts)
+            self.assertIn('systemctl restart forge-remote-nexus.service', starts)
             self.assertNotIn('forge-remote-sshd.service', starts)
             self.assertNotIn('REMOTE_ACCESS_PACKAGE_STAGED', result.stdout)
             self.assertNotIn('REMOTE_ACCESS_PREPARED', result.stdout)

@@ -16,7 +16,7 @@ export function mountColdRemoteAccess({document,window,fetcher=window.fetch.bind
   const start=async intent => {
     if(pending) return;
     pending=true;error.hidden=true;buttons.forEach(button=>{button.disabled=true;});
-    progress.textContent='Preparing this machine for SSH…';
+    progress.textContent='Preparing SSH… first setup can take up to 30 minutes.';
     try {
       let current=await state();
       if(current.status!=='READY') {
@@ -24,10 +24,11 @@ export function mountColdRemoteAccess({document,window,fetcher=window.fetch.bind
           cache:'no-store',credentials:'same-origin',redirect:'error',body:'{}'});
         if(!response.ok) throw new Error('Local Remote Access setup could not start.');
         // The on-demand systemd setup may spend up to 30 minutes preparing its first rootfs.
-        const deadline=Date.now()+1860000;
+        const started=Date.now(), deadline=started+1860000;
         while(Date.now()<deadline) {
           await delay(1500);
           current=await state();
+          progress.textContent=`Preparing SSH… ${Math.floor((Date.now()-started)/60000)} min elapsed; first setup can take up to 30 minutes.`;
           if(current.status==='FAILED') throw new Error('SSH preparation failed on this machine. Check Forge setup and retry.');
           if(current.status==='READY') break;
         }

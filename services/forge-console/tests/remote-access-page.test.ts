@@ -206,6 +206,24 @@ describe('Remote Access Console', () => {
     expect(t.el('remoteDialog').hidden).toBe(true);
   });
 
+  it('shows a bounded countdown while Give Access waits for a token', async () => {
+    const t=setup();await t.page.mount();t.click('remoteGiveAccess');
+    let resolve!: (r:Response)=>void;
+    t.fetcher.mockImplementationOnce(()=>new Promise<Response>(r=>{resolve=r;}));
+    const clock=vi.spyOn(Date,'now').mockReturnValue(1000);
+    const scheduled: Array<() => void>=[];
+    const setTimeout=vi.spyOn(t.dom.window,'setTimeout').mockImplementation(((callback: TimerHandler) => {
+      scheduled.push(callback as () => void);return 1;
+    }) as typeof t.dom.window.setTimeout);
+    t.submit('remoteInviteForm');await flush();
+    expect(t.el('remoteNotice').textContent).toContain('30 seconds remaining');
+    clock.mockReturnValue(6000);scheduled.shift()?.();
+    expect(t.el('remoteNotice').textContent).toContain('25 seconds remaining');
+    resolve(json({invitation:{id:'invite',expiresAt:new Date(Date.now()+300000).toISOString()},token},201));await flush();
+    expect(t.el('remoteNotice').textContent).not.toContain('seconds remaining');
+    setTimeout.mockRestore();clock.mockRestore();
+  });
+
   it('rejects a refresh snapshot that predates a revoke', async () => {
     const t=setup();await t.page.mount();
     const original=t.fetcher.getMockImplementation()!;let resolve!: (r:Response)=>void;

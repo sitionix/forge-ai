@@ -94,8 +94,10 @@ public class RemoteAccessColdBootstrapController {
 
     static final class SystemBridge implements Bridge {
         private final Path socketPath;
+        private final Path systemctlPath;
         SystemBridge() { this(Path.of("/run/forge-remote-bootstrap.sock")); }
-        SystemBridge(Path socketPath) { this.socketPath=socketPath; }
+        SystemBridge(Path socketPath) { this(socketPath,Path.of("/usr/bin/systemctl")); }
+        SystemBridge(Path socketPath,Path systemctlPath) { this.socketPath=socketPath;this.systemctlPath=systemctlPath; }
         public boolean ready() {
             try {
                 var connection=(HttpURLConnection)new URL("http://127.0.0.1:9100/fgaisox/actuator/health").openConnection();
@@ -106,13 +108,18 @@ public class RemoteAccessColdBootstrapController {
         }
         public boolean failed() {
             try {
-                var process=new ProcessBuilder("/usr/bin/systemctl","show","forge-remote-setup.service",
-                        "--property=ActiveState","--value").redirectError(ProcessBuilder.Redirect.DISCARD).start();
+                var process=new ProcessBuilder(systemctlPath.toString(),"show","forge-remote-setup.service",
+                        "--property=ActiveState","--property=SubState").redirectError(ProcessBuilder.Redirect.DISCARD).start();
                 try {
-                    if (!process.waitFor(2,TimeUnit.SECONDS) || process.exitValue()!=0) return false;
-                    return "failed".equals(new String(process.getInputStream().readNBytes(32),StandardCharsets.US_ASCII).trim());
+                    if (!process.waitFor(2,TimeUnit.SECONDS) || process.exitValue()!=0) return true;
+                    var state=new String(process.getInputStream().readNBytes(128),StandardCharsets.US_ASCII);
+                    var active=state.lines().filter(line -> line.startsWith("ActiveState=")).findFirst().orElse("");
+                    var sub=state.lines().filter(line -> line.startsWith("SubState=")).findFirst().orElse("");
+                    if (active.equals("ActiveState=activating") || active.equals("ActiveState=inactive") && sub.equals("SubState=dead")
+                            || active.equals("ActiveState=active") && sub.equals("SubState=running")) return false;
+                    return true;
                 } finally { process.destroyForcibly(); }
-            } catch (Exception unavailable) { return false; }
+            } catch (Exception unavailable) { return true; }
         }
         public void prepare() {
             try (var channel=SocketChannel.open(StandardProtocolFamily.UNIX)) {
