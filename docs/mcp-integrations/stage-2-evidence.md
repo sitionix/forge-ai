@@ -37,6 +37,7 @@ Internal `McpRemoteToolClient.call(...)` is a Spring-wired Agent port for the fu
 | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/infrastructure/local -am dependency:analyze` | **PASS** on this branch, exit 0; `reactor-core` is declared and used, no unused new MCP dependencies. Existing transitive Spring/JUnit warnings remain. Log: `/tmp/forge-mcp-stage2-call-dependencies-final.log`. |
 | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/clients/agent-client -am dependency:analyze` | **PASS in the earlier backend slice**, not rerun for this Agent-only change; no Nexus dependency changed. |
 | `git diff --check` | **PASS**. |
+| PR #155 Build for code commit `6653f857` | **PASS**, all five jobs: Forge Agent, Nexus, Console, Jarvis and Knowledge. [CI run](https://github.com/sitionix/forge-ai/actions/runs/36121889210). |
 
 Eight Agent skips are opt-in checks, **NOT_VERIFIED**, not PASS. An earlier Agent full verify failed on a misplaced ForgeIT request fixture; that path was corrected before the original successful full run. During the merge with newer `main`, its V39 migration introduced a strict schema-fingerprint constraint. One intermediate full run failed on old synthetic short fingerprints; the fixture was changed to valid SHA-256 values, then the focused persistence test and both full commands above passed. No personal Maven/Codex config or production secret was changed. Tests used disposable PostgreSQL/WireMock/local HTTP fixtures and synthetic credentials.
 
@@ -46,7 +47,7 @@ The first CI run for PR #154 exposed a race in the then-named HTTP builder: disp
 
 - **NOT_VERIFIED / not implemented in this slice:** Stage 3 gateway policy/grants and Codex injection. The internal call port is not reachable by runtime or management callers yet. No OAuth, Settings UI or catalog-to-connection flow was added.
 - **NOT_VERIFIED:** DNS rebinding resistance. The accepted SDK transport has no pinned DNS; this code validates all initially resolved addresses, forbids redirects and proxies, and allows private destinations only by exact host:port, but a DNS change between validation and connection remains possible. Do not claim the roadmap's strict rebinding requirement as PASS.
-- **NOT_VERIFIED:** live provider, real self-hosted CA/TLS fixture, long-lived event-stream timeout, deployment/privileged sandbox boundary and fresh CI for this new branch. The SSL bundle property is wired; its deployment trust chain has not been exercised.
+- **NOT_VERIFIED:** live provider, real self-hosted CA/TLS fixture, long-lived event-stream timeout and deployment/privileged sandbox boundary. The SSL bundle property is wired; its deployment trust chain has not been exercised.
 - **NOT_VERIFIED:** a tool server with more than five pages or 500 tools is supported end-to-end. Such input fails explicitly at the configured bound; it is not returned as partial inventory.
 
 Next Stage 2 security work before declaring the entire stage complete: resolve or explicitly accept the DNS-rebinding tradeoff in final security review; exercise SSL bundle and long-lived transport behavior with disposable TLS/slow fixtures. Stage 3 gateway and Stage 5 UI remain separate.
