@@ -112,6 +112,35 @@ class McpRegistryCatalogAdapterTest {
     }
 
     @Test
+    void optionalRegistryMetadataControlsCursor() throws Exception {
+        assertEmptyPage("{\"servers\":[]}", null);
+        assertEmptyPage("{\"servers\":[],\"metadata\":{}}", null);
+        assertEmptyPage("{\"servers\":[],\"metadata\":{\"nextCursor\":\"x\"}}", "x");
+    }
+
+    @Test
+    void missingServersRemainInvalidUpstream() throws Exception {
+        HttpServer server = stub("{\"metadata\":{}}", 200, new String[2]);
+        try {
+            assertThatThrownBy(() -> adapter(server).list(null, null, 20))
+                    .isInstanceOf(McpRegistryUnavailableException.class);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static void assertEmptyPage(String json, String expectedCursor) throws Exception {
+        HttpServer server = stub(json, 200, new String[2]);
+        try {
+            var page = adapter(server).list(null, null, 20);
+            assertThat(page.servers()).isEmpty();
+            assertThat(page.nextCursor()).isEqualTo(expectedCursor);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void registryFailureIsNotAnEmptySuccess() throws Exception {
         HttpServer server = stub("unavailable", 503, new String[2]);
         try {

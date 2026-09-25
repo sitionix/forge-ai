@@ -29,7 +29,7 @@ public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
     public McpAvailablePage list(String search, String cursor, int limit) {
         try {
             McpRegistryHttpClient.Page page = client.list(search, cursor, limit, "latest");
-            if (page == null || page.servers() == null || page.metadata() == null) {
+            if (page == null || page.servers() == null) {
                 throw new McpRegistryUnavailableException();
             }
             List<McpAvailableServer> servers = new ArrayList<>();
@@ -47,7 +47,8 @@ public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
                     }
                 }
             }
-            return new McpAvailablePage(List.copyOf(servers), page.metadata().nextCursor());
+            return new McpAvailablePage(List.copyOf(servers),
+                    page.metadata() == null ? null : page.metadata().nextCursor());
         } catch (RestClientException exception) {
             throw new McpRegistryUnavailableException(exception);
         }
