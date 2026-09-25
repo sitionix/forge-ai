@@ -1,4 +1,6 @@
-# Stage 2 — наступний план, НЕ РЕАЛІЗОВАНО
+# Stage 2 — історичний загальний план
+
+Цей план передував Flow 1/Flow 2 поділу та рішенню про SDK 0.18.4 без DNS pinning. Фактичний backend зріз Test/inventory і його межі описані в [stage-2-backend-plan.md](stage-2-backend-plan.md) та [stage-2-evidence.md](stage-2-evidence.md). Пункти controlled invocation і DNS rebinding нижче не позначено виконаними.
 
 Починати лише після завершення й прийняття Stage 1 та окремої вказівки користувача. Stage 1 не робить зовнішніх MCP calls.
 

@@ -6,7 +6,12 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import com.sitionix.forgeagent.api.ForgeAgentController;
 import com.sitionix.forgeagent.domain.port.McpCredentialCipher;
 import com.sitionix.forgeagent.domain.port.McpConnectionRepository;
+import com.sitionix.forgeagent.domain.port.McpRemoteProbe;
+import com.sitionix.forgeagent.domain.model.McpAuthType;
+import com.sitionix.forgeagent.domain.model.McpCredentialSecret;
+import com.sitionix.forgeagent.domain.model.McpProjectAccess;
 import com.sitionix.forgeagent.application.mcp.McpConnectionService;
+import com.sitionix.forgeagent.application.mcp.McpProbeService;
 import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryVerifier;
 import com.sitionix.forgeagent.infrastructure.local.mcp.registry.McpRegistryHttpClient;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
@@ -80,7 +85,55 @@ class AgentMcpManagementGuardIT {
   @SpyBean McpConnectionRepository mcpRepository;
   @MockBean McpRegistryHttpClient registryClient;
   @Autowired McpConnectionService mcpService;
+  @SpyBean McpProbeService probeService;
+  @SpyBean McpRemoteProbe remoteProbe;
   @Autowired JdbcTemplate jdbc;
+
+  @Test void probeRouteRequiresServiceBearerBeforeApplication() {
+    var path = PathParams.create().add("id", UUID.randomUUID());
+    clearInvocations(probeService);
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.TEST_MCP_CONNECTION)
+        .withPathParameters(path).expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.TEST_MCP_CONNECTION)
+        .withPathParameters(path).header("Authorization", "Bearer wrong")
+        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
+    verifyNoInteractions(probeService);
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.TEST_MCP_CONNECTION)
+        .withPathParameters(path).header("Authorization", "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE))
+        .expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
+  }
+
+  @Test void invalidProbeApprovalStopsBeforeService() {
+    var path = PathParams.create().add("id", UUID.randomUUID());
+    clearInvocations(probeService);
+    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.APPROVE_MCP_TOOLS_ERROR)
+        .withPathParameters(path).withRequest("mcp-invalid-approve-request.json")
+        .header("Authorization", "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE))
+        .expectStatus(HttpStatus.BAD_REQUEST).assertAndCreate();
+    verifyNoInteractions(probeService);
+  }
+
+  @Test void probeFailureNeverPublishesTransportCauseOrCredential(CapturedOutput output) throws Exception {
+    var connection = mcpService.create("canary", java.net.URI.create("https://example.org/mcp"),
+        McpAuthType.BEARER, McpProjectAccess.all(), McpCredentialSecret.bearer("synthetic-probe-secret"));
+    try {
+      org.mockito.Mockito.doThrow(new IllegalStateException("upstream-cause-canary"))
+          .when(remoteProbe).probe(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.any(byte[].class));
+      manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.TEST_MCP_CONNECTION_ERROR)
+          .withPathParameters(PathParams.create().add("id", connection.id()))
+          .header("Authorization", "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE))
+          .expectStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+          .andExpectPath(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentAsString())
+              .contains("MCP_OPERATION_FAILED").doesNotContain("synthetic-probe-secret", "upstream-cause-canary"))
+          .assertAndCreate();
+      org.assertj.core.api.Assertions.assertThat(output.getAll())
+          .doesNotContain("synthetic-probe-secret", "upstream-cause-canary");
+    } finally {
+      org.mockito.Mockito.reset(remoteProbe);
+      mcpService.remove(connection.id());
+    }
+  }
 
   @Test
   void availableCatalogRejectsMissingServiceBearerAndInvalidLimitBeforeRegistry() {

@@ -64,4 +64,4 @@
 
 ## Найближча робота
 
-Stage 1 уже дає збереження й management API. Перший окремий зріз — **Flow 1: доступні MCP**: пагінований REST-запит до офіційного Registry і typed Nexus proxy. Він лише читає каталог, не підключається до MCP-серверів і не змінює connections. Наступні flows виконуються окремо.
+Stage 1 уже дає збереження й management API. Flow 1 «доступні MCP» реалізовано окремо: він лише читає Registry і не змінює connections. Наступний backend зріз Flow 2 — Test connection, inventory та явне підтвердження tools; UI й runtime виконуються у відповідних наступних stages.
