@@ -25,6 +25,15 @@ class RemoteAccessInvitationsTest {
     @Mock RemoteAccessInvitationGrants grants;
     @Mock PlatformTransactionManager transactions;
 
+    @Test void disabledSwitchRejectsInvitationBeforeKeyGeneration() {
+        var repository=mock(RemoteAccessSwitchRepository.class);
+        when(repository.get()).thenReturn(new RemoteAccessSwitchState(RemoteAccessSwitchStatus.DISABLED,0));
+        var service=new RemoteAccessInvitations(invitations,identity,tokens,grants,
+                new RemoteAccessSwitch(repository),Clock.fixed(NOW,ZoneOffset.UTC),transactions);
+        assertThatThrownBy(() -> service.create(endpoint,"Grantor")).isInstanceOf(com.sitionix.forgeagent.domain.exception.ConflictException.class);
+        verifyNoInteractions(tokens,grants,invitations);
+    }
+
     @Test void emitsTokenOnlyAfterPersistAndGrantAndDestroysEphemeralKey() {
         var keys = setupCreation();
         when(tokens.encode(any(),eq("Grantor"),eq("host-public"),eq(keys.privateKey())))
@@ -85,7 +94,7 @@ class RemoteAccessInvitationsTest {
         when(identity.getOrCreate()).thenReturn(LOCAL);
         when(invitations.findAll(LOCAL)).thenReturn(List.of(expired,cancelled));
         doThrow(new IllegalStateException("cleanup failed")).when(grants).remove(expired);
-        var service = new RemoteAccessInvitations(invitations,identity,tokens,grants,
+        var service = new RemoteAccessInvitations(invitations,identity,tokens,grants,RemoteAccessTestSwitch.enabled(),
                 Clock.fixed(NOW.plusSeconds(301),ZoneOffset.UTC),transactions);
         assertThatThrownBy(service::cleanupUnavailable).isInstanceOf(IllegalStateException.class);
         verify(grants).remove(cancelled);
@@ -100,7 +109,7 @@ class RemoteAccessInvitationsTest {
         return keys;
     }
     private RemoteAccessInvitations service() {
-        return new RemoteAccessInvitations(invitations,identity,tokens,grants,Clock.fixed(NOW,ZoneOffset.UTC),transactions);
+        return new RemoteAccessInvitations(invitations,identity,tokens,grants,RemoteAccessTestSwitch.enabled(),Clock.fixed(NOW,ZoneOffset.UTC),transactions);
     }
     private RemoteAccessInvitation invitation() {
         return new RemoteAccessInvitation(UUID.randomUUID(),LOCAL,endpoint,"public","fingerprint",NOW,NOW.plusSeconds(300),null,null,null);

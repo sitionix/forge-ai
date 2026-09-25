@@ -12,6 +12,8 @@ public final class RemoteAccessDtos {
     }
     public record Endpoint(String host, int port, String username) {}
     public record Capabilities(boolean ready, List<String> supportedOperations, List<String> diagnostics) {}
+    public record Control(RemoteAccessSwitchStatus status, boolean ready, int pendingSessions,
+                          int pendingInvitations, String diagnostic) {}
     public record Invitation(UUID id, UUID grantorInstanceId, Endpoint endpoint, Instant createdAt,
             Instant expiresAt, Instant consumedAt, Instant cancelledAt, UUID redeemedSessionId) {}
     public record InvitationCreated(Invitation invitation, String token) {
@@ -21,6 +23,7 @@ public final class RemoteAccessDtos {
             UUID accessorInstanceId, String peerDisplayName, Endpoint endpoint, String hostFingerprint,
             RemoteAccessSessionStatus status, Instant createdAt, Instant provisioningExpiresAt, Instant activatedAt,
             Instant revokeRequestedAt, Instant revokedAt, RemoteAccessConnectivity connectivity,
-            Instant lastSeenAt, Instant lastCheckedAt, String failureCode, String failureMessage) {}
+            Instant lastSeenAt, Instant lastCheckedAt, String failureCode, String failureMessage,
+            UUID bridgeId, boolean bridgeReady, boolean bridgeRevoked) {}
     public record Error(String code, String message, String correlationId) {}
 }

@@ -1,11 +1,11 @@
 """Isolated-container root driver; not installed as a production control operation."""
-import os,pathlib,subprocess,sys,threading,uuid,time
+import os,pathlib,socket,subprocess,sys,threading,uuid,time
 PACKAGE=pathlib.Path('/opt/forge-remote-package')
 
 def run(*args):subprocess.run(args,check=True,timeout=90)
 
 def prepare():
-    run('python3',str(PACKAGE/'install.py'),'--listen-address','127.0.0.1','--port','22222')
+    run('python3',str(PACKAGE/'install.py'))
     root=pathlib.Path('/srv/forge-remote/rootfs');root.mkdir(parents=True)
     run('cp','-a','/usr',str(root/'usr'))
     for name in ['bin','sbin','lib','lib64']:
@@ -19,7 +19,24 @@ def prepare():
     local=pathlib.Path('/run/forge-remote/local-exec');local.mkdir()
     run('chown','forge-control:forge-codex',str(local))
     local.chmod(0o2750)
-    run('systemctl','start','forge-remote-invitations.service','forge-remote-workloads.service','forge-remote-sshd.service')
+    run('systemctl','start','forge-remote-invitations.service','forge-remote-workloads.service','ssh.service')
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        ready=pathlib.Path('/run/forge-remote/admin/invitations.sock').exists()
+        if ready:
+            try:
+                with socket.create_connection(('127.0.0.1',22),timeout=.2):
+                    break
+            except OSError:
+                pass
+        time.sleep(.1)
+    else:
+        statuses=[]
+        for unit in ('forge-remote-invitations.service','ssh.service'):
+            result=subprocess.run(['systemctl','show',unit,'--property=ActiveState','--property=SubState','--property=ExecMainStatus'],
+                                  capture_output=True,text=True,timeout=3)
+            statuses.append(unit+': '+result.stdout.strip())
+        raise RuntimeError('Remote Access system SSH and authority did not become ready: '+'; '.join(statuses))
     return root
 
 
@@ -153,10 +170,13 @@ def main():
     with subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1) as process:
         for line in process.stdout:
             print(line,end='',flush=True)
-            if line.startswith('PREPARE '):
+            if line.startswith('VERIFY_PREPARED '):
                 for value in line.strip().split()[1:]:
                     if str(uuid.UUID(value))!=value:raise ValueError('Invalid fixture session')
-                    run('python3',str(PACKAGE/'prepare_workspace.py'),'--session',value,'--rootfs',str(root))
+                    sys.path.insert(0,str(PACKAGE))
+                    from workload_units import prepared_context
+                    context=prepared_context(pathlib.Path('/etc/forge-remote/workspaces'),value)
+                    if context['rootfs']!=str(root):raise RuntimeError('Session did not auto-prepare rootfs')
                 late_submission(line.strip().split()[1])
                 process.stdin.write('OK\n');process.stdin.flush()
             elif line.startswith('STAGE8_HELPER '):

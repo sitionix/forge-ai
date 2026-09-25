@@ -7,6 +7,9 @@ import org.springframework.web.service.annotation.*;
 @HttpExchange("/api/v1/remote-access")
 public interface RemoteAccessHttpClient {
     @GetExchange("/capabilities") RemoteAccessClientDtos.Capabilities capabilities();
+    @GetExchange("/control") RemoteAccessClientDtos.Control control();
+    @PostExchange("/control/enable") RemoteAccessClientDtos.Control enable();
+    @PostExchange("/control/disable") ResponseEntity<RemoteAccessClientDtos.Control> disable();
     @GetExchange("/invitations") List<RemoteAccessClientDtos.Invitation> invitations();
     @PostExchange("/invitations") RemoteAccessClientDtos.InvitationCreated invite(@RequestBody RemoteAccessClientDtos.InvitationRequest request);
     @DeleteExchange("/invitations/{id}") void cancel(@PathVariable UUID id);

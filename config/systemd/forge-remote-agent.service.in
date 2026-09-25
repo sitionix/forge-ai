@@ -1,0 +1,31 @@
+[Unit]
+Description=Forge Remote Access authority Agent
+After=network-online.target docker.service forge-remote-invitations.service forge-remote-workloads.service
+Wants=network-online.target
+Requires=forge-remote-invitations.service forge-remote-workloads.service
+
+[Service]
+Type=simple
+User=forge-control
+Group=forge-control
+WorkingDirectory=/var/lib/forge-remote
+EnvironmentFile=/etc/forge-ai/forge-remote-agent.env
+EnvironmentFile=/etc/forge-ai/forge-remote-endpoint.env
+EnvironmentFile=/etc/forge-remote/management/agent.env
+EnvironmentFile=-/etc/forge-remote/management/local-exec-agent.env
+ExecStart=/usr/bin/java -jar /usr/local/lib/forge-remote/forge-agent.jar --spring.docker.compose.enabled=false --server.address=127.0.0.1 --server.port=7092
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=yes
+ReadWritePaths=/var/lib/forge-remote /run/forge-remote
+
+[Install]
+WantedBy=multi-user.target

@@ -6,11 +6,21 @@
 </head>
 <body data-page="remote-access">
 <main class="shell remote-access-shell">
-  <header class="panel"><h1>Remote Access</h1><p>Use this machine to access a peer, or give a peer access here. Each direction requires a separate invitation.</p></header>
+  <header class="panel"><h1>Remote Access</h1><p>Give someone one token. When they enter it on their machine, Forge connects both machines through SSH.</p></header>
   <div id="remoteError" class="error-box" role="alert" hidden></div>
+  <button id="remoteRetry" class="button secondary" type="button" hidden>Retry</button>
   <p id="remoteNotice" role="status" aria-live="polite"></p>
+  <section id="remoteCold" class="panel" hidden>
+    <h2>Connect two Forge machines</h2>
+    <p>Choose an action. Forge prepares SSH on this machine automatically.</p>
+    <div class="remote-control-buttons">
+      <button id="remoteColdGive" class="button" type="button">Give Access</button>
+      <button id="remoteColdConnect" class="button secondary" type="button">Connect</button>
+    </div>
+    <p id="remoteColdProgress" role="status" aria-live="polite"></p>
+  </section>
   <section id="remoteLogin" class="panel" hidden>
-    <h2>Local operator sign in</h2><p>Enter the operator credential prepared during Remote Access setup.</p>
+    <h2>Local connection unavailable</h2>
     <form id="remoteLoginForm" autocomplete="off">
       <label for="remoteOperatorSecret">Operator credential</label>
       <input id="remoteOperatorSecret" type="password" autocomplete="off" maxlength="128" required>
@@ -18,11 +28,25 @@
     </form>
   </section>
   <section id="remoteManagement" hidden>
+    <section id="remoteControl" class="panel remote-control" aria-labelledby="remoteControlTitle">
+      <div class="panel-head"><div><h2 id="remoteControlTitle">Remote Access on this machine</h2><p id="remoteControlSummary" role="status" aria-live="polite"></p></div><span id="remoteControlBadge" class="remote-control-badge"></span></div>
+      <p id="remoteControlDetails"></p>
+      <div class="remote-control-buttons">
+        <button id="remoteEnable" class="button" type="button" hidden>Enable Remote Access</button>
+        <button id="remoteDisable" class="button secondary" type="button" hidden>Disable Remote Access</button>
+        <button id="remoteRetryDisable" class="button secondary" type="button" hidden>Retry cleanup</button>
+      </div>
+      <div id="remoteDisableConfirmation" class="remote-control-confirm" hidden>
+        <p>Disable will revoke every Remote Access session and stop its running commands. Changes already made on either machine remain.</p>
+        <button id="remoteDisableConfirm" class="button" type="button">Revoke all sessions and disable</button>
+        <button id="remoteDisableCancel" class="button secondary" type="button">Keep access enabled</button>
+      </div>
+    </section>
     <div class="panel remote-actions">
       <button id="remoteConnect" class="button" type="button">Connect</button>
       <button id="remoteGiveAccess" class="button" type="button">Give Access</button>
       <button id="remoteRefresh" class="button secondary" type="button">Refresh</button>
-      <button id="remoteLogout" class="button secondary" type="button">Log out</button>
+      <button id="remoteLogout" class="button secondary" type="button" hidden>Log out</button>
       <p id="remoteReadiness" role="status"></p>
     </div>
     <section id="remoteDialog" class="panel" role="dialog" aria-labelledby="remoteDialogTitle" hidden>
@@ -32,13 +56,14 @@
         <textarea id="remotePairingToken" rows="3" maxlength="16384" autocomplete="off" spellcheck="false" required></textarea>
         <p id="remotePeerPreview" role="status"></p>
         <p>Preview comes from the token. Forge verifies the peer during pairing. Your account credentials and history stay here.</p>
-        <button id="remoteConnectSubmit" class="button" type="submit" disabled>Connect to this machine</button>
+        <button id="remoteConnectSubmit" class="button" type="submit" disabled>Connect both machines</button>
       </form>
       <form id="remoteInviteForm" hidden>
         <p>Allow a trusted peer to run commands in the prepared workspace here. Share the token only through a trusted channel.</p>
-        <label for="remoteAdvertisedHost">Reachable SSH address (leave blank to use the configured address)</label>
+        <label for="remoteAdvertisedHost">This machine’s reachable SSH address (leave blank for automatic detection)</label>
         <input id="remoteAdvertisedHost" type="text" maxlength="253" autocomplete="off">
-        <button id="remoteInviteSubmit" class="button" type="submit">Create invitation</button>
+        <p>Forge asks for an address only when it cannot choose one safely. Use the LAN address the other machine can reach.</p>
+        <button id="remoteInviteSubmit" class="button" type="submit">Generate token</button>
       </form>
       <section id="remoteTokenResult" hidden>
         <label for="remoteIssuedToken">One-time pairing token — not available again after closing</label>
@@ -48,11 +73,12 @@
         <button id="remoteCancelInvitation" class="button secondary" type="button">Cancel invitation</button>
       </section>
     </section>
-    <section class="panel"><h2>I can access</h2><p>ACCESSOR: this machine connects to these grantors. Status is the last confirmed observation.</p><div id="remoteAccessorSessions" class="remote-session-grid" aria-live="polite"></div></section>
-    <section class="panel"><h2>Access granted to</h2><p>GRANTOR: these peers have access here. ACTIVE is authorization, not a live connection.</p><div id="remoteGrantorSessions" class="remote-session-grid" aria-live="polite"></div></section>
+    <section class="panel"><h2>Connected machines</h2><p>One card covers both SSH directions. A bridge is ready only after both directions are confirmed.</p><div id="remoteBridges" class="remote-session-grid" aria-live="polite"></div></section>
+    <section class="panel" id="remoteLegacyAccessorSection"><h2>Existing outgoing sessions</h2><div id="remoteAccessorSessions" class="remote-session-grid" aria-live="polite"></div></section>
+    <section class="panel" id="remoteLegacyGrantorSection"><h2>Existing incoming sessions</h2><div id="remoteGrantorSessions" class="remote-session-grid" aria-live="polite"></div></section>
     <section class="panel"><h2>Invitations</h2><p>Only metadata is restored on refresh. Create a new invitation if its token is no longer available.</p><div id="remoteInvitations" aria-live="polite"></div></section>
     <p>Disconnect stops managed commands after confirmed cleanup. It does not undo file changes or already-read data.</p>
   </section>
 </main>
-<script src="./runtime-config.js"></script><script type="module" src="./operator-ui.js"></script>
+<script src="./runtime-config.js"></script><script type="module" src="./remote-access-entry.js"></script>
 </body></html>

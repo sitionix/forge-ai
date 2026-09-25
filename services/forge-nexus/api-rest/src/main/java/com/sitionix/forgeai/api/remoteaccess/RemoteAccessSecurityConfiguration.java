@@ -21,6 +21,8 @@ public class RemoteAccessSecurityConfiguration {
         var mapper=new ObjectMapper();
         org.springframework.security.web.util.matcher.RequestMatcher login=request -> request.getMethod().equals("POST")
                 && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/login");
+        org.springframework.security.web.util.matcher.RequestMatcher localSession=request -> request.getMethod().equals("GET")
+                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/session");
         if (!combined) {
             var remotePath=org.springframework.web.util.pattern.PathPatternParser.defaultInstance.parse(prefix+"/{*path}");
             http.securityMatcher(request -> remotePath.matches(org.springframework.http.server.RequestPath.parse(
@@ -28,7 +30,7 @@ public class RemoteAccessSecurityConfiguration {
         }
         http.authorizeHttpRequests(auth -> {
                 if (combined) auth.requestMatchers(com.sitionix.forgeai.api.security.OperatorPublicRoutes::matches).permitAll();
-                auth.requestMatchers(login).permitAll().anyRequest().hasRole("REMOTE_ACCESS_OPERATOR");
+                auth.requestMatchers(login,localSession).permitAll().anyRequest().hasRole("REMOTE_ACCESS_OPERATOR");
             })
             .securityContext(context -> context.securityContextRepository(new HttpSessionSecurityContextRepository()))
             .csrf(csrf -> csrf.csrfTokenRepository(new HttpSessionCsrfTokenRepository()).csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())

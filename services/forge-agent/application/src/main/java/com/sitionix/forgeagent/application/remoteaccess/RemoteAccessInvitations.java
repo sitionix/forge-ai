@@ -18,16 +18,22 @@ public class RemoteAccessInvitations {
     private final ForgeInstanceIdentityRepository identity;
     private final RemoteAccessPairingTokens tokens;
     private final RemoteAccessInvitationGrants grants;
+    private final RemoteAccessSwitch access;
     private final Clock clock;
     private final TransactionTemplate transactions;
 
     public RemoteAccessInvitations(RemoteAccessInvitationRepository invitations, ForgeInstanceIdentityRepository identity,
-            RemoteAccessPairingTokens tokens, RemoteAccessInvitationGrants grants, Clock clock, PlatformTransactionManager manager) {
-        this.invitations=invitations; this.identity=identity; this.tokens=tokens; this.grants=grants; this.clock=clock;
+            RemoteAccessPairingTokens tokens, RemoteAccessInvitationGrants grants, RemoteAccessSwitch access,
+            Clock clock, PlatformTransactionManager manager) {
+        this.invitations=invitations; this.identity=identity; this.tokens=tokens; this.grants=grants; this.access=access; this.clock=clock;
         this.transactions=new TransactionTemplate(manager);
     }
 
     public RemoteAccessInvitationCreated create(RemoteAccessEndpoint advertisedEndpoint, String displayName) {
+        return access.admit(() -> createEnabled(advertisedEndpoint, displayName));
+    }
+
+    private RemoteAccessInvitationCreated createEnabled(RemoteAccessEndpoint advertisedEndpoint, String displayName) {
         requireOwnTransaction();
         // Endpoint must be explicitly supplied/configured; never guess from network interfaces.
         tokens.validateEndpoint(advertisedEndpoint);

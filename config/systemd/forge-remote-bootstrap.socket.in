@@ -1,0 +1,11 @@
+[Unit]
+Description=Forge Remote Access local Enable socket
+
+[Socket]
+ListenStream=/run/forge-remote-bootstrap.sock
+SocketUser=@FORGE_SYSTEMD_USER@
+SocketMode=0600
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

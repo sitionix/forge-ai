@@ -46,6 +46,47 @@ class RemoteAccessPersistenceIT {
     static void stop() { DATABASE.stop(); }
 
     @Test
+    void remoteAccessSwitchSurvivesRestartAndRejectsStaleCas() {
+        var repository=new PostgresRemoteAccessSwitchRepository(jdbc);
+        var before=repository.get();
+        assertThat(before.status()).isEqualTo(RemoteAccessSwitchStatus.DISABLED);
+        var enabled=before.enable();
+        assertThat(repository.transition(before,enabled)).isTrue();
+        assertThat(repository.transition(before,enabled)).isFalse();
+        var restarted=new PostgresRemoteAccessSwitchRepository(new JdbcTemplate(
+                new DriverManagerDataSource(DATABASE.getJdbcUrl(),DATABASE.getUsername(),DATABASE.getPassword())));
+        assertThat(restarted.get()).isEqualTo(enabled);
+        var disabling=enabled.beginDisable();
+        assertThat(restarted.transition(enabled,disabling)).isTrue();
+        assertThat(repository.transition(disabling,disabling.finishDisable())).isTrue();
+        assertThat(restarted.get().status()).isEqualTo(RemoteAccessSwitchStatus.DISABLED);
+    }
+
+    @Test
+    void pairLinksTwoSessionsWithOptimisticPersistenceAcrossRestart() {
+        UUID local=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
+        var reverseInvitation=invitation(local,NOW.plusSeconds(120));
+        new PostgresRemoteAccessInvitationRepository(jdbc).insert(reverseInvitation);
+        var sessions=new PostgresRemoteAccessSessionRepository(jdbc);
+        var forward=accessor(UUID.randomUUID(),UUID.randomUUID(),local);
+        var reverse=grantor(reverseInvitation);
+        sessions.insert(forward);sessions.insert(reverse);
+        var pair=RemoteAccessPair.connector(UUID.randomUUID(),reverseInvitation.id(),NOW);
+        var repository=new PostgresRemoteAccessPairRepository(jdbc);
+        repository.insert(pair);
+        var forwardLinked=pair.withForwardSession(forward.id());
+        assertThat(repository.transition(pair,forwardLinked)).isTrue();
+        assertThat(repository.transition(pair,forwardLinked)).isFalse();
+        var reverseLinked=forwardLinked.withReverseSession(reverse.id());
+        assertThat(repository.transition(forwardLinked,reverseLinked)).isTrue();
+        var restarted=new PostgresRemoteAccessPairRepository(new JdbcTemplate(
+            new DriverManagerDataSource(DATABASE.getJdbcUrl(),DATABASE.getUsername(),DATABASE.getPassword())));
+        assertThat(restarted.findById(pair.id())).contains(reverseLinked);
+        assertThat(restarted.findBySession(forward.id())).contains(reverseLinked);
+        assertThat(restarted.findBySession(reverse.id())).contains(reverseLinked);
+    }
+
+    @Test
     void observationPersistsWithoutChangingLifecycleAndCannotOverwriteNewerFailure() {
         var repository=new PostgresRemoteAccessSessionRepository(jdbc);
         UUID local=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();

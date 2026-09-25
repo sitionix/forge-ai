@@ -6086,6 +6086,16 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .remote-access-shell form { display: grid; gap: 12px; }
 .remote-access-shell textarea { width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
 .remote-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.remote-control { border: 1px solid rgba(27, 36, 31, 0.18); background: linear-gradient(145deg, rgba(235, 247, 241, 0.9), rgba(255, 255, 255, 0.96)); }
+.remote-control .panel-head { align-items: start; gap: 16px; }
+.remote-control .panel-head p { margin-bottom: 0; }
+.remote-control-badge { display: inline-flex; border-radius: 999px; padding: 6px 12px; font-size: .78rem; font-weight: 700; letter-spacing: .05em; background: #e7ece8; color: #32443b; }
+.remote-control-badge[data-state="ENABLED"] { background: #d9f1e2; color: #155934; }
+.remote-control-badge[data-state="DISABLING"] { background: #fff0d0; color: #81520e; }
+.remote-control-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+.remote-control-confirm { margin-top: 16px; padding: 16px; border: 1px solid #d2ab73; border-radius: 12px; background: #fff8ec; }
+.remote-control-confirm .button { margin-right: 8px; margin-top: 8px; }
+@media (max-width: 600px) { .remote-control .panel-head { flex-direction: column; } .remote-control-buttons .button { width: 100%; } }
 .remote-actions p { flex-basis: 100%; }
 .remote-session-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
 .remote-session-card { border: 1px solid var(--line, #ccc); border-radius: 12px; padding: 16px; overflow-wrap: anywhere; }

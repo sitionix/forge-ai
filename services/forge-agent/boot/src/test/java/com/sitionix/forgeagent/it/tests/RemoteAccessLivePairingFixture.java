@@ -5,6 +5,7 @@ import com.sitionix.forgeagent.application.remoteaccess.*;
 import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.*;
 import com.sitionix.forgeagent.infrastructure.local.LocalRemoteAccessCredentialStore;
+import com.sitionix.forgeagent.infrastructure.local.LocalRemoteAccessReverseInvitationStore;
 import com.sitionix.forgeagent.infrastructure.local.remoteaccess.*;
 import com.sitionix.forgeagent.infrastructure.postgres.adapter.*;
 import java.nio.file.*;
@@ -26,6 +27,15 @@ public final class RemoteAccessLivePairingFixture {
     private static final Path STATE=Path.of("/fixture/state");
     private static final LocalPairingTokens TOKENS=new LocalPairingTokens();
     private static final LocalInvitationGrants GRANTS=new LocalInvitationGrants();
+    // This legacy Stage 4 fixture verifies SSH/persistence only. Stage 5 live execution
+    // uses the real supervisor and checks workspace preparation before ACTIVE.
+    private static final RemoteAccessWorkloads TRANSPORT_ONLY_WORKLOADS=new RemoteAccessWorkloads() {
+        public void reconcile(UUID epoch) { }
+        public void heartbeat(UUID epoch) { }
+        public void prepare(UUID session) { }
+        public void start(UUID session,UUID attachment,UUID epoch) { }
+        public void stop(UUID session) { }
+    };
     private static final RemoteAccessEndpoint ENDPOINT=new RemoteAccessEndpoint("127.0.0.1",22222,"forge-ssh");
     private static String url,user,password;
 
@@ -48,6 +58,70 @@ public final class RemoteAccessLivePairingFixture {
         accessorJvmCrashAfterConfirmation();
         concurrentRedeemAcrossIndependentAccessors();
         expiredProvisioningRemovesGrantAndRetainsUnconfirmedAccessorKey();
+        mutualPairingAcrossTwoPersistedForgeIdentities();
+    }
+
+    private static void mutualPairingAcrossTwoPersistedForgeIdentities() throws Exception {
+        var a=new Peer("peer_a");var b=new Peer("peer_b");
+        var aGrantor=a.grantor(GRANTS);var bGrantor=b.grantor(GRANTS);
+        RemoteAccessPeerPairing router=new RemoteAccessPeerPairing() {
+            public UUID redeem(RemoteAccessInvitationBinding binding,RemoteAccessPairingRequest request) {
+                return (binding.grantorInstanceId().equals(a.local())?aGrantor:bGrantor).redeem(binding,request);
+            }
+            public java.util.Optional<RemoteAccessSessionStatus> confirm(RemoteAccessKeyBinding binding) {
+                return (binding.grantorInstanceId().equals(a.local())?aGrantor:bGrantor).confirm(binding);
+            }
+            public java.util.Optional<UUID> reverse(RemoteAccessKeyBinding binding,RemoteAccessReverseRequest request) {
+                return (binding.grantorInstanceId().equals(a.local())?aGrantor:bGrantor).reverse(binding,request);
+            }
+        };
+        var aAuthority=new RemoteAccessChannelService(a.sessions,a.identity,CLOCK,a.invitations);
+        var bAuthority=new RemoteAccessChannelService(b.sessions,b.identity,CLOCK,b.invitations);
+        RemoteAccessChannelAuthority authority=new RemoteAccessChannelAuthority() {
+            public java.util.Optional<RemoteAccessSessionStatus> sessionStatus(RemoteAccessKeyBinding binding) {
+                return (binding.grantorInstanceId().equals(a.local())?aAuthority:bAuthority).sessionStatus(binding);
+            }
+            public boolean pairingAllowed(RemoteAccessInvitationBinding binding) {
+                return (binding.grantorInstanceId().equals(a.local())?aAuthority:bAuthority).pairingAllowed(binding);
+            }
+        };
+        RemoteAccessPeerExecution noExecution=new RemoteAccessPeerExecution() {
+            public void start(RemoteAccessKeyBinding binding,UUID attachment) { throw new IllegalStateException("No fixture workload"); }
+            public RemoteAccessSessionStatus revoke(RemoteAccessKeyBinding binding) { throw new IllegalStateException("No fixture workload"); }
+        };
+        RemoteAccessSetup bSetup=new RemoteAccessSetup() {
+            public RemoteAccessCapabilities capabilities() { return new RemoteAccessCapabilities(true,java.util.List.of("CONNECT"),java.util.List.of()); }
+            public RemoteAccessEndpoint advertisedEndpoint(String host) { return ENDPOINT; }
+            public RemoteAccessEndpoint advertisedEndpointForPeer(RemoteAccessEndpoint peer) { return ENDPOINT; }
+            public String displayName() { return "Forge B"; }
+        };
+        var bSecrets=new LocalRemoteAccessReverseInvitationStore(b.credentialsRoot.toString());
+        var bManagement=new RemoteAccessManagement(b.sessions,b.identity,b.transport(),noExecution,
+                new RemoteAccessAccessorExecution(b.sessions,b.identity,b.transport(),b.credentials,
+                        new LocalRemoteAccessCommandTransport(b.credentials),b.access,CLOCK),CLOCK,b.pairs,b.inviter());
+        var mutual=new RemoteAccessMutualPairing(b.accessor(b.transport()),b.inviter(),bSetup,TOKENS,b.identity,b.pairs,b.sessions,
+                bSecrets,b.transport(),CLOCK,bManagement);
+        var invitation=a.inviter().create(ENDPOINT,"Forge A");
+        try(var server=new RemoteAccessChannelServer(Path.of("/run/forge-remote/channel/authority.sock"),"forge-ssh","forge-ssh",
+                authority,router,noExecution)) {
+            server.start();
+            var forward=mutual.connect(invitation.token().value(),"Forge B");
+            assertThat(mutual.connected(forward.id())).isTrue();
+            var pairA=a.pairs.findById(invitation.invitation().id()).orElseThrow();
+            var pairB=b.pairs.findById(invitation.invitation().id()).orElseThrow();
+            assertThat(pairA.forwardSessionId()).isEqualTo(pairB.forwardSessionId());
+            assertThat(pairA.reverseSessionId()).isEqualTo(pairB.reverseSessionId()).isNotEqualTo(forward.id());
+            assertThat(a.sessions.findById(pairA.forwardSessionId()).orElseThrow().localRole()).isEqualTo(RemoteAccessRole.GRANTOR);
+            assertThat(b.sessions.findById(pairA.forwardSessionId()).orElseThrow().localRole()).isEqualTo(RemoteAccessRole.ACCESSOR);
+            assertThat(a.sessions.findById(pairA.reverseSessionId()).orElseThrow().localRole()).isEqualTo(RemoteAccessRole.ACCESSOR);
+            assertThat(b.sessions.findById(pairA.reverseSessionId()).orElseThrow().localRole()).isEqualTo(RemoteAccessRole.GRANTOR);
+            for (var sessionId:java.util.List.of(pairA.forwardSessionId(),pairA.reverseSessionId())) {
+                assertThat(a.sessions.findById(sessionId).orElseThrow().status()).isEqualTo(RemoteAccessSessionStatus.ACTIVE);
+                assertThat(b.sessions.findById(sessionId).orElseThrow().status()).isEqualTo(RemoteAccessSessionStatus.ACTIVE);
+            }
+            assertThatThrownBy(() -> bSecrets.read(pairB.id())).isInstanceOf(RuntimeException.class);
+            System.out.println("PASS one human token created two independently ACTIVE SSH directions across persisted Forge identities");
+        }
     }
 
     private static void happyAndWrongCredentials() throws Exception {
@@ -291,7 +365,7 @@ public final class RemoteAccessLivePairingFixture {
             };
             attempt=a.accessor(interruptBeforeConfirmation).connect(invitation.token().value(),"Accessor A");
             assertThat(actual.status(attempt)).isEqualTo(RemoteAccessSessionStatus.PROVISIONING);
-            assertThat(Files.readString(Path.of("/var/lib/forge-remote/authorized/keys"))).contains(attempt.sessionPublicKey());
+            assertThat(Files.readString(Path.of("/var/lib/forge-remote/transport-home/.ssh/authorized_keys"))).contains(attempt.sessionPublicKey());
         }
         var grantorDeadline=b.sessions.findById(attempt.id()).orElseThrow().provisioningExpiresAt();
         var lastDeadline=attempt.provisioningExpiresAt().isAfter(grantorDeadline)?attempt.provisioningExpiresAt():grantorDeadline;
@@ -299,7 +373,7 @@ public final class RemoteAccessLivePairingFixture {
         var restartedB=new Peer("peer_b",expired);var restartedA=new Peer("peer_a",expired);
         restartedB.grantor(GRANTS).reconcile();
         assertThat(restartedB.sessions.findById(attempt.id()).orElseThrow().status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
-        assertThat(Files.readString(Path.of("/var/lib/forge-remote/authorized/keys"))).doesNotContain(attempt.sessionPublicKey());
+        assertThat(Files.readString(Path.of("/var/lib/forge-remote/transport-home/.ssh/authorized_keys"))).doesNotContain(attempt.sessionPublicKey());
         try(var server=restartedB.server(GRANTS)) {
             server.start();
             assertThatThrownBy(() -> restartedA.transport().status(attempt)).isInstanceOf(IllegalStateException.class);
@@ -332,9 +406,11 @@ public final class RemoteAccessLivePairingFixture {
         final PostgresForgeInstanceIdentityRepository identity;
         final PostgresRemoteAccessInvitationRepository invitations;
         final PostgresRemoteAccessSessionRepository sessions;
+        final PostgresRemoteAccessPairRepository pairs;
         final LocalRemoteAccessCredentialStore credentials;
         final Path credentialsRoot;
         final DataSourceTransactionManager transactions;
+        final RemoteAccessSwitch access;
         final Clock clock;
         Peer(String schema) { this(schema,CLOCK); }
         Peer(String schema,Clock clock) {
@@ -344,15 +420,18 @@ public final class RemoteAccessLivePairingFixture {
             identity=new PostgresForgeInstanceIdentityRepository(jdbc);
             invitations=new PostgresRemoteAccessInvitationRepository(jdbc);
             sessions=new PostgresRemoteAccessSessionRepository(jdbc);
+            pairs=new PostgresRemoteAccessPairRepository(jdbc);
+            access=new RemoteAccessSwitch(new PostgresRemoteAccessSwitchRepository(jdbc));
+            access.enable();
             credentialsRoot=STATE.resolve(schema+"-credentials");
             credentials=new LocalRemoteAccessCredentialStore(credentialsRoot);
         }
         UUID local() { return identity.getOrCreate(); }
         RemoteAccessProvisioningService provisioning() { return new RemoteAccessProvisioningService(invitations,sessions,identity,credentials,clock,transactions); }
-        RemoteAccessInvitations inviter() { return new RemoteAccessInvitations(invitations,identity,TOKENS,GRANTS,clock,transactions); }
-        RemoteAccessGrantorPairing grantor(RemoteAccessSessionGrants grants) { return new RemoteAccessGrantorPairing(invitations,sessions,identity,TOKENS,GRANTS,grants,provisioning(),clock); }
+        RemoteAccessInvitations inviter() { return new RemoteAccessInvitations(invitations,identity,TOKENS,GRANTS,access,clock,transactions); }
+        RemoteAccessGrantorPairing grantor(RemoteAccessSessionGrants grants) { return new RemoteAccessGrantorPairing(invitations,sessions,identity,TOKENS,GRANTS,grants,provisioning(),TRANSPORT_ONLY_WORKLOADS,access,clock,pairs,accessor(transport())); }
         LocalRemoteAccessPairingTransport transport() { return new LocalRemoteAccessPairingTransport(credentials); }
-        RemoteAccessAccessorPairing accessor(RemoteAccessPairingTransport transport) { return new RemoteAccessAccessorPairing(sessions,identity,TOKENS,provisioning(),transport,clock); }
+        RemoteAccessAccessorPairing accessor(RemoteAccessPairingTransport transport) { return new RemoteAccessAccessorPairing(sessions,identity,TOKENS,provisioning(),transport,access,clock); }
         RemoteAccessChannelServer server(RemoteAccessSessionGrants grants) {
             return new RemoteAccessChannelServer(Path.of("/run/forge-remote/channel/authority.sock"),"forge-ssh","forge-ssh",
                     new RemoteAccessChannelService(sessions,identity,clock,invitations),grantor(grants),

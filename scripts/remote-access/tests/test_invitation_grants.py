@@ -22,11 +22,13 @@ class InvitationGrantsTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
         (self.root/'bindings').mkdir()
-        (self.root/'authorized').mkdir()
-        (self.root/'authorized'/'keys').write_text('existing unrelated grant\n')
-        (self.root/'authorized'/'keys').chmod(0o640)
+        (self.root/'transport-home'/'.ssh').mkdir(parents=True)
+        self.keys = self.root/'transport-home'/'.ssh'/'authorized_keys'
+        self.keys.write_text('existing unrelated grant\n')
+        self.keys.chmod(0o640)
         (self.root/'bindings').chmod(0o750)
-        (self.root/'authorized').chmod(0o750)
+        (self.root/'transport-home').chmod(0o555)
+        self.keys.parent.chmod(0o755)
         self.grantor = str(uuid.uuid4())
         self.invitation = str(uuid.uuid4())
         self.key = 'ssh-ed25519 '+base64.b64encode(b'\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20'+bytes(range(32))).decode()
@@ -34,23 +36,23 @@ class InvitationGrantsTest(unittest.TestCase):
 
     def test_install_and_remove_preserve_unrelated_grants_and_are_idempotent(self):
         self.grants.install(self.grantor, self.invitation, self.key)
-        installed = (self.root/'authorized'/'keys').read_bytes()
+        installed = self.keys.read_bytes()
         self.grants.install(self.grantor, self.invitation, self.key)
-        self.assertEqual(installed, (self.root/'authorized'/'keys').read_bytes())
+        self.assertEqual(installed, self.keys.read_bytes())
         self.assertIn(self.key.encode(), installed)
         self.assertEqual(1, len(list((self.root/'bindings').iterdir())))
         self.grants.remove(self.grantor, self.invitation, self.key)
         self.grants.remove(self.grantor, self.invitation, self.key)
-        self.assertEqual('existing unrelated grant\n', (self.root/'authorized'/'keys').read_text())
+        self.assertEqual('existing unrelated grant\n', self.keys.read_text())
         self.assertEqual([], list((self.root/'bindings').iterdir()))
 
     def test_foreign_binding_or_symlink_is_never_replaced(self):
         self.grants.install(self.grantor, self.invitation, self.key)
-        before = (self.root/'authorized'/'keys').read_bytes()
+        before = self.keys.read_bytes()
         with self.assertRaises(ValueError):
             self.grants.remove(self.grantor, str(uuid.uuid4()), self.key)
-        self.assertEqual(before, (self.root/'authorized'/'keys').read_bytes())
-        keys = self.root/'authorized'/'keys'
+        self.assertEqual(before, self.keys.read_bytes())
+        keys = self.keys
         keys.unlink()
         target = self.root/'target'
         target.write_text('untouched')
@@ -64,12 +66,12 @@ class InvitationGrantsTest(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.grants.install(self.grantor, self.invitation, self.key)
         self.grants.remove(self.grantor, self.invitation, self.key)
-        self.assertEqual('existing unrelated grant\n', (self.root/'authorized'/'keys').read_text())
+        self.assertEqual('existing unrelated grant\n', self.keys.read_text())
         self.assertEqual([], list((self.root/'bindings').iterdir()))
 
     def test_peer_uid_and_unknown_operations_are_denied_before_filesystem_changes(self):
         for uid, frame in [(1001, 'HOST\n'), (1000, 'EXEC id\n'), (1000, 'INSTALL bad\n')]:
             self.assertEqual('DENIED\n', self.supervisor.dispatch(uid, 1000, frame, self.grants, self.root/'host.pub'))
-        self.assertEqual('existing unrelated grant\n', (self.root/'authorized'/'keys').read_text())
+        self.assertEqual('existing unrelated grant\n', self.keys.read_text())
 
 if __name__ == '__main__': unittest.main()

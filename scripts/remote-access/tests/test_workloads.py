@@ -91,6 +91,21 @@ class SupervisorGateTest(unittest.TestCase):
         self.sut=self.m.Supervisor(self.root,self.root,self.clock)
         self.epoch='30000000-0000-4000-8000-000000000001'
         self.request={'argv':['/bin/true'],'cwd':'/workspace','timeoutSeconds':60}
+    def test_prepare_uses_only_fixed_rootfs_and_verifies_context(self):
+        with patch.object(self.m.subprocess,'run') as provision, \
+             patch.object(self.m,'prepared_context',return_value={'rootfs':'/srv/forge-remote/rootfs'}) as inspect:
+            self.sut.prepare(S)
+        argv=provision.call_args.args[0]
+        self.assertEqual(argv[0],'/usr/bin/systemd-run')
+        self.assertEqual(argv[-5:],['/usr/libexec/forge-remote/prepare-workspace',
+                                    '--session',S,'--rootfs','/srv/forge-remote/rootfs'])
+        self.assertIn('--property=RuntimeMaxSec=25s',argv)
+        inspect.assert_called_once_with(self.root,S)
+    def test_failed_prepare_never_claims_prepared_context(self):
+        with patch.object(self.m.subprocess,'run',side_effect=RuntimeError('unavailable')), \
+             patch.object(self.m,'prepared_context') as inspect:
+            with self.assertRaisesRegex(RuntimeError,'unavailable'):self.sut.prepare(S)
+        inspect.assert_not_called()
     def test_unreconciled_or_expired_authority_cannot_start(self):
         ticket=self.sut.attach(S,self.request)
         with self.assertRaisesRegex(RuntimeError,'authority'):self.sut.start(S,ticket,self.epoch,[0,1,2])

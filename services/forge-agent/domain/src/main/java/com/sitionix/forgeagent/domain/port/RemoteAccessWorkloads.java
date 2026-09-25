@@ -6,6 +6,8 @@ import java.util.UUID;
 public interface RemoteAccessWorkloads {
     void reconcile(UUID authorityEpoch);
     void heartbeat(UUID authorityEpoch);
+    /** Prepare this grantor session's isolated execution context before ACTIVE. */
+    void prepare(UUID sessionId);
     void start(UUID sessionId, UUID attachmentId, UUID authorityEpoch);
     void stop(UUID sessionId);
 }

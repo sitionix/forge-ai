@@ -36,7 +36,7 @@ class RemoteAccessExecutionServiceTest {
             RemoteAccessSession before=call.getArgument(0);
             return row.compareAndSet(before,before.withFailure(call.getArgument(1),call.getArgument(2)));
         });
-        sut=new RemoteAccessExecutionService(sessions,identity,workloads,grants,Clock.fixed(NOW,ZoneOffset.UTC));
+        sut=new RemoteAccessExecutionService(sessions,identity,workloads,grants,RemoteAccessTestSwitch.enabled(),Clock.fixed(NOW,ZoneOffset.UTC));
     }
     static RemoteAccessSession session() {
         return new RemoteAccessSession(ID,UUID.randomUUID(),RemoteAccessRole.GRANTOR,LOCAL,PEER,"peer",

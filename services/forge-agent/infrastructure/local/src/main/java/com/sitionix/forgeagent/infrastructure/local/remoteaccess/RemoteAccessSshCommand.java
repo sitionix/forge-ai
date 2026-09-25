@@ -3,6 +3,7 @@ package com.sitionix.forgeagent.infrastructure.local.remoteaccess;
 import com.sitionix.forgeagent.domain.model.RemoteAccessRole;
 import com.sitionix.forgeagent.domain.model.RemoteAccessSession;
 import com.sitionix.forgeagent.domain.model.RemoteAccessSessionStatus;
+import com.sitionix.forgeagent.domain.model.RemoteAccessEndpoint;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -25,7 +26,7 @@ public final class RemoteAccessSshCommand {
     }
 
     public static List<String> control(RemoteAccessSession session,Path identity,Path knownHosts,String operation) throws IOException {
-        if (!List.of("redeem","confirm","status","revoke","exec").contains(operation)) throw new IllegalArgumentException("Unsupported control command");
+        if (!List.of("redeem","confirm","status","revoke","reverse","exec").contains(operation)) throw new IllegalArgumentException("Unsupported control command");
         if (session.localRole()!=RemoteAccessRole.ACCESSOR || session.localPrivateKeyReference()==null
                 || session.status()!=RemoteAccessSessionStatus.ACTIVE && session.status()!=RemoteAccessSessionStatus.PROVISIONING
                     && !(operation.equals("revoke") && session.status()==RemoteAccessSessionStatus.REVOKING)
@@ -39,7 +40,7 @@ public final class RemoteAccessSshCommand {
         }
         validateFile(identity);
         validateFile(knownHosts);
-        String expected="["+endpoint.host()+"]:"+endpoint.port()+" "+validatedHostKey(session.pinnedHostPublicKey())+"\n";
+        String expected=knownHostsLine(endpoint,session.pinnedHostPublicKey());
         if (Files.size(knownHosts)>1024 || !Files.readString(knownHosts).equals(expected)) {
             throw new IllegalArgumentException("Known hosts does not match the pinned session identity");
         }
@@ -57,6 +58,11 @@ public final class RemoteAccessSshCommand {
         argv.addAll(List.of("-i",identity.toAbsolutePath().toString(),"-p",Integer.toString(endpoint.port()),
                 "--",endpoint.username()+"@"+endpoint.host(),operation));
         return List.copyOf(argv);
+    }
+
+    static String knownHostsLine(RemoteAccessEndpoint endpoint,String publicKey) {
+        String host=endpoint.port()==22?endpoint.host():"["+endpoint.host()+"]:"+endpoint.port();
+        return host+" "+validatedHostKey(publicKey)+"\n";
     }
 
     private static void validateFile(Path path) throws IOException {

@@ -28,6 +28,9 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 @IntegrationTest
 class McpConnectionPersistenceIT {
+    private static final String FP_ONE = "sha256:" + "a".repeat(64);
+    private static final String FP_TWO = "sha256:" + "b".repeat(64);
+    private static final String FP_THREE = "sha256:" + "c".repeat(64);
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private PlatformTransactionManager transactions;
@@ -44,18 +47,18 @@ class McpConnectionPersistenceIT {
                 false, McpProjectAccess.all(), Set.of(), false, now, now, null, null);
         connections.insert(new McpConnectionState(connection, null));
         inventory.replace(installation, id, endpoint, McpAuthType.NONE, null, List.of(
-                new McpToolSummary("read", "Read", "sha256:one"),
-                new McpToolSummary("write", "Write", "sha256:two")));
+                new McpToolSummary("read", "Read", FP_ONE),
+                new McpToolSummary("write", "Write", FP_TWO)));
         var approved = inventory.approve(installation, id, Set.of(
-                new McpAllowedTool("read", "sha256:one"), new McpAllowedTool("write", "sha256:two")));
+                new McpAllowedTool("read", FP_ONE), new McpAllowedTool("write", FP_TWO)));
         assertThat(approved.allowedTools()).hasSize(2);
         assertThat(approved.checkedAt()).isNotNull();
         inventory.replace(installation, id, endpoint, McpAuthType.NONE, null, List.of(
-                new McpToolSummary("read", "Read", "sha256:one"),
-                new McpToolSummary("write", "Changed", "sha256:three")));
+                new McpToolSummary("read", "Read", FP_ONE),
+                new McpToolSummary("write", "Changed", FP_THREE)));
         assertThat(connections.findById(installation, id).orElseThrow().allowedTools())
-                .containsExactly(new McpAllowedTool("read", "sha256:one"));
-        assertThatThrownBy(() -> inventory.approve(installation, id, Set.of(new McpAllowedTool("write", "sha256:two"))))
+                .containsExactly(new McpAllowedTool("read", FP_ONE));
+        assertThatThrownBy(() -> inventory.approve(installation, id, Set.of(new McpAllowedTool("write", FP_TWO))))
                 .isInstanceOf(IllegalArgumentException.class);
         URI changedEndpoint = URI.create("https://other.example.org/mcp");
         connections.change(installation, id, state -> {
@@ -66,7 +69,7 @@ class McpConnectionPersistenceIT {
         });
         assertThat(inventory.list(installation, id)).isEmpty();
         inventory.replace(installation, id, changedEndpoint, McpAuthType.NONE, null,
-                List.of(new McpToolSummary("read", "Read", "sha256:one")));
+                List.of(new McpToolSummary("read", "Read", FP_ONE)));
         connections.change(installation, id, state -> {
             var c = state.connection();
             return new McpConnectionState(new McpConnection(c.id(), c.installationId(), c.displayName(),
@@ -91,7 +94,7 @@ class McpConnectionPersistenceIT {
         connections.change(installation, id, state ->
                 new McpConnectionState(state.connection(), new McpEncryptedCredential("test", new byte[]{2})));
         assertThatThrownBy(() -> inventory.replace(installation, id, endpoint, McpAuthType.BEARER,
-                oldCredential, List.of(new McpToolSummary("read", null, "sha256:one"))))
+                oldCredential, List.of(new McpToolSummary("read", null, FP_ONE))))
                 .isInstanceOf(IllegalStateException.class).hasMessage("MCP connection changed during probe");
         assertThat(inventory.list(installation, id)).isEmpty();
         connections.delete(installation, id);

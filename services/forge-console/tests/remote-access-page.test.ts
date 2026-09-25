@@ -5,7 +5,9 @@ import { RemoteAccessPage } from '../src/operator/remote-access-page.js';
 import { bootstrapOperatorConsole } from '../src/operator/operator-bootstrap.js';
 
 const token = 'fgpair_v1_' + Buffer.from(JSON.stringify({version:1, grantorDisplayName:'Grantor B', sshHost:'10.0.0.2', sshPort:2222, sshUsername:'forge-ssh', ephemeralPairingPrivateKey:'private-canary'})).toString('base64url');
-const session = (id='a', localRole='ACCESSOR', status='ACTIVE') => ({id,localRole,status,peerDisplayName:localRole==='ACCESSOR'?'Grantor B':'Accessor A',endpoint:{host:'10.0.0.2',port:2222,username:'forge-ssh'},connectivity:'UNKNOWN',lastCheckedAt:null,lastSeenAt:null,failureCode:null,failureMessage:null});
+const session = (id='a', localRole='ACCESSOR', status='ACTIVE', bridgeId: string | null = null) => ({id,localRole,status,
+  bridgeId,bridgeReady:Boolean(bridgeId && status==='ACTIVE'),bridgeRevoked:status==='REVOKED',
+  peerDisplayName:localRole==='ACCESSOR'?'Grantor B':'Accessor A',endpoint:{host:'10.0.0.2',port:2222,username:'forge-ssh'},connectivity:'UNKNOWN',lastCheckedAt:null,lastSeenAt:null,failureCode:null,failureMessage:null});
 const json = (body: unknown, status=200) => new Response(JSON.stringify(body), {status, headers:{'Content-Type':'application/json'}});
 const flush = async () => { for(let n=0;n<15;n++) await Promise.resolve(); };
 const cleanup: (()=>void)[] = [];
@@ -15,6 +17,7 @@ function setup(options: {unauthorized?: boolean; bootstrap?: boolean} = {}) {
   const dom = new JSDOM(readFileSync('src/operator/remote-access.html','utf8'), {url:'http://127.0.0.1:9099/fgaisox/operator/remote-access.html',pretendToBeVisual:true});
   const state = {sessions:[session(),session('b','GRANTOR')], invitations:[] as any[],
     capabilities:{ready:true,supportedOperations:['CONNECT','GIVE_ACCESS','LIST','CHECK','REVOKE'],diagnostics:[] as string[]},
+    control:{status:'ENABLED',ready:true,pendingSessions:0,pendingInvitations:0,diagnostic:null as string | null},
     authorized:!options.unauthorized};
   const fetcher = vi.fn(async (url: string, init: RequestInit) => {
     const path=url.replace('/fgaisox/api/v1/infrastructure/agents/remote-access','');
@@ -22,6 +25,20 @@ function setup(options: {unauthorized?: boolean; bootstrap?: boolean} = {}) {
     if(path==='/operator/login') {state.authorized=true;return json({csrfToken:'csrf'});}
     if(path==='/operator/logout') {state.authorized=false;return new Response(null,{status:204});}
     if(path==='/capabilities') return json(state.capabilities);
+    if(path==='/control' && init.method==='GET') return json(state.control);
+    if(path==='/control/enable' && init.method==='POST') {
+      state.control={...state.control,status:'ENABLED',diagnostic:null};return json(state.control);
+    }
+    if(path==='/control/disable' && init.method==='POST') {
+      if(state.control.status==='DISABLING') {
+        state.control={...state.control,status:'DISABLED',pendingSessions:0,diagnostic:null};
+        state.sessions=state.sessions.map(s=>({...s,status:'REVOKED'}));
+        return json(state.control);
+      }
+      state.control={...state.control,status:'DISABLING',pendingSessions:1,diagnostic:'REMOTE_ACCESS_CLEANUP_PENDING'};
+      state.sessions[0]={...state.sessions[0]!,status:'REVOKING'};
+      return json(state.control,202);
+    }
     if(path==='/sessions' && init.method==='GET') return json(state.sessions);
     if(path==='/invitations' && init.method==='GET') return json(state.invitations);
     if(path==='/invitations' && init.method==='POST') {
@@ -46,6 +63,29 @@ function setup(options: {unauthorized?: boolean; bootstrap?: boolean} = {}) {
 }
 
 describe('Remote Access Console', () => {
+  it('enables automatically when a disabled user chooses Connect', async () => {
+    const t=setup();t.state.control.status='DISABLED';await t.page.mount();
+    expect(t.el('remoteEnable').hidden).toBe(true);
+    expect((t.el('remoteConnect') as HTMLButtonElement).disabled).toBe(false);
+    t.click('remoteConnect');await flush();
+    expect(t.el('remoteControlSummary').textContent).toContain('enabled');
+    await vi.waitFor(() => expect(t.el('remoteConnectForm').hidden).toBe(false));
+    expect(t.fetcher.mock.calls.filter(c=>c[0].endsWith('/invitations')&&c[1].method==='POST')).toHaveLength(0);
+  });
+
+  it('confirms Disable and keeps cleanup pending visible until retry succeeds', async () => {
+    const t=setup();await t.page.mount();
+    t.click('remoteDisable');expect(t.el('remoteDisableConfirmation').hidden).toBe(false);
+    expect(t.fetcher.mock.calls.filter(c=>c[0].endsWith('/control/disable'))).toHaveLength(0);
+    t.click('remoteDisableConfirm');await flush();
+    expect(t.el('remoteControlSummary').textContent).toContain('pending');
+    expect(t.el('remoteRetryDisable').hidden).toBe(false);
+    expect((t.el('remoteConnect') as HTMLButtonElement).disabled).toBe(true);
+    t.click('remoteRetryDisable');await flush();
+    expect(t.el('remoteControlSummary').textContent).toContain('disabled');
+    expect(t.el('remoteEnable').hidden).toBe(true);
+    expect((t.el('remoteGiveAccess') as HTMLButtonElement).disabled).toBe(false);
+  });
   it('mounts from router/sidebar and separates access roles without claiming ACTIVE is Online', async () => {
     const t=setup({bootstrap:true});await flush();
     expect(t.dom.window.document.querySelector('a[href="./remote-access.html"]')).not.toBeNull();
@@ -56,19 +96,47 @@ describe('Remote Access Console', () => {
     expect(t.el('remoteAccessorSessions').textContent).not.toContain('Online');
     expect(t.fetcher.mock.calls.filter(c=>c[1].method==='POST')).toHaveLength(0);
   });
+  it('shows one bridge card for two directions and no duplicate directional cards', async () => {
+    const t=setup();
+    t.state.sessions=[session('out','ACCESSOR','ACTIVE','pair'),session('in','GRANTOR','ACTIVE','pair')];
+    await t.page.mount();
+    expect(t.el('remoteBridges').querySelectorAll('.remote-session-card')).toHaveLength(1);
+    expect(t.el('remoteBridges').textContent).toContain('Connected both ways');
+    expect(t.el('remoteBridges').textContent).toContain('To peer');
+    expect(t.el('remoteBridges').textContent).toContain('From peer');
+    expect(t.el('remoteLegacyAccessorSection').hidden).toBe(true);
+    expect(t.el('remoteLegacyGrantorSection').hidden).toBe(true);
+    expect(t.el('remoteBridges').querySelector('[data-action="revoke"]')).not.toBeNull();
+  });
+  it('does not describe a single active direction as a connected bridge', async () => {
+    const t=setup();t.state.sessions=[{...session('out','ACCESSOR','ACTIVE','pair'),bridgeReady:false}];
+    await t.page.mount();
+    expect(t.el('remoteBridges').textContent).toContain('Connecting both directions');
+    expect(t.el('remoteBridges').textContent).not.toContain('Connected both ways');
+  });
 
-  it('authenticates before management and clears bootstrap secret', async () => {
+  it('never asks for a separate operator password and can retry a local session failure', async () => {
     const t=setup({unauthorized:true});await t.page.mount();
-    expect(t.el('remoteLogin').hidden).toBe(false);
+    expect(t.el('remoteLogin').hidden).toBe(true);
+    expect(t.el('remoteRetry').hidden).toBe(false);
     expect(t.fetcher).toHaveBeenCalledTimes(1);
-    let finishLogin!: (response: Response) => void;
-    t.fetcher.mockImplementationOnce(() => new Promise<Response>(resolve => {finishLogin=resolve;}));
-    t.fill('remoteOperatorSecret','operator-canary');t.submit('remoteLoginForm');await flush();
-    expect((t.el('remoteOperatorSecret') as HTMLInputElement).value).toBe('');
-    expect(t.el('remoteLogin').hidden).toBe(false);
-    finishLogin(json({csrfToken:'csrf'}));
-    await vi.waitFor(() => expect(t.el('remoteLogin').hidden).toBe(true));
+    t.state.authorized=true;t.click('remoteRetry');await flush();
     await vi.waitFor(() => expect(t.el('remoteAccessorSessions').textContent).toContain('Grantor B'));
+  });
+
+  it('continues a cold Connect action by enabling locally and opening the token form', async () => {
+    const t=setup();t.state.control.status='DISABLED';t.dom.window.location.hash='#connect';
+    await t.page.mount();
+    expect(t.fetcher.mock.calls.filter(c=>c[0].endsWith('/control/enable'))).toHaveLength(1);
+    expect(t.el('remoteDialog').hidden).toBe(false);
+    expect(t.el('remoteConnectForm').hidden).toBe(false);
+    expect(t.el('remoteLogin').hidden).toBe(true);
+  });
+  it('continues a cold Give Access action by generating the one token automatically', async () => {
+    const t=setup();t.state.control.status='DISABLED';t.dom.window.location.hash='#give';
+    await t.page.mount();
+    await vi.waitFor(() => expect((t.el('remoteIssuedToken') as HTMLTextAreaElement).value).toBe(token));
+    expect(t.fetcher.mock.calls.filter(c=>c[0].endsWith('/invitations')&&c[1].method==='POST')).toHaveLength(1);
   });
 
   it('creates, copies and cancels an invitation with explicit address when needed', async () => {
@@ -169,16 +237,16 @@ describe('Remote Access Console', () => {
   it('logs out and clears all visible secrets and management state', async () => {
     const t=setup();await t.page.mount();t.click('remoteGiveAccess');t.submit('remoteInviteForm');await flush();
     t.click('remoteLogout');await flush();
-    expect(t.el('remoteLogin').hidden).toBe(false);
+    expect(t.el('remoteLogin').hidden).toBe(true);
     expect(t.el('remoteManagement').hidden).toBe(true);
     expect((t.el('remoteIssuedToken') as HTMLTextAreaElement).value).toBe('');
     expect(t.el('remoteAccessorSessions').textContent).not.toContain('Grantor B');
   });
 
-  it('returns to login on session expiry without replaying an action', async () => {
+  it('shows retry on session expiry without replaying an action', async () => {
     const t=setup();await t.page.mount();t.fetcher.mockResolvedValueOnce(json({},401));
     t.dom.window.document.querySelector<HTMLButtonElement>('[data-action="revoke"][data-id="a"]')!.click();await flush();
-    expect(t.el('remoteLogin').hidden).toBe(false);
+    expect(t.el('remoteRetry').hidden).toBe(false);
     expect(t.fetcher.mock.calls.filter(c=>c[1].method==='DELETE')).toHaveLength(1);
   });
 
@@ -233,7 +301,7 @@ describe('Remote Access Console', () => {
   });
 
   it('allows retry of local credential cleanup after confirmed remote revocation', async () => {
-    const t=setup();t.state.sessions[0]={...session('a','ACCESSOR','REVOKED'),failureCode:'REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING' as any};
+    const t=setup();t.state.sessions[0]={...session('a','ACCESSOR','REVOKED'),bridgeRevoked:false,failureCode:'REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING' as any};
     await t.page.mount();
     const retry=t.el('remoteAccessorSessions').querySelector<HTMLButtonElement>('[data-action="revoke"]');
     expect(retry).not.toBeNull();expect(retry!.textContent).toContain('Retry credential cleanup');
@@ -244,9 +312,9 @@ describe('Remote Access Console', () => {
 
   it('renders a completed 201 connection as ACTIVE without implying reachability', async () => {
     const t=setup();await t.page.mount();t.click('remoteConnect');t.fill('remotePairingToken',token);
-    t.fetcher.mockResolvedValueOnce(json(session('connected','ACCESSOR','ACTIVE'),201));t.submit('remoteConnectForm');await flush();
-    expect(t.el('remoteNotice').textContent).toBe('Access is active.');
-    expect(t.el('remoteAccessorSessions').textContent).toContain('UNKNOWN');
+    t.fetcher.mockResolvedValueOnce(json(session('connected','ACCESSOR','ACTIVE','pair'),201));t.submit('remoteConnectForm');await flush();
+    expect(t.el('remoteNotice').textContent).toBe('Bridge connected in both directions.');
+    expect(t.el('remoteBridges').textContent).toContain('Connected both ways');
     expect(t.el('remoteDialog').hidden).toBe(true);
   });
 

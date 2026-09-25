@@ -93,6 +93,23 @@ class Supervisor:
                 self.mark_cancelled(session)
             self.registry.cleanup(session,reap=self.reap_launcher)
 
+    def prepare(self,session):
+        canonical(session)
+        with self.gate(session):
+            # The long-lived supervisor has ProtectSystem=strict. A short-lived,
+            # purpose-bound root unit may create the session OS user and manifest.
+            subprocess.run([
+                '/usr/bin/systemd-run', '--quiet', '--wait', '--collect', '--service-type=exec',
+                '--expand-environment=no', '--unit=forge-remote-prepare-'+session,
+                '--property=RuntimeMaxSec=25s', '--property=TimeoutStopSec=5s',
+                '--property=PrivateNetwork=yes', '--property=ProtectHome=yes',
+                '--property=NoNewPrivileges=yes', '--property=UMask=0077',
+                '--', '/usr/libexec/forge-remote/prepare-workspace',
+                '--session', session, '--rootfs', '/srv/forge-remote/rootfs',
+            ], check=True, timeout=30, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            prepared_context(self.contexts,session)
+
     def mark_cancelled(self,session=None):
         for ticket,(owner,process) in self.processes.items():
             if (session is None or owner==session) and process.poll() is None:self.cancelled.add(ticket)
@@ -150,6 +167,7 @@ def admin_request(connection,supervisor,control_uid,heartbeat_only=False):
         if len(fields)==2 and fields[0]=='RECONCILE':supervisor.reconcile(canonical(fields[1]))
         elif len(fields)==2 and fields[0]=='HEARTBEAT':supervisor.heartbeat(canonical(fields[1]))
         elif len(fields)==2 and fields[0]=='STOP':supervisor.stop(canonical(fields[1]))
+        elif len(fields)==2 and fields[0]=='PREPARE':supervisor.prepare(canonical(fields[1]))
         elif len(fields)==4 and fields[0]=='START':supervisor.start(canonical(fields[1]),canonical(fields[2]),canonical(fields[3]))
         else:raise ValueError()
         connection.sendall(b'OK\n')

@@ -1,6 +1,13 @@
 package com.sitionix.forgeagent;
 
 import com.sitionix.forgeagent.api.remoteaccess.RemoteAccessServiceFilter;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessExecutionService;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessControlService;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessInvitations;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessManagement;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessMutualPairing;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessAccessorPairing;
+import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessSwitch;
 import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.*;
 import java.nio.file.*;
@@ -15,6 +22,17 @@ import org.springframework.core.Ordered;
 @Configuration
 @ConditionalOnProperty(name="forge.agent.remote-access.management-enabled",havingValue="true")
 public class RemoteAccessManagementConfiguration {
+    @Bean RemoteAccessMutualPairing remoteAccessMutualPairing(RemoteAccessAccessorPairing accessor,
+            RemoteAccessInvitations invitations,RemoteAccessSetup setup,RemoteAccessPairingTokens tokens,
+            ForgeInstanceIdentityRepository identity,RemoteAccessPairRepository pairs,
+            RemoteAccessSessionRepository sessions,RemoteAccessReverseInvitationStore secrets,
+            RemoteAccessReverseExchange exchange,java.time.Clock clock,RemoteAccessManagement management) {
+        return new RemoteAccessMutualPairing(accessor,invitations,setup,tokens,identity,pairs,sessions,secrets,exchange,clock,management);
+    }
+    @Bean RemoteAccessControlService remoteAccessControlService(RemoteAccessSwitch access,
+            RemoteAccessInvitations invitations, RemoteAccessManagement management, RemoteAccessSetup setup) {
+        return new RemoteAccessControlService(access, invitations, management, setup);
+    }
     @Bean org.springframework.boot.web.servlet.FilterRegistrationBean<RemoteAccessServiceFilter> remoteAccessServiceFilter(
             @Value("${forge.agent.remote-access.service-secret-file}") Path path,
             @Value("${forge.mcp.enabled:false}") boolean mcp,
@@ -38,17 +56,52 @@ public class RemoteAccessManagementConfiguration {
         }
     }
     @Bean RemoteAccessSetup remoteAccessSetup(RemoteAccessInvitationGrants grants,RemoteAccessPairingTokens tokens,
+            RemoteAccessExecutionService execution,
             @Value("${forge.agent.remote-access.display-name:Forge}") String displayName,
             @Value("${forge.agent.remote-access.advertised-host:}") String advertisedHost,
-            @Value("${forge.agent.remote-access.ssh-port:2222}") int port,
+            @Value("${forge.agent.remote-access.ssh-port:22}") int port,
             @Value("${forge.agent.remote-access.ssh-username:forge-ssh}") String username,
             @Value("${forge.agent.remote-access.channel-enabled:false}") boolean channel) {
         return new RemoteAccessSetup() {
             public String displayName() { return displayName; }
             public RemoteAccessEndpoint advertisedEndpoint(String host) {
                 if (!channel) throw new IllegalStateException("Grantor channel unavailable");
-                var endpoint=new RemoteAccessEndpoint(host==null?advertisedHost:host,port,username);
+                var chosen=host!=null && !host.isBlank()?host
+                        : advertisedHost.isBlank()?uniqueLocalAddress():advertisedHost;
+                var endpoint=new RemoteAccessEndpoint(chosen,port,username);
                 tokens.validateEndpoint(endpoint);return endpoint;
+            }
+            private String uniqueLocalAddress() {
+                try {
+                    var candidates=java.net.NetworkInterface.networkInterfaces()
+                            .filter(interfaceInfo -> {
+                                try { return interfaceInfo.isUp() && !interfaceInfo.isLoopback() && !interfaceInfo.isVirtual(); }
+                                catch (java.net.SocketException unavailable) { return false; }
+                            })
+                            .flatMap(interfaceInfo -> interfaceInfo.inetAddresses())
+                            .filter(address -> address instanceof java.net.Inet4Address && address.isSiteLocalAddress())
+                            .map(java.net.InetAddress::getHostAddress).distinct().toList();
+                    if (candidates.size()!=1) throw new IllegalStateException("Choose a reachable SSH address for this machine");
+                    return candidates.getFirst();
+                } catch (java.net.SocketException unavailable) {
+                    throw new IllegalStateException("Cannot inspect local SSH addresses",unavailable);
+                }
+            }
+            public RemoteAccessEndpoint advertisedEndpointForPeer(RemoteAccessEndpoint peer) {
+                if (!channel) throw new IllegalStateException("Grantor channel unavailable");
+                try (var route=new java.net.DatagramSocket()) {
+                    route.connect(java.net.InetAddress.getByName(peer.host()),peer.port());
+                    var source=route.getLocalAddress();
+                    if (source.isAnyLocalAddress() || source.isLoopbackAddress() || source.isLinkLocalAddress()
+                            || source.isMulticastAddress()) throw new IllegalStateException("No routable local SSH address for peer");
+                    var endpoint=new RemoteAccessEndpoint(source.getHostAddress(),port,username);
+                    tokens.validateEndpoint(endpoint);
+                    return endpoint;
+                } catch (java.net.SocketException failure) {
+                    throw new IllegalStateException("Cannot determine local SSH address for peer",failure);
+                } catch (java.net.UnknownHostException failure) {
+                    throw new IllegalArgumentException("Peer SSH host cannot be resolved",failure);
+                }
             }
             public RemoteAccessCapabilities capabilities() {
                 var operations=new ArrayList<>(List.of("LIST","CHECK","REVOKE"));
@@ -60,8 +113,18 @@ public class RemoteAccessManagementConfiguration {
                     try { grants.hostPublicKey(); operations.add("GIVE_ACCESS"); }
                     catch (RuntimeException unavailable) { diagnostics.add("GRANTOR_SETUP_UNAVAILABLE"); }
                 }
-                if (advertisedHost.isBlank()) diagnostics.add("ADVERTISED_HOST_REQUIRED");
-                return new RemoteAccessCapabilities(operations.contains("CONNECT") || operations.contains("GIVE_ACCESS"),List.copyOf(operations),List.copyOf(diagnostics));
+                if (advertisedHost.isBlank()) {
+                    try { uniqueLocalAddress(); }
+                    catch (IllegalStateException ambiguous) { diagnostics.add("ADVERTISED_HOST_REQUIRED"); }
+                }
+                var rootfs=Path.of("/srv/forge-remote/rootfs");
+                if (!Files.isDirectory(rootfs) || !Files.isExecutable(rootfs.resolve("bin/sh"))
+                        || !Files.isExecutable(rootfs.resolve("usr/bin/python3"))) {
+                    diagnostics.add("WORKLOAD_ROOTFS_NOT_READY");
+                }
+                if (!execution.ready()) diagnostics.add("WORKLOAD_AUTHORITY_NOT_READY");
+                return new RemoteAccessCapabilities(diagnostics.stream().allMatch("ADVERTISED_HOST_REQUIRED"::equals),
+                        List.copyOf(operations),List.copyOf(diagnostics));
             }
         };
     }

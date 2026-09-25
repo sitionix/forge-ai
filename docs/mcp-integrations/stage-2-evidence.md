@@ -9,7 +9,7 @@ Scope: backend частина Flow 2 з [flows.md](flows.md) після merged F
 | Agent domain | `domain/.../model/McpProbeReport.java`, `McpToolSummary.java`, `exception/McpProbeException.java`, `port/McpRemoteProbe.java`, `McpToolInventoryRepository.java`: typed summaries, safe failure reasons, protocol/persistence ports. |
 | Agent application | `application/.../mcp/McpProbeService.java`: owner-scoped read, decrypt for one call, plaintext zeroing, publish inventory only after successful probe. `McpConnectionService.java`: credential replacement/removal clears stale approvals and check state. |
 | Protocol boundary | `infrastructure/local/.../mcp/protocol/SdkMcpRemoteProbe.java`, `McpProbeHttpClientBuilder.java`, `McpProbeConfiguration.java`: SDK 0.18.4 initialize, explicit bounded `tools/list` pages, canonical SHA-256 schema fingerprints, fixed HTTP status observation, redirects disabled, initial resolved-address policy, SSL bundle. `infrastructure/local/pom.xml` directly declares `mcp-core` and `mcp-json-jackson2`. |
-| Persistence | `infrastructure/postgres/.../V39__add_mcp_tool_inventory.sql`, `PostgresMcpToolInventoryRepository.java`: inventory and exact fingerprint approvals under connection lock. `PostgresMcpConnectionRepository.java`: identity/check reset removes stale inventory. Completed probe cannot publish an inventory from a replaced encrypted credential. |
+| Persistence | Existing `infrastructure/postgres/.../V39__add_mcp_tool_inventory.sql` supplies `mcp_discovered_tools`; `V42__expand_mcp_discovered_tool_metadata.sql` allows full optional protocol descriptions. `PostgresMcpToolInventoryRepository.java`: inventory and exact fingerprint approvals under connection lock. `PostgresMcpConnectionRepository.java`: identity/check reset removes stale inventory. Completed probe cannot publish an inventory from a replaced encrypted credential. |
 | Agent API/wiring | `api-rest/.../mcp/McpProbeController.java`, `McpProbeResponse.java`, `McpConnectionsExceptionHandler.java`; `boot/.../AgentMcpProtectedConfiguration.java`, `application.yml`: protected Test, inventory, approval routes and safe status/code messages. |
 | Nexus typed path | `domain/.../mcp/McpProbeReport.java`, `ForgeAgentMcpClient.java`, `ManageAgentMcpConnections.java`; `application/.../AgentMcpConnectionsUseCase.java`; `clients/agent-client/.../ForgeAgentHttpClient.java`, `ForgeAgentMcpClientAdapter.java`, `McpClientMapper.java`, `dto/McpProbeInboundResponse.java`; `api-rest/.../ForgeAiMcpConnectionsController.java`, `McpProbeResponse.java`: current operator boundary → use case → typed client → Agent, adapter execute → mapper. |
 
@@ -27,14 +27,14 @@ Management routes on both services: `POST /connections/{id}/test`, `GET /connect
 
 | Command | Actual result |
 |---|---|
-| `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify` | **PASS**, exit 0, 1323 tests, 0 failures/errors, 8 skips. Log: `/tmp/forge-mcp-agent-final-verify.log`. |
-| `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/boot -am verify` | **PASS**, exit 0, 370 tests, 0 failures/errors/skips. Log: `/tmp/forge-mcp-nexus-final-verify.log`. |
+| `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify` | **PASS** after merging current `main`, exit 0, 1342 tests, 0 failures/errors, 8 skips. Log: `/tmp/forge-mcp-agent-merge-final-verify.log`. |
+| `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/boot -am verify` | **PASS** after merging current `main`, exit 0, 378 tests, 0 failures/errors/skips. Log: `/tmp/forge-mcp-nexus-merge-final-verify.log`. |
 | Focused `McpConnectionPersistenceIT`, `AgentMcpManagementGuardIT`, `NexusOperatorSessionIT`, `SdkMcpRemoteProbeTest`, `McpProbeConfigurationTest`, mapper/adapter/service tests | **PASS**, exit 0 in their final focused runs. |
 | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/infrastructure/local -am dependency:analyze` | **PASS** command; no unused new MCP dependencies. Existing transitive Spring/JUnit warnings remain. |
 | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/clients/agent-client -am dependency:analyze` | **PASS** command; no new Nexus dependency. Existing transitive Spring/JUnit warnings remain. |
 | `git diff --check` | **PASS**. |
 
-Eight Agent skips are opt-in checks, **NOT_VERIFIED**, not PASS. Earlier Agent full verify had one failure from a misplaced ForgeIT request fixture; the fixture path was corrected and the final full command above exited 0. No personal Maven/Codex config or production secret was changed. Tests used disposable PostgreSQL/WireMock/local HTTP fixtures and synthetic credentials.
+Eight Agent skips are opt-in checks, **NOT_VERIFIED**, not PASS. An earlier Agent full verify failed on a misplaced ForgeIT request fixture; that path was corrected before the original successful full run. During the merge with newer `main`, its V39 migration introduced a strict schema-fingerprint constraint. One intermediate full run failed on old synthetic short fingerprints; the fixture was changed to valid SHA-256 values, then the focused persistence test and both full commands above passed. No personal Maven/Codex config or production secret was changed. Tests used disposable PostgreSQL/WireMock/local HTTP fixtures and synthetic credentials.
 
 ## Remaining Stage 2 / runtime gaps
 

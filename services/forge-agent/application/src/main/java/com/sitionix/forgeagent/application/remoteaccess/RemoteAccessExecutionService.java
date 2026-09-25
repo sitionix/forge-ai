@@ -14,17 +14,24 @@ public final class RemoteAccessExecutionService implements RemoteAccessPeerExecu
     private final ForgeInstanceIdentityRepository identity;
     private final RemoteAccessWorkloads workloads;
     private final RemoteAccessSessionGrants grants;
+    private final RemoteAccessSwitch access;
     private final Clock clock;
     private final UUID epoch=UUID.randomUUID();
     private final Object[] gates=IntStream.range(0,256).mapToObj(i -> new Object()).toArray();
     private volatile boolean ready;
 
+    public boolean ready() { return ready; }
+
     public RemoteAccessExecutionService(RemoteAccessSessionRepository sessions, ForgeInstanceIdentityRepository identity,
-            RemoteAccessWorkloads workloads, RemoteAccessSessionGrants grants, Clock clock) {
-        this.sessions=sessions; this.identity=identity; this.workloads=workloads; this.grants=grants; this.clock=clock;
+            RemoteAccessWorkloads workloads, RemoteAccessSessionGrants grants, RemoteAccessSwitch access, Clock clock) {
+        this.sessions=sessions; this.identity=identity; this.workloads=workloads; this.grants=grants; this.access=access; this.clock=clock;
     }
 
     @Override public void start(RemoteAccessKeyBinding binding, UUID attachmentId) {
+        access.admit(() -> startEnabled(binding, attachmentId));
+    }
+
+    private void startEnabled(RemoteAccessKeyBinding binding, UUID attachmentId) {
         synchronized(gate(binding.sessionId())) {
             if (!ready) throw denied();
             var session=owned(binding);

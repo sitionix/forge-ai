@@ -25,7 +25,7 @@ public class PostgresMcpToolInventoryRepository implements McpToolInventoryRepos
     }
 
     @Override public List<McpToolSummary> list(UUID installation, UUID id) {
-        return jdbc.query("SELECT i.tool_name,i.description,i.schema_fingerprint FROM mcp_tool_inventory i "
+        return jdbc.query("SELECT i.tool_name,i.description,i.schema_fingerprint FROM mcp_discovered_tools i "
                         + "JOIN mcp_connections c ON c.id=i.connection_id WHERE c.installation_id=? AND c.id=? ORDER BY i.tool_name",
                 (rs, row) -> new McpToolSummary(rs.getString(1), rs.getString(2), rs.getString(3)), installation, id);
     }
@@ -38,12 +38,12 @@ public class PostgresMcpToolInventoryRepository implements McpToolInventoryRepos
             if (!current.endpoint().equals(endpoint) || current.authType() != authType
                     || !Objects.equals(connections.credential(installation, id).orElse(null), credential))
                 throw new IllegalStateException("MCP connection changed during probe");
-            jdbc.update("DELETE FROM mcp_tool_inventory WHERE connection_id=?", id);
+            jdbc.update("DELETE FROM mcp_discovered_tools WHERE connection_id=?", id);
             for (McpToolSummary tool : tools)
-                jdbc.update("INSERT INTO mcp_tool_inventory(connection_id,tool_name,description,schema_fingerprint) VALUES(?,?,?,?)",
+                jdbc.update("INSERT INTO mcp_discovered_tools(connection_id,tool_name,description,schema_fingerprint) VALUES(?,?,?,?)",
                         id, tool.name(), tool.description(), tool.schemaFingerprint());
             jdbc.update("DELETE FROM mcp_allowed_tools a WHERE a.connection_id=? AND NOT EXISTS "
-                    + "(SELECT 1 FROM mcp_tool_inventory i WHERE i.connection_id=a.connection_id "
+                    + "(SELECT 1 FROM mcp_discovered_tools i WHERE i.connection_id=a.connection_id "
                     + "AND i.tool_name=a.tool_name AND i.schema_fingerprint=a.schema_fingerprint)", id);
             Timestamp now = Timestamp.from(Instant.now());
             jdbc.update("UPDATE mcp_connections SET checked_at=?,safe_diagnostic=NULL,updated_at=? WHERE installation_id=? AND id=?",

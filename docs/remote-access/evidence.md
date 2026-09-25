@@ -1124,3 +1124,127 @@ env or tmpfiles file. The tests assert both the persistent group name and the
 immediate `os.chown(runtime, agent_uid, operator_gid)` call. Focused setup tests:
 4 PASS. Full Remote Access Python suite: 72 PASS. The privileged Stage 8 fixture
 is unchanged by this setup-only correction.
+
+## Startup preparation and local Enable/Disable (2026-09-24)
+
+Implementation in the isolated `feature/SITIONIX-146` worktree: `just start`
+stages the protected Remote Access package, prepares a dedicated loopback
+Agent/Nexus pair and database, managed SSH, local operator boundary, and a
+credential-free command rootfs. The persisted switch starts DISABLED. The
+local management UI exposes Enable and Disable; Disable first persists a
+no-new-admission fence, then the recovery worker revokes invitations and
+sessions. It reports DISABLING until cleanup is confirmed, including when an
+ACCESSOR peer is offline. The GRANTOR prepares each isolated session workspace
+through a fixed short-lived systemd unit before confirming ACTIVE, so a paired
+session needs no manual per-session preparation.
+
+Verification: Python Remote Access suite 91 PASS (one opt-in rootfs test
+skipped); Console 580 PASS, typecheck PASS, build PASS; Forge Nexus full verify
+PASS; Forge Agent full verify PASS outside the sandbox. The privileged Stage 5
+fixture PASS includes real OpenSSH, PostgreSQL, automatic session workspace
+preparation, managed command execution, cancellation, revoke and unrelated
+session isolation. A built command image's Docker export passed safe-member
+inspection. Full host `just start` and two-machine Codex live acceptance remain
+NOT_RUN; the optional real image extraction test requires root and could not
+run here because `sudo -n` required interactive authentication. These are not
+claimed as live acceptance.
+
+## System OpenSSH conversion in PR #151 (2026-09-24, in progress)
+
+The earlier startup implementation above describes the initial PR #151 head.
+The user subsequently selected the host's system OpenSSH service instead of a
+second Forge-managed `sshd`. The in-progress branch now uses the dedicated
+`forge-ssh` account's root-managed `authorized_keys` with per-key `restrict`
+and a forced command, pins the system Ed25519 host key, and starts `ssh.service`
+only during Enable preparation. It does not stop the shared `ssh.service` on
+failed preparation. The previous Forge SSH unit is not started by the new path.
+
+Evidence on this revision: Python Remote Access suite 106 run, 104 PASS, 2 SKIPPED;
+isolated real OpenSSH boundary Docker probe PASS; `RemoteAccessLivePairingIT`
+PASS with real SSH, PostgreSQL and persisted pairing; privileged
+`RemoteAccessLiveExecutionIT` PASS with real systemd SSH, command execution,
+background descendant cancellation, revoke, and unrelated-session isolation;
+`RemoteAccessSshCommandTest` PASS; `git diff --check` PASS. The first Stage 5
+run found an old systemd write path, and the next found a port-22 known-hosts
+format mismatch; both were corrected before the passing rerun.
+
+The cold browser entry is now implemented in this worktree: ordinary Nexus
+serves a loopback/Origin/CSRF guarded fixed bootstrap endpoint, the page waits
+for the dedicated services after Give Access or Connect, and the dedicated page
+opens a local browser session without a separate operator credential prompt.
+Focused Nexus security/bootstrap tests PASS; full Nexus verify PASS. Console
+full suite 583 PASS, typecheck PASS, production build PASS. Python Remote Access
+suite 107 run, 105 PASS, 2 SKIPPED; full Agent verify PASS. These were the
+earlier, one-direction checks before reciprocal pairing was added.
+
+Host `just start`, two-machine live
+pairing and Codex live acceptance remain NOT_RUN. The system SSH service on the
+operator's host was not started by these tests.
+
+## One-token reciprocal SSH in the isolated worktree (2026-09-24)
+
+The connector now creates one protected internal reverse invitation and sends
+it through the first authenticated SSH channel. The inviter confirms its own
+dedicated reverse key over SSH. A forward-only V40 migration links the two
+directional sessions on each Forge identity. Agent and Nexus expose a bridge
+identity and report Connect as 201 only when both directions are ACTIVE;
+otherwise the pair remains incomplete (202). Disconnect finds the reverse
+grant by its invitation even if the response linking it was lost. The browser
+renders one bridge card with separate incoming/outgoing status.
+
+Current checks: Python Remote Access suite 108 run, 106 PASS, 2 SKIPPED;
+Console 588 PASS, typecheck PASS, production build PASS;
+Agent full verify PASS; Nexus full verify and RemoteAccessProxyIT PASS after updating typed
+bridge fixtures; `RemoteAccessMutualPairingTest`, grantor reverse authorization,
+and pair persistence tests PASS. The isolated `RemoteAccessLivePairingIT` uses
+real system OpenSSH and PostgreSQL: one human token produced two different
+ACTIVE SSH sessions, one in each direction, for two persisted Forge instance
+identities. This test uses one SSH host with two logical Forge identities, so
+it is not a two-physical-machine E2E. The privileged
+`RemoteAccessLiveExecutionIT` still PASSes real OpenSSH/systemd execution,
+cancel, revoke, descendant cleanup, and unrelated-session isolation in one
+direction. `git diff --check` PASS.
+
+At this revision, real two-machine pairing, commands in both directions in
+one run, browser Enable against this host, and live Codex acceptance were
+NOT_RUN. The subsequent host attempt is recorded below.
+
+## Host startup attempt (2026-09-25)
+
+`just start` from this worktree installed the bootstrap socket and new Nexus;
+`GET /fgaisox/api/v1/infrastructure/agents/remote-access/bootstrap` returned
+`COLD`, and the served page contains the Enable control. Full startup did not
+pass health checks. The worktree Python environments had FastAPI 0.125.0 with
+Pydantic 1.10.26, causing Knowledge and Jarvis imports to fail. The final
+dependency pin is FastAPI 0.115.12 with AnyIO 4 and Pydantic 1.x; Knowledge
+994 tests and Jarvis 79 tests passed with this combination.
+The shared Agent database has an applied version 39 migration described as
+`add mcp tool inventory`, while the initial PR revision also assigned V39 to
+the Remote Access switch. The exact V39 source was recovered from the
+previously running Agent artifact and compared byte-for-byte; the new Remote
+Access migrations were renumbered to V40 and V41. No Flyway repair or
+DB-history edit was performed.
+
+After rebuilding, the shared Agent reached `UP` and the database recorded
+successful V39, V40 and V41 migrations. The first live browser-style Enable
+request exposed a Unix-socket framing bug: Nexus waited for a reply without
+closing its request output, while the bootstrap gate waited for EOF. A real
+Unix-domain socket regression now covers the half-close; the repeated request
+returned `202 PREPARING`. The pinned package manifest was refreshed after the
+rebuild. An existing endpoint file then failed closed with
+`REMOTE_ACCESS_ENDPOINT_CONFLICT`; there were zero invitations, sessions and
+pairs in the shared Agent DB, so the stale file was backed up before running
+the normal preparation again. No SSH grant was removed.
+
+Final host smoke: `forge-remote-setup.service`, `ssh.service`, the dedicated
+Agent and Nexus are active; the cold endpoint returned `READY`; all seven
+`just status` services were active. The dedicated Nexus health was `UP`, a
+same-origin local operator session was established without another password,
+and capabilities returned `ready=true`. The persisted control switched from
+`DISABLED` to `ENABLED`; Give Access returned a token with the expected
+versioned envelope, and the smoke invitation was cancelled. The token was not
+printed or retained. Full Agent and Nexus Maven verify, Console 588 tests,
+and the Remote Access Python suite (106 passed, 2 skipped) passed. The Python fixture was
+adjusted to isolate its mocked runtime from this now-running host.
+
+Two-physical-machine pairing and live Codex acceptance remain NOT_RUN.

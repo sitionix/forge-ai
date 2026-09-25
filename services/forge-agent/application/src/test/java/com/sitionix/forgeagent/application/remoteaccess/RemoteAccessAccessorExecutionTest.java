@@ -36,7 +36,7 @@ class RemoteAccessAccessorExecutionTest {
             RemoteAccessSession before=call.getArgument(0);
             return row.compareAndSet(before,before.withFailure(call.getArgument(1),call.getArgument(2)));
         });
-        sut=new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,Clock.fixed(NOW,ZoneOffset.UTC));
+        sut=new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,RemoteAccessTestSwitch.enabled(),Clock.fixed(NOW,ZoneOffset.UTC));
     }
     @Test void localRevokeIntentDeniesNewExecutionBeforeCallingTransport() {
         row.set(row.get().requestRevoke(NOW));
@@ -70,7 +70,7 @@ class RemoteAccessAccessorExecutionTest {
         assertThat(result.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
         assertThat(result.localPrivateKeyReference()).isEqualTo(KEY);
         assertThat(result.failureCode()).isEqualTo("REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING");
-        var restarted=new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,Clock.fixed(NOW,ZoneOffset.UTC));
+        var restarted=new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,RemoteAccessTestSwitch.enabled(),Clock.fixed(NOW,ZoneOffset.UTC));
         assertThat(restarted.revoke(ID).localPrivateKeyReference()).isNull();
         assertThat(row.get().failureCode()).isNull();
         assertThat(row.get().failureMessage()).isNull();
@@ -168,7 +168,7 @@ class RemoteAccessAccessorExecutionTest {
         assertThat(pending.localPrivateKeyReference()).isEqualTo(KEY);
         assertThat(pending.failureCode()).isEqualTo(databaseFailure?"REMOTE_ACCESS_CREDENTIAL_CLEANUP_PENDING":"NEWER_FAILURE");
         when(sessions.findLocal(LOCAL)).thenAnswer(call -> List.of(row.get()));
-        new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,Clock.fixed(NOW,ZoneOffset.UTC)).reconcile();
+        new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,RemoteAccessTestSwitch.enabled(),Clock.fixed(NOW,ZoneOffset.UTC)).reconcile();
         assertThat(row.get().status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);
         assertThat(row.get().localPrivateKeyReference()).isNull();
         assertThat(row.get().failureCode()).isNull();
@@ -189,7 +189,7 @@ class RemoteAccessAccessorExecutionTest {
             }
             return row.compareAndSet(before,target);
         });
-        var precise=new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,
+        var precise=new RemoteAccessAccessorExecution(sessions,identity,transport,credentials,commands,RemoteAccessTestSwitch.enabled(),
             Clock.fixed(NOW.plusNanos(999),ZoneOffset.UTC));
         var result=precise.revoke(ID);
         assertThat(result.status()).isEqualTo(RemoteAccessSessionStatus.REVOKED);

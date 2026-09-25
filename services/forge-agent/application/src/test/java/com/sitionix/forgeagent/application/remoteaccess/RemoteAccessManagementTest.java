@@ -22,10 +22,12 @@ class RemoteAccessManagementTest {
     @Mock RemoteAccessPairingTransport transport;
     @Mock RemoteAccessPeerExecution grantor;
     @Mock RemoteAccessAccessorExecution accessor;
+    @Mock RemoteAccessPairRepository pairs;
+    @Mock RemoteAccessInvitations invitations;
     RemoteAccessManagement sut;
     @BeforeEach void setup() {
         when(identity.getOrCreate()).thenReturn(LOCAL);
-        sut=new RemoteAccessManagement(sessions,identity,transport,grantor,accessor,Clock.fixed(NOW,ZoneOffset.UTC));
+        sut=new RemoteAccessManagement(sessions,identity,transport,grantor,accessor,Clock.fixed(NOW,ZoneOffset.UTC),pairs,invitations);
     }
     @Test void readsNeverOpenSsh() {
         var s=session(RemoteAccessRole.ACCESSOR);
@@ -79,10 +81,40 @@ class RemoteAccessManagementTest {
     @Test void grantorRevokeReturnsConfirmedPersistedResult() {
         var s=session(RemoteAccessRole.GRANTOR);
         var revoked=s.requestRevoke(NOW).confirmRevokedAndClearFailure(NOW);
-        when(sessions.findById(ID)).thenReturn(Optional.of(s),Optional.of(revoked));
+        when(sessions.findById(ID)).thenReturn(Optional.of(s),Optional.of(s),Optional.of(revoked));
         when(grantor.revoke(new RemoteAccessKeyBinding(LOCAL,ID,s.sessionFingerprint()))).thenReturn(RemoteAccessSessionStatus.REVOKED);
         assertThat(sut.revoke(ID)).isEqualTo(revoked);
         verifyNoInteractions(accessor);
+    }
+    @Test void disconnectFindsAndRevokesReverseGrantEvenWhenLinkReplyWasLost() {
+        UUID invite=UUID.randomUUID(),reverseId=UUID.randomUUID();
+        var forward=session(RemoteAccessRole.ACCESSOR);
+        var reverse=new RemoteAccessSession(reverseId,invite,RemoteAccessRole.GRANTOR,LOCAL,UUID.randomUUID(),"peer",
+                forward.endpoint(),"host","public",forward.sessionFingerprint(),null,RemoteAccessSessionStatus.ACTIVE,
+                NOW.minusSeconds(60),NOW.plusSeconds(240),NOW.minusSeconds(30),null,null,
+                RemoteAccessConnectivity.UNKNOWN,null,null,null,null,1);
+        var pair=RemoteAccessPair.connector(UUID.randomUUID(),invite,NOW).withForwardSession(ID);
+        when(pairs.findBySession(ID)).thenReturn(Optional.of(pair));
+        when(sessions.findByInvitation(invite)).thenReturn(Optional.of(reverse));
+        when(sessions.findById(ID)).thenReturn(Optional.of(forward));
+        when(sessions.findById(reverseId)).thenReturn(Optional.of(reverse));
+        when(accessor.revoke(ID)).thenReturn(forward.requestRevoke(NOW));
+        sut.revoke(ID);
+        verify(grantor).revoke(new RemoteAccessKeyBinding(LOCAL,reverseId,reverse.sessionFingerprint()));
+        verify(invitations).cancel(invite);
+    }
+    @Test void disconnectFindsPairBeforeForwardSessionLinkWasPersisted() {
+        UUID reverseInvite=UUID.randomUUID();
+        var forward=session(RemoteAccessRole.ACCESSOR);
+        var pair=RemoteAccessPair.connector(forward.invitationId(),reverseInvite,NOW);
+        when(sessions.findById(ID)).thenReturn(Optional.of(forward));
+        when(pairs.findById(forward.invitationId())).thenReturn(Optional.of(pair));
+        when(accessor.revoke(ID)).thenReturn(forward.requestRevoke(NOW));
+
+        sut.revoke(ID);
+
+        verify(accessor).revoke(ID);
+        verify(invitations).cancel(reverseInvite);
     }
     static RemoteAccessSession session(RemoteAccessRole role) {
         return new RemoteAccessSession(ID,UUID.randomUUID(),role,
