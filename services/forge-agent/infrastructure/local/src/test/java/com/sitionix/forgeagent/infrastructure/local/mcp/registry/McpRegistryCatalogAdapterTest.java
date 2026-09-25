@@ -68,8 +68,12 @@ class McpRegistryCatalogAdapterTest {
                 {"servers":[
                   {"server":{"name":"io.example/remote","title":"Remote","description":"Search records",
                     "version":"1.0.0","remotes":[{"type":"streamable-http","url":"https://example.org/mcp"}]}},
+                  {"server":{"name":"io.example/tenant","remotes":[{"type":"streamable-http","url":"https://{tenant_id}.example.org/mcp"}]}},
+                  {"server":{"name":"io.example/region","remotes":[{"type":"streamable-http","url":"https://example.org/{region}/mcp"}]}},
+                  {"server":{"name":"io.example/base","remotes":[{"type":"streamable-http","url":"{baseUrl}/mcp"}]}},
                   {"server":{"name":"io.example/local","remotes":[{"type":"stdio","url":"local"}]}},
                   {"server":{"name":"io.example/sse","remotes":[{"type":"sse","url":"https://example.org/sse"}]}},
+                  {"server":{"name":"io.example/javascript","remotes":[{"type":"streamable-http","url":"javascript:alert(1)"}]}},
                   {"server":{"name":"io.example/invalid","remotes":[{"type":"streamable-http","url":"https://user@example.org/mcp"}]}}
                 ],"metadata":{"nextCursor":"cursor-2"}}
                 """, 200, request);
@@ -77,12 +81,15 @@ class McpRegistryCatalogAdapterTest {
             var page = adapter(server).list("find records", "cursor-1", 20);
             assertThat(request[0]).isEqualTo("/v0.1/servers?search=find%20records&cursor=cursor-1&limit=20&version=latest");
             assertThat(request[1]).isNull();
-            assertThat(page.servers()).hasSize(1);
+            assertThat(page.servers()).hasSize(4);
             assertThat(page.servers().getFirst().name()).isEqualTo("io.example/remote");
             assertThat(page.servers().getFirst().title()).isEqualTo("Remote");
             assertThat(page.servers().getFirst().description()).isEqualTo("Search records");
             assertThat(page.servers().getFirst().version()).isEqualTo("1.0.0");
             assertThat(page.servers().getFirst().endpoint()).isEqualTo("https://example.org/mcp");
+            assertThat(page.servers()).extracting(serverEntry -> serverEntry.endpoint())
+                    .containsExactly("https://example.org/mcp", "https://{tenant_id}.example.org/mcp",
+                            "https://example.org/{region}/mcp", "{baseUrl}/mcp");
             assertThat(page.nextCursor()).isEqualTo("cursor-2");
         } finally {
             server.stop(0);

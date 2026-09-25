@@ -7,6 +7,7 @@ import com.sitionix.forgeagent.domain.port.McpRegistryCatalog;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,8 @@ import org.springframework.web.client.RestClientException;
 @Component
 @ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
 public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
+    private static final Pattern REMOTE_URL_TEMPLATE = Pattern.compile(
+            "^(?:https?://[^\\s]+|\\{[a-zA-Z_][a-zA-Z0-9_]*\\}[^\\s]*)$");
     private final McpRegistryHttpClient client;
 
     public McpRegistryCatalogAdapter(McpRegistryHttpClient client) {
@@ -51,10 +54,30 @@ public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
     }
 
     private static boolean httpUrl(String value) {
+        if (!REMOTE_URL_TEMPLATE.matcher(value).matches()) {
+            return false;
+        }
+        if (value.startsWith("{")) {
+            return true;
+        }
+        int authorityStart = value.indexOf("://") + 3;
+        int authorityEnd = value.length();
+        for (int i = authorityStart; i < value.length(); i++) {
+            if (value.charAt(i) == '/' || value.charAt(i) == '?' || value.charAt(i) == '#') {
+                authorityEnd = i;
+                break;
+            }
+        }
+        String authority = value.substring(authorityStart, authorityEnd);
+        if (authority.isEmpty() || authority.contains("@")) {
+            return false;
+        }
+        if (value.contains("{")) {
+            return true;
+        }
         try {
             URI uri = URI.create(value);
-            return ("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))
-                    && uri.getHost() != null && uri.getRawUserInfo() == null;
+            return uri.getHost() != null;
         } catch (IllegalArgumentException invalid) {
             return false;
         }
