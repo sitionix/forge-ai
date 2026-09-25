@@ -165,10 +165,10 @@ export class RemoteAccessPage {
     this.el('remoteConnectSubmit').disabled = this.pending || this.reconcileRequired || this.control.status !== 'ENABLED' || !preview;
     return preview;
   }
-  async mutate(operation, apply, dialog = false, refreshOnError = false) {
+  async mutate(operation, apply, dialog = false, refreshOnError = false, progress = 'Request in progress…') {
     if (this.pending || !this.authenticated || this.disposed) return;
     const epoch = this.epoch, generation = this.dialogGeneration;
-    this.requests.abort('metadata'); this.pending = true; this.clearError(); this.notice('Request in progress…'); this.render();
+    this.requests.abort('metadata'); this.pending = true; this.clearError(); this.notice(progress); this.render();
     let failed = false;
     try {
       const result = await this.requests.run('mutation',({signal}) => operation(signal));
@@ -222,7 +222,7 @@ export class RemoteAccessPage {
       this.invitations = [...this.invitations.filter(i => i.id !== result.body.invitation.id),result.body.invitation];
       this.el('remoteInviteForm').hidden = true; this.el('remoteTokenResult').hidden = false;
       this.el('remoteIssuedToken').value = this.#issuedToken; this.tickCountdown();
-    },true);
+    },true,true,'Generating your token… usually a few seconds, up to 30 seconds.');
   }
   connect() {
     if (this.control.status !== 'ENABLED' || this.pending || this.reconcileRequired || this.dialogKind !== 'connect' || !this.updatePreview()) return;

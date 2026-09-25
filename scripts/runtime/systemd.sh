@@ -116,6 +116,12 @@ case "${ACTION}" in
     start_postgres
     # `start` is a no-op for active units. Restart so freshly built artifacts are always loaded.
     privileged systemctl restart "${UNITS[@]}"
+    # The dedicated Nexus uses the same rebuilt jar. Its running classloader
+    # cannot safely keep reading that jar after Maven replaces it.
+    if systemctl is-active --quiet forge-remote-nexus.service; then
+      privileged systemctl restart forge-remote-nexus.service
+      wait_healthy remote-nexus http://127.0.0.1:9100/fgaisox/actuator/health
+    fi
     wait_healthy knowledge http://127.0.0.1:7081/health
     wait_healthy jarvis http://127.0.0.1:7071/health
     wait_healthy agent http://127.0.0.1:7091/actuator/health
