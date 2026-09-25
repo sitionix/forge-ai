@@ -1,17 +1,22 @@
 package com.sitionix.forgeagent.infrastructure.local.runtime;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.springframework.stereotype.Component;
 
 @Component
 public class RuntimeProcessLauncher {
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final int MAX_ENVELOPE_BYTES = 262_144;
     private final RuntimeBoundaryProperties properties;
     private volatile boolean ready;
 
@@ -20,23 +25,50 @@ public class RuntimeProcessLauncher {
     void markReady() { ready = true; }
 
     public ManagedRuntimeProcess startCodex(Path directory) throws IOException {
-        return start(List.of("codex", UUID.randomUUID().toString(), directory.toAbsolutePath().normalize().toString()));
+        return startCodex(directory, Map.of());
+    }
+
+    public ManagedRuntimeProcess startCodex(Path directory, Map<String, String> grantEnvironment) throws IOException {
+        return start(List.of("codex", UUID.randomUUID().toString(), directory.toAbsolutePath().normalize().toString()),
+                grantEnvironment);
     }
 
     public ManagedRuntimeProcess startGit(List<String> command) throws IOException {
         if (command.isEmpty() || !List.of("git", "/usr/bin/git").contains(command.getFirst())) throw unavailable();
         var arguments = new ArrayList<>(List.of("git", UUID.randomUUID().toString()));
         arguments.addAll(command.subList(1, command.size()));
-        return start(arguments);
+        return start(arguments, null);
     }
 
-    private ManagedRuntimeProcess start(List<String> arguments) throws IOException {
+    private ManagedRuntimeProcess start(List<String> arguments, Map<String, String> grantEnvironment) throws IOException {
         if (!properties.enabled() || !ready) throw unavailable();
         var command = new ArrayList<>(List.of("start"));
         command.addAll(arguments);
         String execution = arguments.get(1);
         Process process = helper(command).start();
-        return new ManagedRuntimeProcess(process, () -> stop(execution));
+        var managed = new ManagedRuntimeProcess(process, () -> stop(execution));
+        if (grantEnvironment != null) {
+            try {
+                writeCodexEnvelope(process.getOutputStream(), grantEnvironment);
+            } catch (IOException | RuntimeException failure) {
+                try { managed.terminateOwnedUnit(); }
+                catch (RuntimeException cleanupFailure) { /* Keep the public failure fixed and secret-free. */ }
+                throw unavailable();
+            }
+        }
+        return managed;
+    }
+
+    static void writeCodexEnvelope(OutputStream output, Map<String, String> grantEnvironment) throws IOException {
+        if (grantEnvironment == null || grantEnvironment.entrySet().stream().anyMatch(entry ->
+                entry.getKey() == null || !entry.getKey().matches("FORGE_MCP_GRANT_[0-9A-F]{32}")
+                        || entry.getValue() == null || !entry.getValue().matches("[A-Za-z0-9_-]{1,256}")))
+            throw unavailable();
+        byte[] encoded = JSON.writeValueAsBytes(grantEnvironment);
+        if (encoded.length > MAX_ENVELOPE_BYTES - 1) throw unavailable();
+        output.write(encoded);
+        output.write('\n');
+        output.flush();
     }
 
     private void stop(String execution) {

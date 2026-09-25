@@ -8,6 +8,8 @@
   "agent_unit": "forge-agent.service",
   "max_lifetime_seconds": 7200,
   "codex_binary": "/opt/forge/bin/codex",
+  "codex_config": "/etc/forge/codex-runtime.toml",
+  "empty_system_config": "/etc/forge/empty-codex.toml",
   "git_binary": "/usr/bin/git",
   "env_binary": "/usr/bin/env"
 }
