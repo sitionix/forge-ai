@@ -86,7 +86,9 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
                 .requestTimeout(requestTimeout).build()) {
             String protocolVersion = initialize(client);
             initialized = true;
-            return new McpProbeReport(protocolVersion, listTools(client::listTools));
+            return new McpProbeReport(protocolVersion, listTools(client::listTools).stream()
+                    .map(tool -> new McpToolSummary(tool.name(), tool.description(), fingerprint(tool.inputSchema())))
+                    .toList());
         } catch (McpProbeException exception) {
             throw exception;
         } catch (RuntimeException exception) {
@@ -96,8 +98,16 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
 
     @Override public McpToolCallResult call(URI endpoint, McpAuthType authType, byte[] credential,
                                             String toolName, String expectedSchemaFingerprint, String argumentsJson) {
+        return call(endpoint, authType, credential, toolName, expectedSchemaFingerprint,
+                argumentsJson, () -> true);
+    }
+
+    @Override public McpToolCallResult call(URI endpoint, McpAuthType authType, byte[] credential,
+                                            String toolName, String expectedSchemaFingerprint, String argumentsJson,
+                                            java.util.function.BooleanSupplier admitBeforeDispatch) {
         if (toolName == null || toolName.isBlank() || expectedSchemaFingerprint == null
-                || !expectedSchemaFingerprint.matches("sha256:[0-9a-f]{64}") || argumentsJson == null)
+                || !expectedSchemaFingerprint.matches("sha256:[0-9a-f]{64}") || argumentsJson == null
+                || admitBeforeDispatch == null)
             throw new IllegalArgumentException("Invalid MCP tool call");
         Map<String, Object> arguments;
         try {
@@ -124,13 +134,15 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
             initialized = true;
             boolean current = listTools(cursor -> client.listTools(cursor).block(remaining(deadline)))
                     .stream().anyMatch(tool -> tool.name().equals(toolName)
-                    && tool.schemaFingerprint().equals(expectedSchemaFingerprint));
+                    && fingerprint(tool.inputSchema()).equals(expectedSchemaFingerprint));
             if (!current) throw new McpToolCallException(McpToolCallException.Kind.SCHEMA_CHANGED, null);
+            if (!admitBeforeDispatch.getAsBoolean())
+                throw new McpProbeException(McpProbeException.Reason.UNAVAILABLE);
             var result = client.callTool(new McpSchema.CallToolRequest(toolName, arguments))
                     .block(remaining(deadline));
             if (result == null || result.content() == null)
                 throw new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
-            String content = protocolJson.writeValueAsString(result.content());
+            String content = canonical.readTree(protocolJson.writeValueAsString(result)).path("content").toString();
             String structured = result.structuredContent() == null ? null
                     : protocolJson.writeValueAsString(result.structuredContent());
             return new McpToolCallResult(Boolean.TRUE.equals(result.isError()), content, structured);
@@ -165,8 +177,33 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         return result.protocolVersion();
     }
 
-    private List<McpToolSummary> listTools(Function<String, McpSchema.ListToolsResult> fetch) {
-        List<McpToolSummary> tools = new ArrayList<>();
+    /** Full SDK schemas are used only by the gateway's transient per-grant tool view. */
+    public List<McpSchema.Tool> discoverApprovedTools(URI endpoint, McpAuthType authType,
+                                                       byte[] credential, Set<McpAllowedTool> approved) {
+        if (approved == null || approved.isEmpty()) throw new IllegalArgumentException("No approved MCP tools");
+        validateEndpoint(endpoint);
+        var http = new McpHttpClientBuilder();
+        var transport = transport(endpoint, authType, credential, http, requestTimeout);
+        boolean initialized = false;
+        try (var client = McpClient.sync(transport).initializationTimeout(requestTimeout)
+                .requestTimeout(requestTimeout).build()) {
+            initialize(client);
+            initialized = true;
+            var current = listTools(client::listTools);
+            var selected = current.stream().filter(tool -> approved.contains(
+                    new McpAllowedTool(tool.name(), fingerprint(tool.inputSchema())))).toList();
+            if (selected.size() != approved.size())
+                throw new McpToolCallException(McpToolCallException.Kind.SCHEMA_CHANGED, null);
+            return selected;
+        } catch (McpProbeException | McpToolCallException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw transportFailure(http, exception, initialized);
+        }
+    }
+
+    private List<McpSchema.Tool> listTools(Function<String, McpSchema.ListToolsResult> fetch) {
+        List<McpSchema.Tool> tools = new ArrayList<>();
         Set<String> names = new HashSet<>();
         Set<String> cursors = new HashSet<>();
         String cursor = null;
@@ -178,7 +215,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
                 if (tool == null || tool.name() == null || tool.name().isBlank()
                         || tool.inputSchema() == null || !names.add(tool.name()) || tools.size() >= maxTools)
                     throw new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
-                tools.add(new McpToolSummary(tool.name(), tool.description(), fingerprint(tool.inputSchema())));
+                tools.add(tool);
             }
             cursor = result.nextCursor();
             if (cursor == null || cursor.isBlank()) return tools;

@@ -9,12 +9,14 @@ import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
+import com.sitionix.forgeagent.application.mcp.McpGatewayService;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,8 +30,25 @@ public class WorkflowExecutionCoordinator {
     private final WorkflowCompletionPolicy completionPolicy;
     private final Clock clock;
     private final AgentExecutionSessionRepository sessionRepository;
+    private final McpGatewayService gateway;
 
     @Autowired
+    public WorkflowExecutionCoordinator(final WorkflowRunRepository workflowRunRepository,
+                                        final WorkflowRunGraphRepository graphRepository,
+                                        final NodeRunRepository nodeRunRepository,
+                                        final WorkflowCompletionPolicy completionPolicy,
+                                        final Clock clock,
+                                        final AgentExecutionSessionRepository sessionRepository,
+                                        final ObjectProvider<McpGatewayService> gateway) {
+        this.workflowRunRepository = workflowRunRepository;
+        this.graphRepository = graphRepository;
+        this.nodeRunRepository = nodeRunRepository;
+        this.completionPolicy = completionPolicy;
+        this.clock = clock;
+        this.sessionRepository = sessionRepository;
+        this.gateway = gateway.getIfAvailable();
+    }
+
     public WorkflowExecutionCoordinator(final WorkflowRunRepository workflowRunRepository,
                                         final WorkflowRunGraphRepository graphRepository,
                                         final NodeRunRepository nodeRunRepository,
@@ -42,6 +61,7 @@ public class WorkflowExecutionCoordinator {
         this.completionPolicy = completionPolicy;
         this.clock = clock;
         this.sessionRepository = sessionRepository;
+        this.gateway = null;
     }
 
     WorkflowExecutionCoordinator(final WorkflowRunRepository workflowRunRepository,
@@ -140,7 +160,10 @@ public class WorkflowExecutionCoordinator {
                 .filter(nodeRun -> nodeRun.status().active())
                 .map(nodeRun -> {
                     if (nodeRun.contextTrackingVersion() != null) {
-                        return this.sessionRepository.cancel(nodeRun.id());
+                        var allocation = this.sessionRepository.findByNodeRunId(nodeRun.id());
+                        boolean cancelled = this.sessionRepository.cancel(nodeRun.id());
+                        if (cancelled && gateway != null) allocation.ifPresent(value -> gateway.revokeExecution(value.turn().id()));
+                        return cancelled;
                     } else {
                         this.nodeRunRepository.save(this.withCancelled(nodeRun, now));
                         return true;

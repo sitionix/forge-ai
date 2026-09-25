@@ -23,6 +23,7 @@ public final class AgentManagementAuthenticationFilter implements Filter {
                 response.setHeader("Cache-Control","no-store");response.setStatus(status);return;
             }
             if (remoteAccessOwned && AgentManagementRoutePolicy.remoteAccess(request)) { chain.doFilter(input,output);return; }
+            if (AgentManagementRoutePolicy.runtimeMcp(request)) { chain.doFilter(input,output);return; }
         } catch (IllegalArgumentException invalid) { response.setStatus(403);return; }
         if ((request.getMethod().equals("GET") || request.getMethod().equals("HEAD")) && publicStatic(path)) {
             chain.doFilter(input,output); return;

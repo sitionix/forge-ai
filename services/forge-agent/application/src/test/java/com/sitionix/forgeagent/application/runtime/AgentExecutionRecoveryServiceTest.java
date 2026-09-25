@@ -76,6 +76,14 @@ class AgentExecutionRecoveryServiceTest {
         when(this.sessions.reconcileRecovery(any(), any())).thenReturn(true);
     }
 
+    @Test void committedRecoveryRevokesOldRuntimeGrant() {
+        var gateway = mock(com.sitionix.forgeagent.application.mcp.McpGatewayService.class);
+        service.setMcpGateway(gateway);
+        claim = claim(NodeRunStatus.CANCELLED, "codex", "0.154.0", "thread-exact", "turn-exact");
+        org.assertj.core.api.Assertions.assertThat(service.reconcileExpired()).isEqualTo(1);
+        verify(gateway).revokeExecution(claim.turnId());
+    }
+
     @ParameterizedTest
     @EnumSource(value = NodeRunStatus.class, names = {"FAILED", "BLOCKED"})
     void recoveredFailureOrBlockReconcilesOwningWorkflowAfterFencedCommit(final NodeRunStatus status) {

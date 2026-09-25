@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.*;
 import com.sitionix.forgeagent.domain.exception.McpProbeException;
 import com.sitionix.forgeagent.domain.model.McpAuthType;
 import com.sitionix.forgeagent.domain.model.McpCredentialSecret;
+import com.sitionix.forgeagent.domain.model.McpAllowedTool;
+import com.sitionix.forgeagent.domain.exception.McpToolCallException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -55,6 +57,19 @@ class SdkMcpRemoteClientProbeTest {
             assertThat(report.tools().getFirst().schemaFingerprint()).startsWith("sha256:");
             assertThat(report.tools().get(1).schemaFingerprint()).isNotEqualTo(report.tools().getFirst().schemaFingerprint());
             assertThat(pages.get()).isEqualTo(2);
+            pages.set(0);
+            var approved = probe.discoverApprovedTools(URI.create("http://127.0.0.1:" + port + "/mcp"),
+                    McpAuthType.BEARER, "synthetic-token".getBytes(StandardCharsets.UTF_8),
+                    Set.of(new McpAllowedTool("read", report.tools().getFirst().schemaFingerprint())));
+            assertThat(approved).extracting("name").containsExactly("read");
+            assertThat(approved.getFirst().inputSchema()).isNotNull();
+            pages.set(0);
+            assertThatThrownBy(() -> probe.discoverApprovedTools(
+                    URI.create("http://127.0.0.1:" + port + "/mcp"), McpAuthType.BEARER,
+                    "synthetic-token".getBytes(StandardCharsets.UTF_8),
+                    Set.of(new McpAllowedTool("read", "sha256:" + "0".repeat(64)))))
+                    .isInstanceOf(McpToolCallException.class)
+                    .extracting("kind").isEqualTo(McpToolCallException.Kind.SCHEMA_CHANGED);
         } finally { server.stop(0); }
     }
 

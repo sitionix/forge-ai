@@ -4,6 +4,7 @@ import com.sitionix.forgeagent.api.security.McpManagementProperties;
 import com.sitionix.forgeagent.application.mcp.McpConnectionService;
 import com.sitionix.forgeagent.application.mcp.McpAvailableService;
 import com.sitionix.forgeagent.application.mcp.McpProbeService;
+import com.sitionix.forgeagent.application.mcp.McpGatewayService;
 import com.sitionix.forgeagent.domain.port.*;
 import com.sitionix.forgeagent.infrastructure.local.mcp.*;
 import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryVerifier;
@@ -52,15 +53,15 @@ public class AgentMcpProtectedConfiguration {
     }
     @Bean McpCredentialCipher mcpCredentialCipher(McpLocalKeySource keys) { return new AesGcmMcpCredentialCipher(keys); }
     @Bean McpConnectionService mcpConnectionService(McpConnectionRepository repository,ProjectRepository projects,
-            ForgeInstanceIdentityRepository identity,McpCredentialCipher cipher) {
-        return new McpConnectionService(repository,projects,identity,cipher);
+            ForgeInstanceIdentityRepository identity,McpCredentialCipher cipher,McpGatewayService gateway) {
+        return new McpConnectionService(repository,projects,identity,cipher,gateway);
     }
     @Bean McpAvailableService mcpAvailableService(McpRegistryCatalog catalog) {
         return new McpAvailableService(catalog);
     }
     @Bean McpProbeService mcpProbeService(McpConnectionRepository repository,
             ForgeInstanceIdentityRepository identity, McpCredentialCipher cipher, McpRemoteProbe remote,
-            McpToolInventoryRepository inventory) {
-        return new McpProbeService(repository, identity, cipher, remote, inventory);
+            McpToolInventoryRepository inventory, McpGatewayService gateway) {
+        return new McpProbeService(repository, identity, cipher, remote, inventory, gateway);
     }
 }

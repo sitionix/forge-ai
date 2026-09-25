@@ -14,13 +14,21 @@ public class McpConnectionService {
     private final ProjectRepository projects;
     private final ForgeInstanceIdentityRepository identity;
     private final McpCredentialCipher cipher;
+    private final McpGatewayService gateway;
 
     public McpConnectionService(McpConnectionRepository repository, ProjectRepository projects,
                                 ForgeInstanceIdentityRepository identity, McpCredentialCipher cipher) {
+        this(repository, projects, identity, cipher, null);
+    }
+
+    public McpConnectionService(McpConnectionRepository repository, ProjectRepository projects,
+                                ForgeInstanceIdentityRepository identity, McpCredentialCipher cipher,
+                                McpGatewayService gateway) {
         this.repository = Objects.requireNonNull(repository);
         this.projects = Objects.requireNonNull(projects);
         this.identity = Objects.requireNonNull(identity);
         this.cipher = Objects.requireNonNull(cipher);
+        this.gateway = gateway;
     }
 
     @Transactional
@@ -60,7 +68,7 @@ public class McpConnectionService {
                 || (authType == McpAuthType.NONE && change == McpCredentialChange.REPLACE)
                 || (replacement != null && replacement.type() != authType)) throw new IllegalArgumentException("Invalid credential change");
         UUID installation = identity.getOrCreate();
-        return repository.change(installation,id,state -> {
+        var result = repository.change(installation,id,state -> {
             McpConnection current = state.connection();
             if (change == McpCredentialChange.KEEP && current.credentialConfigured()
                     && (current.authType() != authType || !current.endpoint().equals(endpoint)))
@@ -79,21 +87,28 @@ public class McpConnectionService {
                     identityChanged ? null : current.safeDiagnostic());
             return new McpConnectionState(updated,encrypted);
         }).orElseThrow(() -> new NoSuchElementException("MCP connection not found")).connection();
+        if (gateway != null) gateway.revokeConnection(id);
+        return result;
     }
 
     @Transactional
     public McpConnection setEnabled(UUID id, boolean enabled) {
-        return repository.change(identity.getOrCreate(),id,state -> {
+        var result = repository.change(identity.getOrCreate(),id,state -> {
             var current = state.connection();
             var updated = new McpConnection(current.id(),current.installationId(),current.displayName(),current.endpoint(),
                     current.authType(),enabled,current.projectAccess(),current.allowedTools(),current.credentialConfigured(),
                     current.createdAt(),Instant.now(),current.checkedAt(),current.safeDiagnostic());
             return new McpConnectionState(updated,state.credential());
         }).orElseThrow(() -> new NoSuchElementException("MCP connection not found")).connection();
+        if (!enabled && gateway != null) gateway.revokeConnection(id);
+        return result;
     }
 
     @Transactional
-    public void remove(UUID id) { repository.delete(identity.getOrCreate(),id); }
+    public void remove(UUID id) {
+        repository.delete(identity.getOrCreate(),id);
+        if (gateway != null) gateway.revokeConnection(id);
+    }
 
     @Transactional
     public void reencrypt(UUID id) {
@@ -104,6 +119,7 @@ public class McpConnectionService {
             try { return new McpConnectionState(current,cipher.encrypt(current.installationId(),id,PURPOSE,plaintext)); }
             finally { Arrays.fill(plaintext,(byte)0); }
         }).orElseThrow(() -> new NoSuchElementException("MCP connection not found"));
+        if (gateway != null) gateway.revokeConnection(id);
     }
 
     private void validate(String name, URI endpoint, McpAuthType authType, McpProjectAccess access) {

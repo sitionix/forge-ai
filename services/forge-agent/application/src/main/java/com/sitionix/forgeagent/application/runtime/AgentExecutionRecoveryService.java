@@ -7,6 +7,7 @@ import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
+import com.sitionix.forgeagent.application.mcp.McpGatewayService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -17,6 +18,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,7 +38,11 @@ public class AgentExecutionRecoveryService {
     private final NodeRunCompletionProcessor completionProcessor;
     private final WorkflowExecutionCoordinator coordinator;
     private final Clock clock;
+    private McpGatewayService gateway;
     private final String ownerId = "agent-recovery-" + UUID.randomUUID();
+
+    @Autowired(required = false)
+    void setMcpGateway(McpGatewayService gateway) { this.gateway = gateway; }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public int reconcileExpired() {
@@ -52,6 +58,7 @@ public class AgentExecutionRecoveryService {
             reconciliation = this.reconciliation(this.inspect(claim));
         }
         if (!this.sessions.reconcileRecovery(claim, reconciliation)) return 0;
+        if (gateway != null) gateway.revokeExecution(claim.turnId());
         this.continueNodeRunLifecycle(claim.nodeRunId());
         return 1;
     }

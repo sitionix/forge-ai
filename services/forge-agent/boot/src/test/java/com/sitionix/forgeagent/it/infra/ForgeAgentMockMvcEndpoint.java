@@ -32,6 +32,10 @@ import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 
 public final class ForgeAgentMockMvcEndpoint {
+    public static final Endpoint<Void, Void> RUNTIME_MCP_DENIED =
+            Endpoint.createContract("/internal/mcp/connections/{id}", HttpMethod.POST, Void.class, Void.class);
+    public static final Endpoint<Void, Void> RUNTIME_MCP_ALTERNATIVE =
+            Endpoint.createContract("/internal/mcp/connections/{id}/test", HttpMethod.POST, Void.class, Void.class);
     public static final Endpoint<Void, com.sitionix.forgeagent.api.mcp.McpProbeResponse> TEST_MCP_CONNECTION =
             Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/test", HttpMethod.POST,
                     Void.class, com.sitionix.forgeagent.api.mcp.McpProbeResponse.class);
