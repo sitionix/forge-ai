@@ -1215,8 +1215,9 @@ NOT_RUN. The subsequent host attempt is recorded below.
 `GET /fgaisox/api/v1/infrastructure/agents/remote-access/bootstrap` returned
 `COLD`, and the served page contains the Enable control. Full startup did not
 pass health checks. The worktree Python environments had FastAPI 0.125.0 with
-Pydantic 1.10.26, causing Knowledge and Jarvis imports to fail; their local
-environments were restored to the already-working FastAPI 0.103.2 version.
+Pydantic 1.10.26, causing Knowledge and Jarvis imports to fail. The final
+dependency pin is FastAPI 0.115.12 with AnyIO 4 and Pydantic 1.x; Knowledge
+994 tests and Jarvis 79 tests passed with this combination.
 The shared Agent database has an applied version 39 migration described as
 `add mcp tool inventory`, while the initial PR revision also assigned V39 to
 the Remote Access switch. The exact V39 source was recovered from the
@@ -1243,7 +1244,7 @@ and capabilities returned `ready=true`. The persisted control switched from
 `DISABLED` to `ENABLED`; Give Access returned a token with the expected
 versioned envelope, and the smoke invitation was cancelled. The token was not
 printed or retained. Full Agent and Nexus Maven verify, Console 588 tests,
-and the Python suite (106 passed, 2 skipped) passed. The Python fixture was
+and the Remote Access Python suite (106 passed, 2 skipped) passed. The Python fixture was
 adjusted to isolate its mocked runtime from this now-running host.
 
 Two-physical-machine pairing and live Codex acceptance remain NOT_RUN.
