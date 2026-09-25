@@ -32,6 +32,7 @@ final class CodexAppServerClient implements CodexClient {
     private final CodexRuntimeWorkspace runtimeWorkspace;
     private final McpGatewayAddress gatewayAddress;
     private final CodexMcpConfiguration mcpConfiguration = new CodexMcpConfiguration();
+    private final CodexMcpInventoryVerifier inventoryVerifier;
     private CodexJsonRpcTransport transport;
     private String codexVersion;
 
@@ -49,6 +50,7 @@ final class CodexAppServerClient implements CodexClient {
         this.properties = properties;
         this.runtimeWorkspace = runtimeWorkspace;
         this.gatewayAddress = gatewayAddress;
+        this.inventoryVerifier = new CodexMcpInventoryVerifier(objectMapper);
     }
 
     @Override
@@ -269,6 +271,10 @@ final class CodexAppServerClient implements CodexClient {
             }
             eventObserver.bindThread(threadId);
             if (callbacks != null && existingThreadId == null) callbacks.conversationStarted(threadId, providerVersion);
+            if (request.mcpSelection() != null) {
+                this.inventoryVerifier.verify(current, threadId, request.mcpSelection(),
+                        this.properties.getRequestTimeout());
+            }
             state = turnStateTracker.register(threadId);
             final String turnId;
             try {

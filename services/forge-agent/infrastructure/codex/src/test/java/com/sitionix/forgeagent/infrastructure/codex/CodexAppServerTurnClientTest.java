@@ -85,12 +85,50 @@ class CodexAppServerTurnClientTest {
             if (originalConfig == null) originalConfig = config;
             else assertThat(config).isEqualTo(originalConfig);
             this.replyThread(process, thread, "thread-durable");
+            var inventory = this.readRequest(process);
+            assertThat(inventory.path("method").asText()).isEqualTo("mcpServerStatus/list");
+            assertThat(inventory.path("params").path("threadId").asText()).isEqualTo("thread-durable");
+            process.writeStdout("{\"id\":\"" + inventory.path("id").asText() + "\",\"result\":{\"data\":["
+                    + "{\"name\":\"" + alias + "\",\"runtimeStatus\":\"connected\","
+                    + "\"tools\":{\"search\":{\"name\":\"search\"}}}],\"nextCursor\":null}}");
             var turnRequest = this.readRequest(process);
             this.replyTurn(process, turnRequest, "turn-" + index);
             this.complete(process, "thread-durable", "turn-" + index, "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
             assertThat(result.get(1, TimeUnit.SECONDS)).contains("OK");
             assertThat(starter.grants.get(index).tokens().get(grantName)).isEqualTo(token);
         }
+        client.close();
+    }
+
+    @Test
+    void unexpectedMcpServerOnLaterPagePreventsTurnStart() throws Exception {
+        var process = new FakeCodexProcess(false, true);
+        var properties = this.properties();
+        var client = new CodexAppServerClient(this.objectMapper, new FakeStarter(process), properties,
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+        var selection = new McpExecutionSelection(List.of(new McpExecutionSelection.Entry(
+                "forge_0123456789ab4cde80123456789abcde",
+                UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"), "Search",
+                Set.of(new McpAllowedTool("search", "sha256:fingerprint")))), List.of());
+        var request = new CodexTurnRequest("Read.", "Instructions.", "model-a", null,
+                this.schemaUnchecked(), this.workspace(), false, selection);
+        var result = CompletableFuture.supplyAsync(() -> client.execute(request,
+                new McpRuntimeLaunchGrants(Map.of())));
+        this.initialize(process);
+        var thread = this.readRequest(process);
+        this.replyThread(process, thread, "thread-a");
+        var first = this.readRequest(process);
+        assertThat(first.path("method").asText()).isEqualTo("mcpServerStatus/list");
+        process.writeStdout("{\"id\":\"" + first.path("id").asText()
+                + "\",\"result\":{\"data\":[],\"nextCursor\":\"next\"}}");
+        var second = this.readRequest(process);
+        assertThat(second.path("params").path("cursor").asText()).isEqualTo("next");
+        process.writeStdout("{\"id\":\"" + second.path("id").asText()
+                + "\",\"result\":{\"data\":[{\"name\":\"unapproved\","
+                + "\"runtimeStatus\":\"connected\",\"tools\":{}}],\"nextCursor\":null}}");
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
+                .hasRootCauseMessage("Codex MCP inventory did not match issued grants");
+        assertThat(process.pendingClientRequestBytes()).isZero();
         client.close();
     }
 
