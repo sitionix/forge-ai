@@ -20,9 +20,13 @@ public class RemoteAccessSecurityConfiguration {
         String prefix="/api/v1/infrastructure/agents/remote-access";
         var mapper=new ObjectMapper();
         org.springframework.security.web.util.matcher.RequestMatcher login=request -> request.getMethod().equals("POST")
-                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/login");
+                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/login")
+                    || combined && request.getMethod().equals("POST")
+                    && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals("/api/v1/operator/session");
         org.springframework.security.web.util.matcher.RequestMatcher localSession=request -> request.getMethod().equals("GET")
-                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/session");
+                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/session")
+                    || combined && request.getMethod().equals("GET")
+                    && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals("/api/v1/operator/session");
         if (!combined) {
             var remotePath=org.springframework.web.util.pattern.PathPatternParser.defaultInstance.parse(prefix+"/{*path}");
             http.securityMatcher(request -> remotePath.matches(org.springframework.http.server.RequestPath.parse(

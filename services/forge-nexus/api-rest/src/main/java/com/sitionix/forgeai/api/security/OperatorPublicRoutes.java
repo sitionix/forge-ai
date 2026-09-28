@@ -29,6 +29,7 @@ public final class OperatorPublicRoutes {
             return false;
         return path.equals("/") || path.equals("/index.html") || path.equals("/favicon.ico")
                 || path.equals("/manifest.webmanifest") || path.equals("/robots.txt")
+                || path.matches("/operator/[A-Za-z0-9._/-]+\\.(html|js|css|json)")
                 || (path.matches("/(assets|static)/[A-Za-z0-9._/-]+") && !path.endsWith("/"));
     }
 }

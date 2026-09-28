@@ -8,7 +8,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.*;
-@RestControllerAdvice(assignableTypes={RemoteAccessProxyController.class,RemoteAccessOperatorController.class})
+@RestControllerAdvice(assignableTypes={RemoteAccessProxyController.class,RemoteAccessOperatorController.class,CombinedOperatorSessionController.class})
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class RemoteAccessProxyErrors {
     @ExceptionHandler(RemoteAccessClientException.class) public ResponseEntity<RemoteAccessProxyDtos.Error> upstream(RemoteAccessClientException e) {

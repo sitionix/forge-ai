@@ -72,7 +72,7 @@ class NexusCombinedOperatorHttpIT {
             assertThat(response).startsWith("HTTP/1.1 40");
         }
     }
-    @Test void oneCookieCoversGeneralControlRotationLogoutAndUnknownAlias() throws Exception {
+    @Test void oneCookieCoversGeneralControlRotationLogoutAndCanonicalSession() throws Exception {
         String login=request("POST","/operator/login","Origin: http://127.0.0.1:9099\r\n","{\"secret\":\""+OPERATOR+"\"}");
         assertThat(login).startsWith("HTTP/1.1 200").contains("Path=/fgaisox;").doesNotContain("FG_SESSION");
         String cookie=cookie(login),csrf=csrf(login);
@@ -82,13 +82,26 @@ class NexusCombinedOperatorHttpIT {
         assertThat(jar.get(URI.create("http://127.0.0.1:9099/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connections"),Map.of()).get("Cookie")).anyMatch(value -> value.contains(cookie));
         assertThat(requestAt("GET","/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connections","Cookie: "+cookie+"\r\n","")).startsWith("HTTP/1.1 200");
         assertThat(requestAt("GET","/fgaisox/api/v1/operator/session","","")).startsWith("HTTP/1.1 401");
-        assertThat(requestAt("POST","/fgaisox/api/v1/operator/session","Origin: http://127.0.0.1:9099\r\n","{}")).startsWith("HTTP/1.1 403");
-        assertThat(requestAt("GET","/fgaisox/api/v1/operator/session","Cookie: "+cookie+"\r\n","")).startsWith("HTTP/1.1 404");
+        assertThat(requestAt("POST","/fgaisox/api/v1/operator/session","Origin: http://127.0.0.1:9099\r\n","{\"bootstrapSecret\":\"wrong\"}")).startsWith("HTTP/1.1 401");
+        assertThat(requestAt("GET","/fgaisox/api/v1/operator/session","Cookie: "+cookie+"\r\nSec-Fetch-Site: same-origin\r\n","")).startsWith("HTTP/1.1 200").contains("X-CSRF-TOKEN");
         String relogin=request("POST","/operator/login","Cookie: "+cookie+"\r\nOrigin: http://127.0.0.1:9099\r\n","{\"secret\":\""+OPERATOR+"\"}");
         String rotated=cookie(relogin);assertThat(rotated).isNotEqualTo(cookie);
         assertThat(requestAt("GET","/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connections","Cookie: "+cookie+"\r\n","")).startsWith("HTTP/1.1 401");
         assertThat(request("POST","/operator/logout","Cookie: "+rotated+"\r\nOrigin: http://127.0.0.1:9099\r\nX-CSRF-TOKEN: "+csrf(relogin)+"\r\n","")).startsWith("HTTP/1.1 204");
         assertThat(requestAt("GET","/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connections","Cookie: "+rotated+"\r\n","")).startsWith("HTTP/1.1 401");
+    }
+    @Test void canonicalLoginUsesSameOwnerAndLogoutRequiresOriginAndCsrf() throws Exception {
+        String path="/fgaisox/api/v1/operator/session";
+        int before=calls.get();
+        assertThat(requestAt("POST",path,"Origin: http://evil.test\r\n","{\"bootstrapSecret\":\""+OPERATOR+"\"}")).startsWith("HTTP/1.1 403");
+        String login=requestAt("POST",path,"Origin: http://127.0.0.1:9099\r\n","{\"bootstrapSecret\":\""+OPERATOR+"\"}");
+        assertThat(login).startsWith("HTTP/1.1 200").contains("X-CSRF-TOKEN","HttpOnly").doesNotContain(OPERATOR,"FG_SESSION");
+        String headers="Cookie: "+cookie(login)+"\r\nOrigin: http://127.0.0.1:9099\r\n";
+        assertThat(requestAt("DELETE",path,headers,"")).startsWith("HTTP/1.1 403");
+        assertThat(requestAt("DELETE",path,headers+"X-CSRF-TOKEN: wrong\r\n","")).startsWith("HTTP/1.1 403");
+        assertThat(requestAt("DELETE",path,headers+"X-CSRF-TOKEN: "+csrf(login)+"\r\n","")).startsWith("HTTP/1.1 204");
+        assertThat(request("GET","/capabilities","Cookie: "+cookie(login)+"\r\n","")).startsWith("HTTP/1.1 401");
+        assertThat(calls.get()).isEqualTo(before);
     }
     static String cookie(String response) {
         return Arrays.stream(response.split("\r\n")).filter(line -> line.toLowerCase().startsWith("set-cookie:")).findFirst().orElseThrow().substring(12).split(";",2)[0];

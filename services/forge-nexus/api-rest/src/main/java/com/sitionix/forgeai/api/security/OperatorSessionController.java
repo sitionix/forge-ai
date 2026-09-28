@@ -60,6 +60,7 @@ public final class OperatorSessionController {
         private final String csrfToken;
         public SessionResponse(String csrfToken) { this.csrfToken=csrfToken; }
         @JsonProperty("csrfToken") public String csrfToken() { return csrfToken; }
+        @JsonProperty("csrfHeader") public String csrfHeader() { return "X-Forge-CSRF"; }
         @Override public String toString() { return "SessionResponse[redacted]"; }
     }
 }
