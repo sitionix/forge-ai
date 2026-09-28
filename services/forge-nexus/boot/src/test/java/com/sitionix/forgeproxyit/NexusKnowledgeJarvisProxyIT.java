@@ -27,7 +27,7 @@ import org.springframework.test.context.ContextConfiguration;
 @ContextConfiguration(classes = Application.class)
 @Import(NexusProxyTestManagerImpl.class)
 @Execution(ExecutionMode.SAME_THREAD)
-class NexusKnowledgeJarvisProxyIT extends com.sitionix.forgeproxyit.infra.NexusProxyManagementFixture {
+class NexusKnowledgeJarvisProxyIT {
 
     @Autowired
     private NexusProxyTestManager testManager;
@@ -40,7 +40,7 @@ class NexusKnowledgeJarvisProxyIT extends com.sitionix.forgeproxyit.infra.NexusP
                 .createDefault();
 
         this.testManager.mockMvc()
-                .ping(NexusInfrastructureMockMvcEndpoints.knowledgeQuery()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
+                .ping(NexusInfrastructureMockMvcEndpoints.knowledgeQuery())
                 .assertDefault();
 
         await().untilAsserted(upstream::verify);
@@ -54,7 +54,7 @@ class NexusKnowledgeJarvisProxyIT extends com.sitionix.forgeproxyit.infra.NexusP
                 .createDefault();
 
         this.testManager.mockMvc()
-                .ping(NexusInfrastructureMockMvcEndpoints.jarvisCommand()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
+                .ping(NexusInfrastructureMockMvcEndpoints.jarvisCommand())
                 .assertDefault();
 
         await().untilAsserted(upstream::verify);

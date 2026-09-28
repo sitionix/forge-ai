@@ -2,18 +2,18 @@ package com.sitionix.forgeai.api.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import jakarta.servlet.DispatcherType;
+import jakarta.servlet.RequestDispatcher;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletRequest;
 
 class OperatorPublicRoutesTest {
-    @Test void consoleLoginShellIsPublicWhileManagementAndPathAliasesRemainProtected() {
-        for (String path : new String[]{"/operator/settings.html", "/operator/operator-bootstrap.js",
-                "/operator/operator-ui.css", "/operator/runtime-config.json"}) {
-            assertThat(OperatorPublicRoutes.publicStatic(path)).as(path).isTrue();
-        }
-        for (String path : new String[]{"/api/v1/operator/session", "/api/v1/integrations.html",
-                "/operator/../api/connection.js", "/operator/%2e%2e/api.js", "/operator/settings.html;v=1",
-                "/operator//settings.html", "/operator/settings", "/operator/secret.txt"}) {
-            assertThat(OperatorPublicRoutes.publicStatic(path)).as(path).isFalse();
-        }
+    @Test void usesCurrentDispatchTargetWithoutContextPath() {
+        var request = new MockHttpServletRequest("GET", "/fgaisox/api/v1/infrastructure/agents/remote-access/capabilities");
+        request.setContextPath("/fgaisox");
+        assertThat(OperatorPublicRoutes.path(request)).isEqualTo("/api/v1/infrastructure/agents/remote-access/capabilities");
+        request.setDispatcherType(DispatcherType.INCLUDE);
+        request.setAttribute(RequestDispatcher.INCLUDE_REQUEST_URI, "/fgaisox/api/v1/infrastructure/agents/remote-access/operator/session");
+        assertThat(OperatorPublicRoutes.path(request)).isEqualTo("/api/v1/infrastructure/agents/remote-access/operator/session");
     }
 }

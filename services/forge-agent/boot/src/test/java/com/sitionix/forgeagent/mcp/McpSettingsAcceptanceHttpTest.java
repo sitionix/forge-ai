@@ -49,19 +49,16 @@ import org.testcontainers.containers.PostgreSQLContainer;
 @ExtendWith(OutputCaptureExtension.class)
 class McpSettingsAcceptanceHttpTest {
     static final PostgreSQLContainer<?> DB=new PostgreSQLContainer<>("postgres:16-alpine");
-    static final String SERVICE=Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
-    static final String OPERATOR=Base64.getUrlEncoder().withoutPadding().encodeToString("synthetic-operator-stage5-fixture!".getBytes(StandardCharsets.UTF_8));
     static Path directory;
     static HttpServer upstream;
     static int toolCalls;
     static String lastTool;
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) throws Exception {
         DB.start();directory=Files.createTempDirectory("mcp-settings-acceptance-");
-        protectedFile("service",SERVICE);protectedFile("operator",OPERATOR);
+
         protectedFile("key","active=k1\nkey.k1="+Base64.getEncoder().encodeToString(new byte[32])+"\n");
         protectedFile("db",DB.getPassword());
         registry.add("spring.datasource.url",DB::getJdbcUrl);registry.add("spring.datasource.username",DB::getUsername);
-        registry.add("forge.mcp.service-credential-file",()->directory.resolve("service").toString());
         registry.add("forge.mcp.key-file",()->directory.resolve("key").toString());
         registry.add("forge.mcp.database-credential-file",()->directory.resolve("db").toString());
         upstream=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
@@ -117,7 +114,7 @@ class McpSettingsAcceptanceHttpTest {
         try {
             awaitNexus(nexus,origin);
             String browser=browser(root,origin,"connect",null);
-            assertThat(browser).contains("SETTINGS_BROWSER_ACTUAL_NEXUS_PASS").doesNotContain(OPERATOR,SERVICE);
+            assertThat(browser).contains("SETTINGS_BROWSER_ACTUAL_NEXUS_PASS");
             var connection=connections.list().getFirst();UUID id=connection.id();
             assertThat(connection.enabled()).isTrue();assertThat(connection.allowedTools()).extracting(McpAllowedTool::name).containsExactly("echo");
             assertThat(connection.projectAccess().projectIds()).containsExactly(projectId);
@@ -181,8 +178,8 @@ class McpSettingsAcceptanceHttpTest {
             assertThat(toolCalls).isEqualTo(3);assertThat(lastTool).isEqualTo("inspect");
             assertThat(output.getAll()).doesNotContain(next.token());
             assertThat(Files.readString(directory.resolve("nexus.log"))).doesNotContain(next.token());
-            assertThat(output.getAll()).doesNotContain(OPERATOR,SERVICE,first.token(),second.token());
-            assertThat(Files.readString(directory.resolve("nexus.log"))).doesNotContain(OPERATOR,SERVICE,first.token(),second.token());
+            assertThat(output.getAll()).doesNotContain(first.token(),second.token());
+            assertThat(Files.readString(directory.resolve("nexus.log"))).doesNotContain(first.token(),second.token());
         } finally {stop(nexus);}
     }
     private AgentSessionExecutionClaim trustedLease(UUID projectId,Instant now) {
@@ -202,8 +199,6 @@ class McpSettingsAcceptanceHttpTest {
         return new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-jar",jar.toString(),
             "--server.address=127.0.0.1","--server.port="+port,"--spring.config.import=","--spring.docker.compose.enabled=false",
             "--spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
-            "--forge.mcp.operator-origin="+origin,
-            "--forge.mcp.bootstrap-credential-file="+directory.resolve("operator"),"--forge.mcp.agent-service-credential-file="+directory.resolve("service"),
             "--forge.ai.infrastructure.agent.base-url=http://127.0.0.1:"+agentPort)
             .directory(directory.toFile()).redirectErrorStream(true).redirectOutput(directory.resolve("nexus.log").toFile()).start();
     }
@@ -223,7 +218,7 @@ class McpSettingsAcceptanceHttpTest {
     }
     private String browser(Path root,String origin,String action,UUID id,UUID projectId) throws Exception {
         var builder=new ProcessBuilder("node",root.resolve("services/forge-console/scripts/mcp-settings-browser-smoke.mjs").toString());
-        builder.environment().put("FORGE_SETTINGS_BASE_URL",origin+"/fgaisox");builder.environment().put("FORGE_SETTINGS_OPERATOR_SECRET",OPERATOR);
+        builder.environment().put("FORGE_SETTINGS_BASE_URL",origin+"/fgaisox");
         builder.environment().put("FORGE_SETTINGS_MCP_ENDPOINT","http://127.0.0.1:"+upstream.getAddress().getPort()+"/mcp");
         builder.environment().put("FORGE_SETTINGS_ACTION",action);if(id!=null)builder.environment().put("FORGE_SETTINGS_CONNECTION_ID",id.toString());
         if(projectId!=null) {

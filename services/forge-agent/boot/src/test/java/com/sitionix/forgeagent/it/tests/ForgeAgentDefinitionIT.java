@@ -43,7 +43,7 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
     @Test
     void givenRuntimeEndpoint_whenGetRuntime_thenDeterministicCatalogIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(GET_RUNTIME).header("Authorization", SERVICE_BEARER)
+                .ping(GET_RUNTIME)
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseRuntime.json")
                 .assertAndCreate();
@@ -57,7 +57,7 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_AGENT).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_AGENT)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgent.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -73,21 +73,21 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
                 .assertEntity();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_AGENTS).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_AGENTS)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListAgents.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(GET_AGENT).header("Authorization", SERVICE_BEARER)
+                .ping(GET_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseGetAgent.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_AGENT).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .withRequest("requestUpdateAgent.json")
                 .expectStatus(HttpStatus.OK)
@@ -110,7 +110,7 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_AGENT).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_AGENT)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentWithModel.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -126,21 +126,21 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
                 .assertEntity();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_AGENTS).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_AGENTS)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListAgentsWithModel.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(GET_AGENT).header("Authorization", SERVICE_BEARER)
+                .ping(GET_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseGetAgentWithModel.json", "id", "createdAt", "updatedAt")
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_AGENT).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", created.getId()))
                 .withRequest("requestUpdateAgentWithModelB.json")
                 .expectStatus(HttpStatus.OK)
@@ -163,7 +163,7 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_AGENT_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentUnknownModel.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -181,7 +181,7 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_AGENT_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentUnsupportedEffort.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -200,7 +200,7 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_AGENT_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentWithModel.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -214,21 +214,21 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
     void givenDuplicateAgentNameInSameProject_whenCreateAgent_thenConflictIsReturned() {
         this.seedTwoProjects();
         this.forgeIt.mockMvc()
-                .ping(CREATE_AGENT).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_AGENT)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgent.json")
                 .expectStatus(HttpStatus.CREATED)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_AGENT_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateAgentLowercase.json")
                 .expectStatus(HttpStatus.CONFLICT)
                 .expectResponse("responseDuplicateAgentError.json")
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(CREATE_AGENT).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_AGENT)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_BETA_ID))
                 .withRequest("requestCreateAgent.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -242,7 +242,7 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
     @Test
     void givenMissingProject_whenListProjectAgents_thenProjectNotFoundIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_AGENTS_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_AGENTS_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_GAMMA_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .expectResponse("responseProjectNotFoundError.json")
@@ -252,7 +252,7 @@ class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManag
     @Test
     void givenMissingAgent_whenGetAgent_thenAgentNotFoundIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(GET_AGENT_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(GET_AGENT_ERROR)
                 .withPathParameters(PathParams.create().add("agentId", UNKNOWN_AGENT_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .expectResponse("responseAgentNotFoundError.json")

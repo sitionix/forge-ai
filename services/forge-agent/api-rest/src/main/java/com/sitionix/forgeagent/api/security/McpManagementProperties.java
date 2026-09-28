@@ -5,11 +5,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix="forge.mcp")
 public class McpManagementProperties {
-    private Path serviceCredentialFile;
     private Path keyFile;
     private Path databaseCredentialFile;
-    public Path getServiceCredentialFile() { return serviceCredentialFile; }
-    public void setServiceCredentialFile(Path value) { serviceCredentialFile = value; }
     public Path getKeyFile() { return keyFile; }
     public void setKeyFile(Path value) { keyFile = value; }
     public Path getDatabaseCredentialFile() { return databaseCredentialFile; }

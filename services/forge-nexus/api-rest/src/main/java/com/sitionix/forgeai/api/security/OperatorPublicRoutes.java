@@ -3,7 +3,7 @@ package com.sitionix.forgeai.api.security;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
 
-/** Narrow canonical public routes, shared by both operator authentication modes. */
+/** Current dispatch target for the scoped Remote Access guard. */
 public final class OperatorPublicRoutes {
     private OperatorPublicRoutes() { }
     public static String path(HttpServletRequest request) {
@@ -15,21 +15,5 @@ public final class OperatorPublicRoutes {
         }
         String context=request.getContextPath();
         return uri.startsWith(context)?uri.substring(context.length()):"";
-    }
-    public static boolean matches(HttpServletRequest request) {
-        String path=path(request);
-        return publicHealth(path) || ((request.getMethod().equals("GET") || request.getMethod().equals("HEAD")) && publicStatic(path));
-    }
-    public static boolean publicHealth(String path) {
-        return path.equals("/actuator/info") || path.matches("/actuator/health(/[A-Za-z0-9_-]+)*");
-    }
-    public static boolean publicStatic(String path) {
-        if (path.contains("%") || path.contains(";") || path.contains("\\") || path.contains("//")
-                || path.contains("/./") || path.contains("/../") || path.endsWith("/.") || path.endsWith("/.."))
-            return false;
-        return path.equals("/") || path.equals("/index.html") || path.equals("/favicon.ico")
-                || path.equals("/manifest.webmanifest") || path.equals("/robots.txt")
-                || path.matches("/operator/[A-Za-z0-9._/-]+\\.(html|js|css|json)")
-                || (path.matches("/(assets|static)/[A-Za-z0-9._/-]+") && !path.endsWith("/"));
     }
 }

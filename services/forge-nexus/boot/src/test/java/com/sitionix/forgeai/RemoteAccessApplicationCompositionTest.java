@@ -29,9 +29,7 @@ class RemoteAccessApplicationCompositionTest {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(com.sitionix.forgeai.api.remoteaccess.RemoteAccessProxyController.class);
                     assertThat(context).hasBean("springSecurityFilterChain");
-                    assertThat(context).doesNotHaveBean(com.sitionix.forgeai.api.remoteaccess.CombinedOperatorSessionController.class);
                     assertThat(context).doesNotHaveBean(com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentMcpClientAdapter.class);
-                    assertThat(context).doesNotHaveBean(CombinedOperatorCredentialConfiguration.class);
                     assertThat(context).doesNotHaveBean(Application.class);
                 });
     }

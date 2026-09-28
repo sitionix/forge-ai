@@ -15,10 +15,6 @@ export interface McpCommand {
 }
 export class McpApi {
   constructor(options?: {fetcher?: (url:string,init:RequestInit)=>Promise<Response>;location?:Pick<Location,'pathname'>});
-  clear():void;
-  operatorSession(signal?:AbortSignal):Promise<{csrfToken:string;csrfHeader:string}>;
-  login(secret:string,signal?:AbortSignal):Promise<{csrfToken:string;csrfHeader:string}>;
-  logout(signal?:AbortSignal):Promise<void>;
   list(signal?:AbortSignal):Promise<McpConnection[]>;
   get(id:string,signal?:AbortSignal):Promise<McpConnection>;
   create(command:McpCommand,signal?:AbortSignal):Promise<McpConnection>;

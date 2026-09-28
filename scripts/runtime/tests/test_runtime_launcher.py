@@ -253,7 +253,7 @@ class LauncherTests(unittest.TestCase):
         from unittest.mock import patch
         import io
         receipt=io.StringIO('{"state":')
-        with patch.object(self.launcher,'locked_receipt',return_value=receipt), patch.object(self.launcher,'stop_unit') as stop:
+        with tempfile.TemporaryDirectory() as directory, patch.object(self.launcher,'locked_receipt',return_value=receipt), patch.object(self.launcher,'stop_unit') as stop, patch.object(self.launcher,'credential_path',return_value=pathlib.Path(directory)/'grant'):
             config={'installation':'01234567-89ab-4cde-8012-3456789abcde'}
             execution='01234567-89ab-4cde-8012-3456789abcdf'
             self.launcher.stop(config,execution)

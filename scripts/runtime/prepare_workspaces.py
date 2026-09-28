@@ -6,6 +6,9 @@ import shutil
 import stat
 import tempfile
 
+ADOPTION_MARKER = '.forge-adopted-from'
+CLONE_ATTEMPTS = '.forge-clone-attempts'
+
 
 def directory(path):
     if not stat.S_ISDIR(path.lstat().st_mode):
@@ -22,11 +25,14 @@ def copy_tree(source, target, gid):
 
 
 def copy_directory(source_fd, target, gid, source_path, project_root):
-    target.mkdir(mode=0o2770)
-    target.chmod(0o2770)
+    mode = 0o2750 if source_path == project_root / CLONE_ATTEMPTS else 0o2770
+    target.mkdir(mode=mode)
+    target.chmod(mode)
     os.chown(target, -1, gid)
     with os.scandir(source_fd) as children:
         for child in children:
+            if source_path == project_root and child.name == ADOPTION_MARKER:
+                raise RuntimeError('Reserved adoption metadata conflicts with managed source')
             info = child.stat(follow_symlinks=False)
             destination = target / child.name
             if stat.S_ISLNK(info.st_mode):
@@ -57,6 +63,25 @@ def copy_directory(source_fd, target, gid, source_path, project_root):
                 os.close(fd)
 
 
+def protect_clone_parent(project, gid):
+    info = project.lstat()
+    if info.st_uid != os.getuid() or info.st_gid != gid or stat.S_IMODE(info.st_mode) != 0o2750:
+        raise RuntimeError('Unsafe adopted project parent')
+    try:
+        fd = os.open(project / CLONE_ATTEMPTS, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != os.getuid() or info.st_gid != gid or stat.S_IMODE(info.st_mode) not in (0o2750, 0o2770):
+            raise RuntimeError('Unsafe adopted clone parent')
+        # Reconcile only the reserved control-owned parent created by the old
+        # adopter. Checkout/staging contents and local modifications stay intact.
+        os.fchmod(fd, 0o2750)
+    finally:
+        os.close(fd)
+
+
 def adopt(source, destination):
     source, destination = pathlib.Path(source), pathlib.Path(destination)
     directory(destination)
@@ -71,19 +96,22 @@ def adopt(source, destination):
     for project in source.iterdir():
         directory(project)
         target = destination / project.name
-        marker = target / '.forge-adopted-from'
+        marker = target / ADOPTION_MARKER
         identity = str(project.absolute()).encode()
         if target.exists() or target.is_symlink():
             directory(target)
             if marker.is_symlink() or not marker.is_file() or marker.read_bytes() != identity:
                 raise RuntimeError('Conflicting managed destination; source remains unchanged')
+            protect_clone_parent(target, gid)
             continue
         with tempfile.TemporaryDirectory(dir=destination, prefix='.adoption-') as staging:
             staged = pathlib.Path(staging) / project.name
             copy_tree(project, staged, gid)
             staged.chmod(0o2750)
-            (staged / '.forge-adopted-from').write_bytes(identity)
-            (staged / '.forge-adopted-from').chmod(0o600)
+            fd = os.open(staged / ADOPTION_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'wb') as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(identity)
             if target.exists() or target.is_symlink():
                 raise RuntimeError('Managed destination changed during adoption')
             staged.rename(target)

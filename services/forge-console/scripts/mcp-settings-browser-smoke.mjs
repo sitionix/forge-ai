@@ -29,15 +29,6 @@ const server=createServer(async(req,res)=>{
     }
     let body={};for await(const chunk of req) body.raw=(body.raw||'')+chunk;
     body=body.raw?JSON.parse(body.raw):{};
-    if(path===api+'/operator/session' && req.method==='POST') {
-      res.setHeader('Set-Cookie','fixture-operator=yes; HttpOnly; SameSite=Strict; Path=/fgaisox');send({csrfToken:'fixture-csrf',csrfHeader:'X-Forge-CSRF'});return;
-    }
-    if(!req.headers.cookie?.includes('fixture-operator=yes')) {send({code:'OPERATOR_UNAUTHORIZED'},401);return;}
-    if(req.method!=='GET' && req.headers['x-forge-csrf']!=='fixture-csrf') {send({code:'OPERATOR_FORBIDDEN'},403);return;}
-    if(path===api+'/operator/session') {
-      if(req.method==='DELETE') {res.setHeader('Set-Cookie','fixture-operator=; Max-Age=0; Path=/fgaisox');send(undefined,204);return;}
-      send({csrfToken:'fixture-csrf',csrfHeader:'X-Forge-CSRF'});return;
-    }
     if(path===api+'/infrastructure/agents/projects') {send([project]);return;}
     if(path===catalog) {
       if(req.method==='GET') {send(connections);return;}
@@ -73,16 +64,7 @@ try {
   const base=external||`http://127.0.0.1:${server.address().port}/fgaisox`;
   const url=base+'/operator/settings.html';
   await cdp('Page.enable');await cdp('Page.navigate',{url});
-  await until(`document.getElementById('mcpLogin') && (!document.getElementById('mcpLogin').hidden || !document.getElementById('mcpManagement').hidden)`);
-  if(await evaluate(`!document.getElementById('mcpLogin').hidden`)) {
-    const operator=process.env.FORGE_SETTINGS_OPERATOR_SECRET_FILE
-      ?(await readFile(process.env.FORGE_SETTINGS_OPERATOR_SECRET_FILE,'utf8')).trim()
-      :process.env.FORGE_SETTINGS_OPERATOR_SECRET||'synthetic-operator';
-    if(normalEmpty) assert(process.env.FORGE_SETTINGS_OPERATOR_SECRET_FILE,'Use the normal provisioned operator file');
-    await fill('mcpOperatorSecret',operator);
-    await evaluate(`document.getElementById('mcpLoginForm').requestSubmit()`);
-  }
-  await until(`!document.getElementById('mcpManagement').hidden && !document.getElementById('mcpNotice').textContent`);
+  await until(`document.getElementById('mcpManagement') && document.getElementById('mcpConnections').textContent.length>0 && document.getElementById('mcpNotice').textContent===''`);
   assert((await evaluate(`document.querySelector('.sidebar-settings').textContent`)).includes('Settings'));
   await cdp('Emulation.setDeviceMetricsOverride',{width:780,height:800,deviceScaleFactor:1,mobile:false});
   assert.equal(await evaluate(`document.querySelector('.shell > header').getBoundingClientRect().top >= document.querySelector('.operator-sidebar').getBoundingClientRect().bottom`),true,'Compact navigation must not cover Settings');
@@ -101,7 +83,7 @@ try {
     assert.equal(await evaluate(`document.documentElement.scrollWidth<=innerWidth`),true);
     assert.equal(await evaluate(`document.getElementById('mcpIntegrations').getBoundingClientRect().bottom<innerHeight`),true);
     assert.equal(await evaluate(`document.body.textContent.includes('MCP integrations are unavailable on this installation')`),false);
-    const result=await evaluate(`fetch(${JSON.stringify(catalog)},{credentials:'same-origin'}).then(async response=>({status:response.status,body:await response.json()}))`);
+    const result=await evaluate(`fetch(${JSON.stringify(catalog)},{credentials:'omit'}).then(async response=>({status:response.status,body:await response.json()}))`);
     assert.equal(result.status,200);assert.deepEqual(result.body,[]);
     console.log('NORMAL_SETTINGS_EMPTY_BROWSER_PASS');
   } else if(action==='disable' || action==='enable') {
@@ -160,8 +142,7 @@ try {
     console.log('SETTINGS_SAVED_ID '+id);
   }
   if(process.env.SMOKE_SCREENSHOT) {const shot=await cdp('Page.captureScreenshot',{format:'png'});await writeFile(process.env.SMOKE_SCREENSHOT,Buffer.from(shot.data,'base64'));}
-  await click('mcpLogout');await until(`!document.getElementById('mcpLogin').hidden`);
-  assert.equal(await evaluate(`document.getElementById('mcpBearer').value+document.getElementById('mcpOperatorSecret').value`),'');
+  assert.equal(await evaluate(`document.getElementById('mcpBearer').value`),'');
   console.log(external?'SETTINGS_BROWSER_ACTUAL_NEXUS_PASS':'SETTINGS_BROWSER_PASS: real Chrome + built Console; explicit management stub, no Agent execution proof');
 } finally {
   socket?.close();chrome.kill('SIGTERM');

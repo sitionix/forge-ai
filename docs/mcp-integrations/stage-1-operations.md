@@ -1,4 +1,4 @@
-# Stage 1 — operator prerequisites and runtime boundary
+# MCP storage prerequisites and runtime boundary
 
 MCP is part of normal Forge. On Ubuntu/systemd, `just start` provisions persistent
 protected material and the isolated runtime before restarting main Agent/Nexus.
@@ -15,7 +15,7 @@ the launcher becomes ready. Missing/unsafe helper, same UID, unavailable systemd
 probe denial failure, or unconfirmed cleanup fail startup with a generic error.
 
 `RuntimeBoundaryVerifier.verifyProtectedPaths(List<Path>)` is the Task 2b entry
-point for key/DB/operator/service credential files. It validates regular files,
+point for the encryption key/database files (and scoped Remote Access files when present). It validates regular files,
 owner-only mode, one hard link, non-writable trusted ancestors and no symlinks,
 then asks the real runtime UID to try read/write access. It never reads or returns
 credential contents. Startup without those paths proves the runtime/config boundary,
@@ -68,24 +68,12 @@ HOME/CODEX_HOME, PATH, LANG and noninteractive Git, drop capabilities, protect t
 system/cgroup filesystem and control /proc visibility, and stop their whole cgroup.
 The helper does not turn on Codex shell network access.
 
-Normal startup provisions three distinct protected Agent files:
-the AES key ring (`active=<id>` and `key.<id>=<base64-32-byte-key>` lines), the
-service bearer, and the database password. Nexus uses separate protected operator
-bootstrap and Agent service bearer files. Bearers contain at least 32 random bytes
-encoded as unpadded base64url. Configure file paths only; do not put credential
-values in environment variables, process arguments, URLs, or application YAML.
-The Nexus bootstrap and Agent service bearer values must differ.
-
-An operator sends the bootstrap secret in the JSON body of
-`POST /api/v1/operator/session` from the configured browser origin with its exact
-`Origin` and `Host` headers. Nexus returns a host-only `FG_SESSION` HttpOnly,
-SameSite Strict cookie and a `csrfToken`; the browser sends that cookie on later
-requests and `X-Forge-CSRF` plus exact `Origin` for mutations. `GET` on the same
-session route returns the current session-bound CSRF value; `DELETE` logs out and clears the cookie.
-Sessions expire on the server and restart invalidates them. HTTPS origins set the
-Secure cookie flag; plain HTTP is accepted only on a loopback origin. Nexus sends
-its separate service bearer to the configured Agent origin for typed REST and log
-streaming calls. Do not supply the operator bootstrap or browser cookie to Agent.
+Normal startup provisions the protected AES-GCM key ring and database password.
+Existing valid material is preserved without rotation. Nexus requires no MCP
+operator or Agent-service secret. Settings and management APIs work directly,
+without a Forge login, cookie, CSRF token or internal service bearer. External
+provider credentials remain write-only and encrypted. Configure protected file
+paths only; no key/database credential values in arguments, URLs, logs or YAML.
 
 MCP connection metadata is managed at Nexus
 `/api/v1/infrastructure/agents/integrations/mcp/connections` and Agent
@@ -102,11 +90,9 @@ For key rotation, put a new 32-byte AES key in the protected Agent key file as
 a restart is recommended to rerun startup verification after controlled
 provisioning, but is not required for key lookup. Verify protected-file mode and
 runtime read denial before rotation. Existing ciphertext remains under its old key until rotated.
-For each credential-bearing connection, an authenticated operator sends
-`POST /api/v1/infrastructure/agents/integrations/mcp/connections/{id}/reencrypt`
-with exact `Origin`/`Host` and the active mode's session/CSRF: `FG_SESSION` plus
-`X-Forge-CSRF` for MCP-only, or `FORGE_REMOTE_OPERATOR` plus `X-CSRF-TOKEN`
-in combined mode (see below). HTTP 204 confirms
+For each credential-bearing connection, send
+`POST /api/v1/infrastructure/agents/integrations/mcp/connections/{id}/reencrypt`.
+HTTP 204 confirms
 that single record was reencrypted to the active key; no plaintext is returned.
 Verify all retained rows have the new key ID through controlled database metadata
 inspection before removing the old key from the protected file and restarting.
@@ -119,10 +105,10 @@ MCP management or rotate protected installation material.
 
 ## Deliberate limitations
 
-Local Compose discovery, validation and streaming are unavailable in enabled mode,
+Local Compose discovery, validation and streaming are unavailable with the mandatory isolated launcher,
 rejected with a controlled ValidationException before Docker CLI parsing. Container
 ID operations and remote SSH Compose paths retain their existing behavior; their
-HTTP authentication belongs to Task 2b. The control process must not parse local
+Forge management authentication was removed by the normal-runtime amendment. The control process must not parse local
 runtime-controlled Compose YAML. Ordinary off-mode behavior remains unchanged.
 
 Dedicated HOME preserves future provider auth/history but does not migrate existing
@@ -172,40 +158,17 @@ python3 -m unittest discover -s docs/mcp-integrations/probes/stage1-boundary/tes
 mvn -q -pl services/forge-agent/infrastructure/local,services/forge-agent/infrastructure/git,services/forge-agent/infrastructure/codex -am test
 ```
 
-These tests cover implementation contracts and off-mode regression. Mocked systemd
+These tests cover implementation contracts and runtime regression. Mocked systemd
 assertions are never actual isolation evidence. The final Task 2a ledger records
 exact completed commands, counts, source hashes, privileged result and remaining
 limits before Stage 1 acceptance can be considered.
 
-## Combined Remote Access and MCP management
+## Current MCP management contract
 
-With both features enabled, configure the existing Remote Access operator secret
-file and explicit loopback origin once (`forge.remote-access.operator-secret-file`,
-`forge.remote-access.operator-origin`). MCP bootstrap/origin settings are optional;
-if supplied they must resolve to that same operator file and equivalent origin.
-`forge.mcp.session-ttl` is inactive in combined mode: the existing Remote Access
-15-minute absolute session lifetime applies.
-
-Use only `POST /api/v1/infrastructure/agents/remote-access/operator/login` with
-`{"secret":"<bootstrap>"}`. Its `FORGE_REMOTE_OPERATOR` HttpOnly/SameSite Strict cookie
-covers the Nexus context root (Secure for HTTPS). The returned `csrfToken` goes in
-`X-CSRF-TOKEN` for both RA and MCP mutations, together with the exact Origin.
-The existing RA `/operator/session` and `/operator/logout` endpoints manage this
-single session. `/api/v1/operator/session` does not create a combined-mode session.
-MCP-only retains `FG_SESSION`, `X-Forge-CSRF`, and its existing login endpoint,
-including HTTPS non-loopback origins; RA-only retains its scoped cookie.
-
-The existing two service files remain distinct: MCP uses
-`forge.mcp.agent-service-credential-file` on Nexus and
-`forge.mcp.service-credential-file` on Agent; RA uses
-`forge.remote-access.service-secret-file` on Nexus and
-`forge.agent.remote-access.service-secret-file` on Agent. Operator bootstrap and
-both service credential values must all differ. Combined Agent validates the two
-service audiences independently and routes RA requests only to the RA guard.
-Other control routes remain protected by the MCP service guard. Both combined
-listeners retain the RA loopback bind and no forwarded-header trust requirements.
-
-Agent startup passes the active RA service file to the runtime protected-path
-verifier alongside the three MCP files. This does not prove runtime denial of
-Nexus-side files: deployment verification of all active Nexus secrets, process
-and descriptor aliases remains **NOT_VERIFIED** without an actual runtime probe.
+The user's normal-runtime amendment removes Forge operator login/session and the
+internal Nexus → Agent bearer. Settings and typed MCP management APIs work directly;
+there is no MCP operator/service credential file or browser login prerequisite.
+Provider credentials remain encrypted, and runtime grants/policy remain enforced.
+Remote Access retains its own scoped existing login/service credentials and does
+not control MCP availability. Historical Stage 1 auth assumptions are obsolete;
+see [normal runtime evidence](normal-runtime-evidence.md).

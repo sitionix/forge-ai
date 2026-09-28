@@ -62,7 +62,6 @@ export class McpConnectionForm {
   finish(operation) { if(this.current(operation)) {this.pending=false;this.controls();} }
   error(error,operation,message) {
     if(!this.current(operation) || error?.name==='AbortError') return;
-    if(['OPERATOR_UNAUTHORIZED','OPERATOR_FORBIDDEN'].includes(error?.code)) {this.close();this.onError(error);return;}
     this.element('mcpFormError').textContent=message||error?.message||'Operation failed. Refresh confirmed state before retrying.';
     this.element('mcpFormError').hidden=false;
     if(this.saved) this.element('mcpFormNotice').textContent='Connection is saved. A failed test does not delete it or enable it.';

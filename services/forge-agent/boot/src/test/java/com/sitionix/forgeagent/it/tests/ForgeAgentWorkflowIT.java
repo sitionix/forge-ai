@@ -53,7 +53,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateWorkflow.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -61,7 +61,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_WORKFLOWS).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_WORKFLOWS)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListWorkflows.json", "id", "createdAt", "updatedAt")
@@ -80,7 +80,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.seedProjectAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_WORKFLOW_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_WORKFLOW_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateWorkflowLowercase.json")
                 .expectStatus(HttpStatus.CONFLICT)
@@ -93,7 +93,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
@@ -101,7 +101,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowGraph.json", "updatedAt")
@@ -129,14 +129,14 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestWorkflowWithPorts.json")
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowWithPorts.json", "updatedAt")
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowWithPorts.json", "updatedAt")
@@ -153,14 +153,14 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 );
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestWorkflowWithPortsUpdated.json")
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowWithPortsUpdated.json", "updatedAt")
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowWithPortsUpdated.json", "updatedAt")
@@ -177,7 +177,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 );
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestWorkflowNoNodes.json")
                 .expectStatus(HttpStatus.OK)
@@ -185,13 +185,13 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         assertThat(this.forgeIt.postgresql().get(WorkflowNodePortEntity.class).getAll()).isEmpty();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestWorkflowWithPorts.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(DELETE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(DELETE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.NO_CONTENT)
                 .assertAndCreate();
@@ -203,13 +203,13 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestMoveWorkflowNodes.json")
                 .expectStatus(HttpStatus.OK)
@@ -217,7 +217,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseMovedWorkflowGraph.json", "updatedAt")
@@ -238,13 +238,13 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.forgeIt.postgresql().create().to(WORKFLOW.withEntity(secondWorkflow)).build();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
                 .withRequest("requestSecondWorkflowSameNodeId.json")
                 .expectStatus(HttpStatus.OK)
@@ -252,13 +252,13 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowGraph.json", "updatedAt")
                 .assertAndCreate();
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseSecondWorkflowSameNodeId.json", "updatedAt")
@@ -291,21 +291,21 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_AGENT).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_AGENT)
                 .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
                 .withRequest("requestUpdateAgent.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowGraph.json", "updatedAt")
@@ -342,7 +342,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)
@@ -351,7 +351,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.expectWorkflowError("requestSelfNodeConnection.json", HttpStatus.BAD_REQUEST, "responseSelfNodeConnectionError.json");
 
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseWorkflowGraph.json", "updatedAt")
@@ -363,7 +363,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestGuardedSelfNodeConnection.json")
                 .expectStatus(HttpStatus.OK)
@@ -381,7 +381,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
     void givenGuardedSelfLoop_whenLastExternalDependencyIsRemoved_thenUpdateIsRejectedAndGraphRemainsGuarded() {
         this.seedProjectAgentsAndWorkflow();
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestGuardedSelfNodeConnection.json")
                 .expectStatus(HttpStatus.OK)
@@ -401,14 +401,14 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 .to(WORKFLOW.withEntity(this.workflowEntity(secondWorkflowId, PROJECT_ALPHA_ID, "Second Workflow")))
                 .build();
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestWorkflowWithPorts.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW_ERROR)
                 .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
                 .withRequest("requestCrossWorkflowPortId.json")
                 .expectStatus(HttpStatus.CONFLICT)
@@ -450,14 +450,14 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 .to(WORKFLOW.withEntity(this.workflowEntity(secondWorkflowId, PROJECT_ALPHA_ID, "Second Workflow")))
                 .build();
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestWorkflowAToBConnection.json")
                 .expectStatus(HttpStatus.OK)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW_ERROR)
                 .withPathParameters(PathParams.create().add("workflowId", secondWorkflowId))
                 .withRequest("requestCrossWorkflowConnectionId.json")
                 .expectStatus(HttpStatus.CONFLICT)
@@ -489,7 +489,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
     @Test
     void givenMissingWorkflow_whenGetWorkflow_thenNotFoundIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW_ERROR)
                 .withPathParameters(PathParams.create().add("workflowId", UNKNOWN_WORKFLOW_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .expectResponse("responseWorkflowNotFoundError.json")
@@ -503,7 +503,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.runConcurrently(
                 () -> {
                     this.forgeIt.mockMvc()
-                            .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                            .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                             .withRequest("requestWorkflowBToAConnection.json")
                             .expectStatus(HttpStatus.OK)
@@ -512,7 +512,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 },
                 () -> {
                     this.forgeIt.mockMvc()
-                            .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                            .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                             .withRequest("requestWorkflowAToBConnection.json")
                             .expectStatus(HttpStatus.OK)
@@ -551,7 +551,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
         this.runConcurrently(
                 () -> {
                     this.forgeIt.mockMvc()
-                            .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                            .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                             .withRequest("requestMoveWorkflowNodes.json")
                             .expectStatus(HttpStatus.OK)
@@ -560,7 +560,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
                 },
                 () -> {
                     this.forgeIt.mockMvc()
-                            .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                            .ping(UPDATE_WORKFLOW)
                             .withPathParameters(PathParams.create().add("workflowId", secondWorkflow.getId()))
                             .withRequest("requestBetaWorkflowSingleNode.json")
                             .expectStatus(HttpStatus.OK)
@@ -602,7 +602,7 @@ class ForgeAgentWorkflowIT extends com.sitionix.forgeagent.it.infra.AgentManagem
 
     private void expectWorkflowError(final String requestFixture, final HttpStatus status, final String responseFixture) {
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW_ERROR)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest(requestFixture)
                 .expectStatus(status)

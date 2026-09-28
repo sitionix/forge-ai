@@ -59,7 +59,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -67,7 +67,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportSecondProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -81,7 +81,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
                 );
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_REPOSITORIES).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_REPOSITORIES)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjectRepositories.json", "id", "createdAt")
@@ -93,7 +93,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportBlankProjectRepository.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -107,7 +107,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportInvalidProjectRepository.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -122,7 +122,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -131,7 +131,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(CLONE_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(CLONE_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -140,7 +140,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_REPOSITORIES).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_REPOSITORIES)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjectRepositoriesCloned.json", "id", "createdAt")
@@ -152,7 +152,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -161,7 +161,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(CLONE_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(CLONE_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -169,7 +169,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(PULL_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(PULL_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -190,7 +190,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -199,7 +199,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(CLONE_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(CLONE_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -207,7 +207,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(REFRESH_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(REFRESH_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -228,7 +228,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -237,7 +237,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(REFRESH_PROJECT_REPOSITORY_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(REFRESH_PROJECT_REPOSITORY_ERROR)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -251,7 +251,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -260,7 +260,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(PULL_PROJECT_REPOSITORY_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(PULL_PROJECT_REPOSITORY_ERROR)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -274,7 +274,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportInvalidCheckoutProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -283,7 +283,7 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.createInvalidManagedCheckout("invalid-checkout");
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_REPOSITORIES).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_REPOSITORIES)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjectRepositoriesInvalidCheckout.json", "id", "createdAt")
@@ -295,14 +295,14 @@ class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.Age
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
+                .ping(IMPORT_PROJECT_REPOSITORY)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(DELETE_PROJECT).header("Authorization", SERVICE_BEARER)
+                .ping(DELETE_PROJECT)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.NO_CONTENT)
                 .assertAndCreate();

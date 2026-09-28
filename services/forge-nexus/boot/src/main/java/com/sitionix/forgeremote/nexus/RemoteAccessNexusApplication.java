@@ -1,14 +1,12 @@
 package com.sitionix.forgeremote.nexus;
 
 import com.sitionix.forgeai.RemoteAccessOperatorConfiguration;
-import com.sitionix.forgeai.api.remoteaccess.CombinedOperatorSessionController;
 import com.sitionix.forgeai.infrastructure.agentclient.ForgeAgentClientProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.FilterType;
 import org.springframework.context.annotation.Import;
 
 /** Composition root for the existing dedicated Remote Access management process. */
@@ -21,9 +19,7 @@ import org.springframework.context.annotation.Import;
 @ComponentScan(basePackages = {
         "com.sitionix.forgeai.api.remoteaccess",
         "com.sitionix.forgeai.application.remoteaccess",
-        "com.sitionix.forgeai.infrastructure.agentclient.remoteaccess"},
-        excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE,
-                classes = CombinedOperatorSessionController.class))
+        "com.sitionix.forgeai.infrastructure.agentclient.remoteaccess"})
 @Import(RemoteAccessOperatorConfiguration.class)
 public class RemoteAccessNexusApplication {
     public static void main(String[] args) {

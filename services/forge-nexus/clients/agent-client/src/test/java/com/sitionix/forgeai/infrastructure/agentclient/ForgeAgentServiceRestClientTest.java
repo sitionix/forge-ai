@@ -22,7 +22,7 @@ class ForgeAgentServiceRestClientTest {
   @TempDir Path directory;
 
   @Test
-  void typedRequestOverwritesCallerAuthorizationWithServiceCredential() throws Exception {
+  void typedRequestDoesNotRequireOrSendServiceAuthorization() throws Exception {
     final AtomicReference<String> authorization = new AtomicReference<>();
     final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     server.createContext("/api/v1/projects", exchange -> {
@@ -35,26 +35,16 @@ class ForgeAgentServiceRestClientTest {
     });
     server.start();
     try {
-      final byte[] raw = new byte[32];
-      Arrays.fill(raw, (byte) 8);
-      final Path file = directory.resolve("service");
-      Files.writeString(file, Base64.getUrlEncoder().withoutPadding().encodeToString(raw));
-      Files.setPosixFilePermissions(file,
-          Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
       final ForgeAgentClientProperties properties = new ForgeAgentClientProperties();
       properties.setBaseUrl(URI.create("http://127.0.0.1:" + server.getAddress().getPort()));
       properties.setConnectTimeout(java.time.Duration.ofSeconds(2));
       properties.setReadTimeout(java.time.Duration.ofSeconds(2));
-      final AgentServiceCredential credential = new AgentServiceCredential(file, properties.getBaseUrl());
-      final DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
-      factory.registerSingleton("agentServiceCredential", credential);
       final ForgeAgentHttpClient client = new ForgeAgentHttpClientConfiguration()
           .forgeAgentHttpClient(properties,
-              RestClient.builder().defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer caller"),
-              credential);
+              RestClient.builder());
 
       assertThat(client.listProjects()).isEmpty();
-      assertThat(authorization.get()).isEqualTo(credential.authorization());
+      assertThat(authorization.get()).isNull();
     } finally {
       server.stop(0);
     }

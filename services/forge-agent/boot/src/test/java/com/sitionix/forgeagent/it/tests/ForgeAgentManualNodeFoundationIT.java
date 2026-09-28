@@ -48,7 +48,7 @@ class ForgeAgentManualNodeFoundationIT extends com.sitionix.forgeagent.it.infra.
                 template.taskInputPortId(), template.taskOutputPortId()));
 
         assertThat(workflows.getWorkflow(template.id()).nodes().getFirst().nodeType()).isEqualTo(NodeType.AGENT);
-        forgeIt.mockMvc().ping(GET_WORKFLOW_RUN).header("Authorization", SERVICE_BEARER)
+        forgeIt.mockMvc().ping(GET_WORKFLOW_RUN)
                 .withPathParameters(PathParams.create().add("runId", runId))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$.nodeRuns[0].nodeType").value("MANUAL"))

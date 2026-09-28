@@ -14,10 +14,8 @@ export class SettingsPage {
   element(id) { return this.document.getElementById(id); }
   listen(id,event,callback) { this.element(id)?.addEventListener(event,callback,{signal:this.listeners.signal}); }
   mount() {
-    this.listen('mcpLoginForm','submit',event=>{event.preventDefault();void this.login();});
     this.listen('mcpRefresh','click',()=>void this.refresh());
     this.listen('mcpRetry','click',()=>void this.start());
-    this.listen('mcpLogout','click',()=>void this.logout());
     this.listen('mcpAdd','click',()=>void this.add());
     this.listen('mcpEdit','click',()=>{if(this.selected && !this.pending) this.form.openEdit(this.selected.connection,this.selected.tools,this.selected.projects);});
     this.listen('mcpTest','click',()=>void this.mutate('test'));
@@ -31,39 +29,13 @@ export class SettingsPage {
   clearError() { this.element('mcpError').hidden=true;this.element('mcpError').textContent='';this.element('mcpRetry').hidden=true; }
   resetView() {
     this.selection+=1;this.selected=null;this.element('mcpConnections').replaceChildren();this.element('mcpDetails').replaceChildren();this.element('mcpDetailsPanel').hidden=true;
-    this.element('mcpOperatorSecret').value='';
   }
   error(error) {
     if(this.disposed || error?.name==='AbortError') return;
-    if(['OPERATOR_UNAUTHORIZED','OPERATOR_FORBIDDEN'].includes(error?.code)) {
-      this.api.clear();this.form.close();this.requests.abort('action');this.requests.abort('list');this.requests.abort('details');this.resetView();
-      this.element('mcpManagement').hidden=true;this.element('mcpLogin').hidden=false;
-    }
     this.element('mcpError').textContent=error?.status===404?'MCP integrations are unavailable on this installation.':error?.message||'MCP operation failed. Refresh confirmed state.';
     this.element('mcpError').hidden=false;this.element('mcpRetry').hidden=false;this.notice('');
   }
-  async start() {
-    if(this.disposed) return;this.clearError();this.notice('Checking operator session…');
-    try {
-      const result=await this.requests.run('session',({signal})=>this.api.operatorSession(signal));
-      if(!result.applied) return;
-      this.element('mcpLogin').hidden=true;this.element('mcpManagement').hidden=false;await this.refresh();
-    } catch(error) {
-      this.error(error);
-      if(error?.code==='OPERATOR_UNAUTHORIZED' && !this.disposed) {
-        this.clearError();this.notice('Sign in to manage integrations.');
-      }
-    }
-  }
-  async login() {
-    if(this.pending || this.disposed) return;
-    const input=this.element('mcpOperatorSecret');const secret=input.value;input.value='';this.pending=true;this.clearError();
-    try {
-      const result=await this.requests.run('session',({signal})=>this.api.login(secret,signal));
-      if(!result.applied) return;
-      this.element('mcpLogin').hidden=true;this.element('mcpManagement').hidden=false;await this.refresh();
-    } catch(error) { this.error(error); } finally { this.pending=false; }
-  }
+  async start() { return this.refresh(); }
   async refresh(resetDetails=true) {
     if(this.disposed) return;this.clearError();this.notice('Loading connections…');
     if(resetDetails) {this.selection+=1;this.requests.abort('details');this.selected=null;this.element('mcpDetailsPanel').hidden=true;}
@@ -110,21 +82,14 @@ export class SettingsPage {
       if(!this.disposed) this.notice(action==='remove'?'Connection removed.':action==='test'?'Check succeeded. New or changed tools require explicit approval.':'Enabled state updated.');
     } catch(error) {
       if(this.disposed) return;
-      if(!['OPERATOR_UNAUTHORIZED','OPERATOR_FORBIDDEN'].includes(error?.code)) await this.refresh(this.selection===selection);
+      await this.refresh(this.selection===selection);
       this.error(error);
     } finally {
       this.pending=false;
       if(!this.disposed) for(const id of ['mcpTest','mcpToggle','mcpRemove','mcpEdit','mcpAdd']) this.element(id).disabled=false;
     }
   }
-  async logout() {
-    if(this.pending || this.disposed) return;this.pending=true;
-    this.form.close();this.requests.abort('action');this.requests.abort('list');this.requests.abort('details');this.resetView();this.element('mcpManagement').hidden=true;
-    try { await this.requests.run('session',({signal})=>this.api.logout(signal)); }
-    catch(error) { this.error(error); }
-    finally { if(!this.disposed) {this.element('mcpLogin').hidden=false;this.pending=false;} }
-  }
   dispose() {
-    if(this.disposed) return;this.disposed=true;this.form.dispose();this.requests.dispose();this.listeners.abort();this.api.clear();this.resetView();this.notice('');
+    if(this.disposed) return;this.disposed=true;this.form.dispose();this.requests.dispose();this.listeners.abort();this.resetView();this.notice('');
   }
 }

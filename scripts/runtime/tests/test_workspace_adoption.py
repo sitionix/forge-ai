@@ -1,6 +1,7 @@
 """Disposable managed workspace migration; not privileged runtime acceptance."""
 import importlib.util
 import pathlib
+import shutil
 import tempfile
 import unittest
 
@@ -48,6 +49,37 @@ class WorkspaceAdoptionTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.module.adopt(self.source, self.destination)
         self.assertFalse((self.destination / 'project-a/repo').exists())
+
+    def test_clone_attempt_parent_stays_protected_after_adoption_and_repeat(self):
+        (self.project / '.forge-clone-attempts/staging').mkdir(parents=True)
+        self.module.adopt(self.source, self.destination)
+        parent = self.destination / 'project-a/.forge-clone-attempts'
+        self.assertEqual(parent.stat().st_mode & 0o7777, 0o2750)
+        self.assertEqual((parent / 'staging').stat().st_mode & 0o7777, 0o2770)
+        # An installation made by the old adoption code is reconciled without
+        # rewriting its repositories or replaying the source copy.
+        parent.chmod(0o2770)
+        self.module.adopt(self.source, self.destination)
+        self.assertEqual(parent.stat().st_mode & 0o7777, 0o2750)
+        self.assertEqual((self.destination / 'project-a/repo/modified').read_text(), 'local edits')
+
+    def test_reserved_marker_conflicts_do_not_change_or_publish_local_files(self):
+        for symlink in (False, True):
+            with self.subTest(symlink=symlink):
+                marker = self.project / '.forge-adopted-from'
+                if symlink:
+                    marker.symlink_to('repo/modified')
+                else:
+                    marker.write_text('existing local metadata')
+                try:
+                    with self.assertRaisesRegex(RuntimeError, 'Reserved adoption metadata'):
+                        self.module.adopt(self.source, self.destination)
+                    self.assertEqual((self.project / 'repo/modified').read_text(), 'local edits')
+                    self.assertFalse((self.destination / 'project-a').exists())
+                finally:
+                    marker.unlink()
+                    if (self.destination / 'project-a').exists():
+                        shutil.rmtree(self.destination / 'project-a')
 
     def test_symlinks_are_not_followed_and_partial_copy_is_not_published(self):
         (self.project / 'repo/escape').symlink_to('/etc')

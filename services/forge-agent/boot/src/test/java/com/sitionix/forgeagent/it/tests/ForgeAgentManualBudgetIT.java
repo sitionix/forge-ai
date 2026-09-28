@@ -97,7 +97,7 @@ class ForgeAgentManualBudgetIT extends com.sitionix.forgeagent.it.infra.AgentMan
 
     private int select(UUID runId, UUID nodeRunId, UUID portId) throws Exception {
         return mvc.perform(post("/api/v1/workflow-runs/{run}/node-runs/{node}/manual-selection", runId, nodeRunId)
-                .header("Authorization", SERVICE_BEARER).contentType(MediaType.APPLICATION_JSON).content("{\"outputPortId\":\"" + portId + "\"}"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"outputPortId\":\"" + portId + "\"}"))
                 .andReturn().getResponse().getStatus();
     }
 

@@ -11,12 +11,8 @@
   <div id="mcpError" class="error-box" role="alert" hidden></div>
   <button id="mcpRetry" class="button secondary" type="button" hidden>Refresh confirmed state</button>
   <p id="mcpNotice" role="status" aria-live="polite"></p>
-  <section id="mcpLogin" hidden>
-    <h2>Operator sign in</h2>
-    <form id="mcpLoginForm" autocomplete="off"><label for="mcpOperatorSecret">Operator credential</label><input id="mcpOperatorSecret" type="password" autocomplete="off" required><button class="button" type="submit">Sign in</button></form>
-  </section>
-  <section id="mcpManagement" hidden>
-    <div class="mcp-actions"><button id="mcpAdd" class="button" type="button">Add integration</button><button id="mcpRefresh" class="button secondary" type="button">Refresh</button><button id="mcpLogout" class="button secondary" type="button">Sign out</button></div>
+  <section id="mcpManagement">
+    <div class="mcp-actions"><button id="mcpAdd" class="button" type="button">Add integration</button><button id="mcpRefresh" class="button secondary" type="button">Refresh</button></div>
     <div id="mcpConnections" aria-live="polite"></div>
     <section id="mcpDetailsPanel" class="mcp-details" hidden><h2>Connection details</h2><div id="mcpDetails"></div><div class="mcp-actions"><button id="mcpEdit" class="button" type="button">Edit connection and access</button><button id="mcpTest" class="button secondary" type="button">Test connection</button><button id="mcpToggle" class="button secondary" type="button">Enable</button><button id="mcpRemove" class="button secondary" type="button">Remove</button></div></section>
   </section>

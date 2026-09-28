@@ -6112,7 +6112,6 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .mcp-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .mcp-card { padding: 16px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 #mcpDetails { overflow-wrap: anywhere; }
-#mcpLoginForm { display: grid; gap: 12px; max-width: 460px; }
 
 #mcpConnectionDialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto; }
 #mcpConnectionForm, #mcpAccess { display: grid; gap: 12px; }

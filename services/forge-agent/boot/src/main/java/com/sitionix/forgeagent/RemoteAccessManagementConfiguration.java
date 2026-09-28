@@ -34,11 +34,7 @@ public class RemoteAccessManagementConfiguration {
         return new RemoteAccessControlService(access, invitations, management, setup);
     }
     @Bean org.springframework.boot.web.servlet.FilterRegistrationBean<RemoteAccessServiceFilter> remoteAccessServiceFilter(
-            @Value("${forge.agent.remote-access.service-secret-file}") Path path,
-            org.springframework.beans.factory.ObjectProvider<com.sitionix.forgeagent.api.security.ProtectedCredentialFile> credentials) {
-        var general = credentials.getIfAvailable();
-        if (general != null && general.matchesBearer("Bearer "+RemoteAccessServiceFilter.readCredential(path)))
-            throw new IllegalStateException("Service credentials must be distinct");
+            @Value("${forge.agent.remote-access.service-secret-file}") Path path) {
         var registration=new org.springframework.boot.web.servlet.FilterRegistrationBean<>(new RemoteAccessServiceFilter(path));
         registration.addUrlPatterns("/*");registration.setDispatcherTypes(java.util.EnumSet.allOf(jakarta.servlet.DispatcherType.class));
         registration.setAsyncSupported(true);registration.setOrder(Integer.MIN_VALUE+1);

@@ -1,5 +1,10 @@
 # MCP Stage 5 — Settings / Custom MCP evidence
 
+> Historical evidence: the 2026-09-28 normal-runtime amendment removes Forge
+> operator login/session and internal Nexus → Agent bearer. Earlier auth assertions
+> below describe the previous implementation, not current operating prerequisites.
+> See [current normal-runtime evidence](normal-runtime-evidence.md).
+
 Date: 2026-09-28. Branch: `feature/SITIONIX-152`, based on merged Stage 4 main `0ecef20364124a6f27889de2b48e1b822b77106e`.
 
 Scope: approved [Stage 5 design](../superpowers/specs/2026-09-28-mcp-stage-5-design.md) and [inline plan](../superpowers/plans/2026-09-28-mcp-stage-5.md). No Stage 6, catalog cards, OAuth, new frontend framework, transport stack, schema, production setup or sandbox permission change.

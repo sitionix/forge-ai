@@ -128,7 +128,6 @@ class ForgeAgentManualRestartIT extends com.sitionix.forgeagent.it.infra.AgentMa
                         org.mockito.Mockito.mock(com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryVerifier.class))))
                 .properties(java.util.Map.of(
                         "forge.mcp.key-file", ROOT.resolve("key").toString(),
-                        "forge.mcp.service-credential-file", ROOT.resolve("service").toString(),
                         "forge.mcp.database-credential-file", ROOT.resolve("restart-database").toString(),
                         "forge.agent.workspace-root", MANAGED_WORKSPACE.toString()))
                 .run(
@@ -145,7 +144,7 @@ class ForgeAgentManualRestartIT extends com.sitionix.forgeagent.it.infra.AgentMa
         URI uri = URI.create("http://localhost:" + context.getWebServer().getPort()
                 + "/api/v1/workflow-runs/" + run + "/node-runs/" + invocation + "/manual-selection");
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(15))
-                .header("Authorization", SERVICE_BEARER).header("Content-Type", "application/json")
+                .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString("{\"outputPortId\":\"" + port + "\"}")).build();
         try (HttpClient client = HttpClient.newHttpClient()) {
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());

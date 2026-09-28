@@ -44,7 +44,7 @@ class ForgeAgentWorkflowRunIT extends com.sitionix.forgeagent.it.infra.AgentMana
         this.updateWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_WORKFLOW_RUN).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_WORKFLOW_RUN)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestCreateWorkflowRun.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -83,7 +83,7 @@ class ForgeAgentWorkflowRunIT extends com.sitionix.forgeagent.it.infra.AgentMana
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_WORKFLOW_RUNS).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_WORKFLOW_RUNS)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$", hasSize(2)))
@@ -113,7 +113,7 @@ class ForgeAgentWorkflowRunIT extends com.sitionix.forgeagent.it.infra.AgentMana
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW_RUN).header("Authorization", SERVICE_BEARER)
+                .ping(GET_WORKFLOW_RUN)
                 .withPathParameters(PathParams.create().add("runId", runId))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$.id").value(runId.toString()))
@@ -154,7 +154,7 @@ class ForgeAgentWorkflowRunIT extends com.sitionix.forgeagent.it.infra.AgentMana
 
     private void updateWorkflow() {
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)

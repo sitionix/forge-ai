@@ -19,7 +19,7 @@ class ForgeAgentProjectIT extends com.sitionix.forgeagent.it.infra.AgentManageme
 
     @Test
     void mcpRoutesExistWithoutGlobalActivationSetting() {
-        forgeIt.mockMvc().ping(com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_MCP_CONNECTIONS).header("Authorization", SERVICE_BEARER)
+        forgeIt.mockMvc().ping(com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_MCP_CONNECTIONS)
                 .expectStatus(HttpStatus.OK).assertAndCreate();
     }
 
@@ -37,7 +37,7 @@ class ForgeAgentProjectIT extends com.sitionix.forgeagent.it.infra.AgentManageme
         assertThat(this.environment.getProperty("spring.flyway.enabled", Boolean.class)).isTrue();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_PROJECT)
                 .withRequest("requestCreateProject.json")
                 .expectStatus(HttpStatus.CREATED)
                 .expectResponse("responseCreateProject.json", "id", "createdAt", "updatedAt")
@@ -60,7 +60,7 @@ class ForgeAgentProjectIT extends com.sitionix.forgeagent.it.infra.AgentManageme
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECTS).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECTS)
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjects.json")
                 .assertAndCreate();
@@ -73,13 +73,13 @@ class ForgeAgentProjectIT extends com.sitionix.forgeagent.it.infra.AgentManageme
     @Test
     void givenDuplicateNormalizedProjectName_whenCreateProject_thenConflictIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_PROJECT)
                 .withRequest("requestCreateProject.json")
                 .expectStatus(HttpStatus.CREATED)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_PROJECT_ERROR)
                 .withRequest("requestCreateProjectLowercase.json")
                 .expectStatus(HttpStatus.CONFLICT)
                 .expectResponse("responseDuplicateProjectError.json")

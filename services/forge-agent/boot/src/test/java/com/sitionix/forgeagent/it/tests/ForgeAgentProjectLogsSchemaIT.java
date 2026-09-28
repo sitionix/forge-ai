@@ -52,7 +52,7 @@ class ForgeAgentProjectLogsSchemaIT extends com.sitionix.forgeagent.it.infra.Age
 
     this.forgeIt
         .mockMvc()
-        .ping(DELETE_PROJECT).header("Authorization", SERVICE_BEARER)
+        .ping(DELETE_PROJECT)
         .withPathParameters(PathParams.create().add("projectId", PROJECT_ID))
         .expectStatus(HttpStatus.NO_CONTENT)
         .assertAndCreate();

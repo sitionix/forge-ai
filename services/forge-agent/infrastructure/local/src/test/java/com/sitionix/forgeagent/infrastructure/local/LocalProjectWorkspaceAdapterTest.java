@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -33,6 +34,33 @@ class LocalProjectWorkspaceAdapterTest {
         Files.createDirectory(this.forgeRoot.resolve("forge-projects"));
         Files.setAttribute(this.forgeRoot.resolve("forge-projects"), "unix:mode", 02750);
         this.adapter = new LocalProjectWorkspaceAdapter(new ForgeRootResolver(this.forgeRoot.resolve("forge-projects")));
+    }
+
+    @Test
+    void adoptedProjectCanPrepareAndFinalizeItsNextClone() throws Exception {
+        final Path source = this.forgeRoot.resolve("old-projects");
+        final Path project = source.resolve(PROJECT_ID.toString());
+        Files.createDirectories(project.resolve(".forge-clone-attempts"));
+        Files.createDirectories(project.resolve("existing/.git"));
+        Files.writeString(project.resolve("existing/local-change"), "preserved edits");
+        final Path script = Path.of(System.getProperty("basedir"))
+                .resolve("../../../../scripts/runtime/prepare_workspaces.py").normalize();
+        final Process adoption = new ProcessBuilder("/usr/bin/python3", "-I", script.toString(),
+                source.toString(), this.forgeRoot.resolve("forge-projects").toString()).start();
+        try {
+            assertThat(adoption.waitFor(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(adoption.exitValue()).isZero();
+        } finally {
+            adoption.destroyForcibly();
+        }
+        final var attempt = this.adapter.prepareCloneAttempt(PROJECT_ID,
+                new ProjectRepositoryWorkspaceReference(REPOSITORY_A_ID, "next-repository"));
+        Files.writeString(attempt.stagingPath().resolve("cloned"), "new checkout");
+        this.adapter.finalizeCloneAttempt(attempt);
+        assertThat(Files.readString(attempt.finalPath().resolve("cloned"))).isEqualTo("new checkout");
+        assertThat(Files.readString(this.forgeRoot.resolve("forge-projects")
+                .resolve(PROJECT_ID.toString()).resolve("existing/local-change"))).isEqualTo("preserved edits");
+        assertThat(Files.readString(project.resolve("existing/local-change"))).isEqualTo("preserved edits");
     }
 
     @Test

@@ -38,7 +38,7 @@ class ForgeAgentProjectServiceIT extends com.sitionix.forgeagent.it.infra.AgentM
                 .to(PROJECT_SERVICE.withJson("logs_service.json"))
                 .build();
 
-        this.forgeIt.mockMvc().ping(CREATE_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(CREATE_PROJECT_SERVICE)
                 .withPathParameters(project(PROJECT_ID))
                 .withRequest("requestCreateProjectService.json")
                 .expectStatus(HttpStatus.CREATED).assertAndCreate();
@@ -46,32 +46,32 @@ class ForgeAgentProjectServiceIT extends com.sitionix.forgeagent.it.infra.AgentM
                 .getAll().stream().filter(service -> !SEEDED_SERVICE_ID.equals(service.getId()))
                 .findFirst().orElseThrow();
 
-        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE)
                 .withPathParameters(service(PROJECT_ID, created.getId()))
                 .expectStatus(HttpStatus.OK).assertAndCreate();
-        this.forgeIt.mockMvc().ping(LIST_PROJECT_SERVICES).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(LIST_PROJECT_SERVICES)
                 .withPathParameters(project(PROJECT_ID)).expectStatus(HttpStatus.OK).assertAndCreate();
-        this.forgeIt.mockMvc().ping(UPDATE_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(UPDATE_PROJECT_SERVICE)
                 .withPathParameters(service(PROJECT_ID, created.getId()))
                 .withRequest("requestUpdateProjectService.json")
                 .expectStatus(HttpStatus.OK).assertAndCreate();
-        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE_RUNTIME).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE_RUNTIME)
                 .withPathParameters(service(PROJECT_ID, created.getId()))
                 .expectStatus(HttpStatus.OK).assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE_ERROR).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE_ERROR)
                 .withPathParameters(service(OTHER_PROJECT_ID, created.getId()))
                 .expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(CREATE_LOG_SOURCE).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(CREATE_LOG_SOURCE)
                 .withPathParameters(project(PROJECT_ID))
                 .withRequest("requestCreateServiceLogSource.json")
                 .expectStatus(HttpStatus.CREATED).assertAndCreate();
-        this.forgeIt.mockMvc().ping(LIST_SERVICE_LOG_SOURCES).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(LIST_SERVICE_LOG_SOURCES)
                 .withPathParameters(service(PROJECT_ID, SEEDED_SERVICE_ID))
                 .expectStatus(HttpStatus.OK).assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_SERVICE)
                 .withPathParameters(service(PROJECT_ID, SEEDED_SERVICE_ID))
                 .expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
         assertThat(this.forgeIt.postgresql().get(LogSourceEntity.class).getAll())
@@ -87,7 +87,7 @@ class ForgeAgentProjectServiceIT extends com.sitionix.forgeagent.it.infra.AgentM
                 .to(LOG_SOURCE.withJson("logs_source_service_app.json"))
                 .build();
 
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_SERVICE)
                 .withPathParameters(service(PROJECT_ID, SEEDED_SERVICE_ID))
                 .expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
 
@@ -99,12 +99,12 @@ class ForgeAgentProjectServiceIT extends com.sitionix.forgeagent.it.infra.AgentM
                     assertThat(source.getDockerContainer()).isEqualTo("app");
                 });
 
-        this.mockMvc.perform(get("/api/v1/projects/{projectId}/log-sources", PROJECT_ID).header("Authorization", SERVICE_BEARER))
+        this.mockMvc.perform(get("/api/v1/projects/{projectId}/log-sources", PROJECT_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
 
         this.mockMvc.perform(get("/api/v1/projects/{projectId}/logs/stream", PROJECT_ID)
-                        .header("Authorization", SERVICE_BEARER).queryParam("sourceId", legacySourceId.toString())
+                        .queryParam("sourceId", legacySourceId.toString())
                         .queryParam("lines", "10"))
                 .andExpect(status().isNotFound());
     }

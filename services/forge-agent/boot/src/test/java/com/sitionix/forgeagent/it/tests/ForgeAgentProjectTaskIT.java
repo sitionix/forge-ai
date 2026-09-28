@@ -65,7 +65,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
         this.updateWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT_TASK).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_PROJECT_TASK)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateProjectTask.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -93,7 +93,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
         });
 
         this.forgeIt.mockMvc()
-                .ping(GET_PROJECT_TASK).header("Authorization", SERVICE_BEARER)
+                .ping(GET_PROJECT_TASK)
                 .withPathParameters(PathParams.create().add("taskId", persistedTask.getId()))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$.repositoryIds[0]").value(REPOSITORY_A2_ID.toString()))
@@ -107,7 +107,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
         this.updateWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT_TASK_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_PROJECT_TASK_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateProjectTaskUnknownRepository.json")
                 .expectStatus(HttpStatus.NOT_FOUND)
@@ -124,7 +124,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
         this.updateWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT_TASK_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_PROJECT_TASK_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateProjectTaskCrossProjectRepository.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -166,7 +166,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT_TASK_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(CREATE_PROJECT_TASK_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestCreateProjectTask.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -192,7 +192,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(GET_PROJECT_TASK).header("Authorization", SERVICE_BEARER)
+                .ping(GET_PROJECT_TASK)
                 .withPathParameters(PathParams.create().add("taskId", taskId))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$.runs", hasSize(2)))
@@ -219,7 +219,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_TASKS).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_TASKS)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withQueryParameters(QueryParams.create().add("page", "0").add("size", "3"))
                 .expectStatus(HttpStatus.OK)
@@ -237,7 +237,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_TASKS).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_TASKS)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withQueryParameters(QueryParams.create().add("page", "1").add("size", "2"))
                 .expectStatus(HttpStatus.OK)
@@ -256,7 +256,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
         this.seedProjectAgentsAndWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_TASKS_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_TASKS_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withQueryParameters(QueryParams.create().add("page", "-1").add("size", "20"))
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -264,7 +264,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_TASKS_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_TASKS_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withQueryParameters(QueryParams.create().add("page", "0").add("size", "0"))
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -272,7 +272,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_TASKS_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_TASKS_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withQueryParameters(QueryParams.create().add("page", "0").add("size", "101"))
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -283,7 +283,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
     @Test
     void givenMissingProject_whenListTasks_thenProjectNotFoundIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_TASKS_ERROR).header("Authorization", SERVICE_BEARER)
+                .ping(LIST_PROJECT_TASKS_ERROR)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .andExpectPath(jsonPath("$.code").value("PROJECT_NOT_FOUND"))
@@ -292,7 +292,7 @@ class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentMana
 
     private void updateWorkflow() {
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
+                .ping(UPDATE_WORKFLOW)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)

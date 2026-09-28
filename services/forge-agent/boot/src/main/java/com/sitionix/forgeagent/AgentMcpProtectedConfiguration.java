@@ -27,10 +27,9 @@ public class AgentMcpProtectedConfiguration {
             @org.springframework.beans.factory.annotation.Value("${forge.agent.remote-access.management-enabled:false}") boolean remoteAccess,
             @org.springframework.beans.factory.annotation.Value("${forge.agent.remote-access.service-secret-file:#{null}}") Path remoteService) {
         Path key = Objects.requireNonNull(settings.getKeyFile(),"MCP key file required");
-        Path service = Objects.requireNonNull(settings.getServiceCredentialFile(),"MCP service file required");
         Path database = Objects.requireNonNull(settings.getDatabaseCredentialFile(),"MCP database file required");
-        if (Set.of(key,service,database).size() != 3) throw new IllegalStateException("MCP protected files must be distinct");
-        var protectedPaths=new ArrayList<>(List.of(key,service,database));
+        if (Set.of(key,database).size() != 2) throw new IllegalStateException("MCP protected files must be distinct");
+        var protectedPaths=new ArrayList<>(List.of(key,database));
         if (remoteAccess) protectedPaths.add(Objects.requireNonNull(remoteService,"Remote Access service file required"));
         verifier.verifyProtectedPaths(protectedPaths);
         return new Object();

@@ -15,23 +15,4 @@ class RemoteAccessManagementConfigurationTest {
         factory.setAddress(InetAddress.getByName("127.0.0.1"));sut.customize(factory);
         assertThatThrownBy(() -> new RemoteAccessManagementConfiguration.ManagementBind("native").customize(factory)).isInstanceOf(IllegalStateException.class);
     }
-    @org.junit.jupiter.api.io.TempDir java.nio.file.Path directory;
-    @Test void combinedRejectsEqualServiceValuesEvenInDifferentFiles() throws Exception {
-        String value=java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
-        var ra=directory.resolve("remote");var mcp=directory.resolve("general");
-        for(var path:java.util.List.of(ra,mcp)) {
-            java.nio.file.Files.writeString(path,value);
-            java.nio.file.Files.setPosixFilePermissions(path,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
-        }
-        var sut=new RemoteAccessManagementConfiguration();
-        assertThatThrownBy(() -> sut.remoteAccessServiceFilter(ra, credential(mcp))).hasMessage("Service credentials must be distinct");
-        assertThat(sut.remoteAccessServiceFilter(ra, new org.springframework.beans.factory.support.DefaultListableBeanFactory().getBeanProvider(com.sitionix.forgeagent.api.security.ProtectedCredentialFile.class)).getFilter()).isNotNull();
-        java.nio.file.Files.writeString(ra,"r".repeat(43));
-        assertThat(sut.remoteAccessServiceFilter(ra, credential(mcp)).getFilter()).isNotNull();
-    }
-    private org.springframework.beans.factory.ObjectProvider<com.sitionix.forgeagent.api.security.ProtectedCredentialFile> credential(java.nio.file.Path path) {
-        var beans = new org.springframework.beans.factory.support.DefaultListableBeanFactory();
-        beans.registerSingleton("credential", new com.sitionix.forgeagent.api.security.ProtectedCredentialFile(path));
-        return beans.getBeanProvider(com.sitionix.forgeagent.api.security.ProtectedCredentialFile.class);
-    }
 }

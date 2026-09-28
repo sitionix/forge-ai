@@ -1,8 +1,6 @@
 package com.sitionix.forgeai.infrastructure.agentclient;
 
 import java.net.http.HttpClient;
-import java.nio.file.Path;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,21 +14,8 @@ import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 class ForgeAgentHttpClientConfiguration {
 
   @Bean
-  AgentServiceCredential agentServiceCredential(
-      @Value("${forge.mcp.agent-service-credential-file}") final Path file,
-      final ForgeAgentClientProperties properties) {
-    return new AgentServiceCredential(file, properties.getBaseUrl());
-  }
-
-  @Bean
   ForgeAgentHttpClient forgeAgentHttpClient(
-      final ForgeAgentClientProperties properties, final RestClient.Builder restClientBuilder,
-      final AgentServiceCredential credential) {
-      restClientBuilder.requestInterceptor((request, body, execution) -> {
-        request.getHeaders().set(org.springframework.http.HttpHeaders.AUTHORIZATION,
-            credential.authorization());
-        return execution.execute(request, body);
-      });
+      final ForgeAgentClientProperties properties, final RestClient.Builder restClientBuilder) {
     final RestClient restClient =
         restClientBuilder
             .baseUrl(properties.getBaseUrl().toString())
@@ -44,15 +29,14 @@ class ForgeAgentHttpClientConfiguration {
   @Bean
   ForgeAgentLogStreamingHttpClient forgeAgentLogStreamingHttpClient(
       final ForgeAgentClientProperties properties,
-      final ForgeAgentClientCallExecutor callExecutor,
-      final AgentServiceCredential credential) {
+      final ForgeAgentClientCallExecutor callExecutor) {
     final HttpClient httpClient =
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(properties.getConnectTimeout())
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
-    return new ForgeAgentLogStreamingHttpClient(httpClient, properties, callExecutor, credential);
+    return new ForgeAgentLogStreamingHttpClient(httpClient, properties, callExecutor);
   }
 
   private JdkClientHttpRequestFactory requestFactory(final ForgeAgentClientProperties properties) {

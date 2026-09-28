@@ -174,30 +174,28 @@ def install(source, control_name, codex_source, database_file, workspace_root, m
                     name, value = values[0].split('=', 1)
                     previous_environment[name] = value
         database_password = previous_environment.get('FORGE_AGENT_DB_PASSWORD', 'forge_agent').encode()
-    operator_file = None
-    remote_environment = existing_environment.parent / 'forge-remote-nexus.env'
-    if remote_environment.exists():
-        for line in remote_environment.read_text().splitlines():
-            values = shlex.split(line, comments=True)
-            if len(values) == 1 and values[0].startswith('FORGE_REMOTE_ACCESS_OPERATOR_SECRET_FILE='):
-                operator_file = pathlib.Path(values[0].split('=', 1)[1])
-    paths = provision.prepare(material_root, control.pw_uid, control.pw_gid,
-                              database_password, 'http://127.0.0.1:9099', operator_file=operator_file)
+    paths = provision.prepare(material_root, control.pw_uid, control.pw_gid, database_password)
     # Copy only the former managed subtree, never a personal HOME. The parent was
     # allocated above; copying runs under the control identity with its runtime group.
     subprocess.run(['/usr/sbin/runuser', '-u', control_name, '--', '/usr/bin/python3', '-I',
                     str(source / 'scripts/runtime/prepare_workspaces.py'),
                     str(source / 'forge-projects'), str(workspace_root)], check=True)
-    environment = {
-        'agent.env': {'FORGE_MCP_KEY_FILE': paths['key'], 'FORGE_MCP_SERVICE_CREDENTIAL_FILE': paths['agent_service'],
-                      'FORGE_MCP_DATABASE_CREDENTIAL_FILE': paths['database'], 'FORGE_AGENT_HOST': '127.0.0.1',
-                      'FORGE_AGENT_WORKSPACE_ROOT': workspace_root},
-        'nexus.env': {'FORGE_MCP_AGENT_SERVICE_CREDENTIAL_FILE': paths['nexus_service'],
-                      'FORGE_MCP_BOOTSTRAP_CREDENTIAL_FILE': paths['operator'],
-                      'FORGE_MCP_OPERATOR_ORIGIN': 'http://127.0.0.1:9099', 'FORGE_NEXUS_HOST': '127.0.0.1'}}
-    for name, values in environment.items():
-        content = ''.join(f'{key}="{value}"\n' for key, value in values.items()).encode()
-        write_once(material_root / name, content, control.pw_uid, control.pw_gid)
+    content = ''.join(f'{key}="{value}"\n' for key, value in {
+        'FORGE_MCP_KEY_FILE': paths['key'], 'FORGE_MCP_DATABASE_CREDENTIAL_FILE': paths['database'],
+        'FORGE_AGENT_HOST': '127.0.0.1', 'FORGE_AGENT_WORKSPACE_ROOT': workspace_root}.items()).encode()
+    path = material_root / 'agent.env'
+    provision.read_existing(path, control.pw_uid)  # Reject unsafe existing metadata.
+    fd, temporary = tempfile.mkstemp(dir=material_root, prefix='.environment-')
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            os.fchown(stream.fileno(), control.pw_uid, control.pw_gid)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        pathlib.Path(temporary).unlink(missing_ok=True)
 
 
 if __name__ == '__main__':
