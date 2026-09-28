@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -79,6 +80,18 @@ class RemoteAccessColdBootstrapControllerTest {
             public void prepare() { throw new AssertionError("No preparation on GET"); }
         });
         assertThat(controller.state(local("GET"),new MockHttpServletResponse()).status()).isEqualTo("FAILED");
+    }
+
+    @Test void completedSetupWithUnhealthyManagementServiceIsFailure(@TempDir Path directory) throws Exception {
+        var systemctl=directory.resolve("systemctl");
+        Files.writeString(systemctl,"#!/bin/sh\nprintf 'ActiveState=active\\nSubState=exited\\n'\n");
+        systemctl.toFile().setExecutable(true);
+        var bridge=new RemoteAccessColdBootstrapController.SystemBridge(directory.resolve("unused.sock"),systemctl);
+        assertThat(bridge.failed()).isTrue();
+        Files.writeString(systemctl,"#!/bin/sh\nprintf 'ActiveState=activating\\nSubState=start\\n'\n");
+        assertThat(bridge.failed()).isFalse();
+        assertThat(new RemoteAccessColdBootstrapController.SystemBridge(directory.resolve("unused.sock"),
+                directory.resolve("missing-systemctl")).failed()).isTrue();
     }
 
     private MockHttpServletRequest local(String method) {

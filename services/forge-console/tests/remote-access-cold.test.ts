@@ -60,6 +60,7 @@ describe('cold Remote Access entry', () => {
       await page.start('give');
       expect(assign).toHaveBeenCalledWith('http://127.0.0.1:9100/fgaisox/operator/remote-access.html#give');
       expect(dom.window.document.getElementById('remoteError')?.hidden).toBe(true);
+      expect(dom.window.document.getElementById('remoteColdProgress')?.textContent).toContain('6 min elapsed');
     } finally { now.mockRestore();dom.window.close(); }
   });
 });
