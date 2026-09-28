@@ -34,7 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /** Real PostgreSQL, HTTP commands, lifecycle, sessions and routing; only provider execution/workspace are deterministic. */
 @IntegrationTest
-class ForgeAgentManualFlowIT {
+class ForgeAgentManualFlowIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private WorkflowUseCases workflows;
     @Autowired private WorkflowRunUseCases runs;
@@ -62,7 +62,7 @@ class ForgeAgentManualFlowIT {
         finish(f, 3, 2);
         assertThat(select(f, manual.id(), f.proceed())).isEqualTo(200);
         assertThat(nodeRuns.findByWorkflowRunId(f.runId())).hasSize(3);
-        mvc.perform(get("/api/v1/workflow-runs/{id}", f.runId())).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/workflow-runs/{id}", f.runId()).header("Authorization", SERVICE_BEARER)).andExpect(status().isOk());
     }
 
     @Test
@@ -126,7 +126,7 @@ class ForgeAgentManualFlowIT {
     void stopWaitingMixedGraphCancelsManualAndWorkflowWithoutProviderCancellation() throws Exception {
         Fixture f = fixture();
         NodeRun manual = reachWaiting(f, 1);
-        mvc.perform(post("/api/v1/workflow-runs/{id}/cancel", f.runId())).andExpect(status().isNoContent());
+        mvc.perform(post("/api/v1/workflow-runs/{id}/cancel", f.runId()).header("Authorization", SERVICE_BEARER)).andExpect(status().isNoContent());
         worker.poll();
         assertThat(runs.getWorkflowRun(f.runId()).status()).isEqualTo(WorkflowRunStatus.CANCELLED);
         NodeRun cancelled = nodeRuns.findById(manual.id()).orElseThrow();
@@ -217,7 +217,7 @@ class ForgeAgentManualFlowIT {
 
     private int select(Fixture f, UUID invocation, UUID port) throws Exception {
         return mvc.perform(post("/api/v1/workflow-runs/{run}/node-runs/{node}/manual-selection", f.runId(), invocation)
-                .contentType(MediaType.APPLICATION_JSON).content("{\"outputPortId\":\"" + port + "\"}"))
+                .header("Authorization", SERVICE_BEARER).contentType(MediaType.APPLICATION_JSON).content("{\"outputPortId\":\"" + port + "\"}"))
                 .andReturn().getResponse().getStatus();
     }
 

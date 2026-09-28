@@ -1,5 +1,4 @@
 package com.sitionix.forgeproxyit;
-import com.sitionix.forgeai.Application;
 import com.sitionix.forgeai.api.remoteaccess.RemoteAccessOperatorAuthentication;
 import com.sitionix.forgeproxyit.infra.*;
 import com.sitionix.forgeit.core.test.IntegrationTest;
@@ -22,7 +21,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @IntegrationTest(properties={"server.address=127.0.0.1","forge.remote-access.enabled=true","forge.remote-access.operator-origin=http://127.0.0.1:9099",
     "forge.ai.infrastructure.agent.base-url=${forge-it.wiremock.base-url}","forge.ai.infrastructure.agent.connect-timeout=5s","forge.ai.infrastructure.agent.read-timeout=5s",
     "forge.ai.infrastructure.knowledge.base-url=${forge-it.wiremock.base-url}","forge.ai.infrastructure.jarvis.base-url=${forge-it.wiremock.base-url}"})
-@ContextConfiguration(classes=Application.class)
+@ContextConfiguration(classes=com.sitionix.forgeremote.nexus.RemoteAccessNexusApplication.class)
 @Import({NexusProxyTestManagerImpl.class,RemoteAccessProxyIT.OperatorFixture.class})
 class RemoteAccessProxyIT {
     static final String ORIGIN="http://127.0.0.1:9099",CSRF="fixture-csrf";

@@ -2,11 +2,10 @@ package com.sitionix.forgeai.infrastructure.agentclient;
 
 import com.sitionix.forgeai.domain.model.mcp.McpAvailablePage;
 import com.sitionix.forgeai.domain.port.McpAvailableCatalog;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
-@ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
+
 public class McpAvailableCatalogAdapter implements McpAvailableCatalog {
     private final ForgeAgentHttpClient client;
     private final ForgeAgentClientCallExecutor executor;

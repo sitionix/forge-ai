@@ -30,7 +30,9 @@ class LocalProjectWorkspaceAdapterTest {
     @BeforeEach
     void setUp() throws Exception {
         Files.createDirectories(this.forgeRoot.resolve(".git"));
-        this.adapter = new LocalProjectWorkspaceAdapter(new ForgeRootResolver(this.forgeRoot.resolve("services/forge-agent")));
+        Files.createDirectory(this.forgeRoot.resolve("forge-projects"));
+        Files.setAttribute(this.forgeRoot.resolve("forge-projects"), "unix:mode", 02750);
+        this.adapter = new LocalProjectWorkspaceAdapter(new ForgeRootResolver(this.forgeRoot.resolve("forge-projects")));
     }
 
     @Test
@@ -68,6 +70,7 @@ class LocalProjectWorkspaceAdapterTest {
 
     @Test
     void resolvesMultipleCloneStatesInBatch() throws Exception {
+        this.adapter.resolveProjectWorkspace(PROJECT_ID);
         Files.createDirectories(this.repositoryPath("service-a").resolve(".git"));
         Files.createDirectories(this.repositoryPath("service-b"));
 
@@ -93,33 +96,14 @@ class LocalProjectWorkspaceAdapterTest {
     }
 
     @Test
-    void rootResolverAcceptsGitDirectory() {
-        assertThat(new ForgeRootResolver(this.forgeRoot.resolve("nested/service")).resolveForgeRoot())
-                .isEqualTo(this.forgeRoot);
-    }
-
-    @Test
-    void rootResolverAcceptsGitFileMarker(@TempDir final Path worktreeRoot) throws Exception {
-        Files.writeString(worktreeRoot.resolve(".git"), "gitdir: /tmp/worktrees/forge-ai/.git");
-
-        assertThat(new ForgeRootResolver(worktreeRoot.resolve("services/forge-agent")).resolveForgeRoot())
-                .isEqualTo(worktreeRoot);
-    }
-
-    @Test
-    void rootResolverFailsClosedWhenNoForgeRoot() throws Exception {
-        final Path noRoot = Files.createTempDirectory(Path.of("/var/tmp"), "forge-no-root");
-        try {
-            assertThatThrownBy(() -> new ForgeRootResolver(noRoot.resolve("nested")).resolveForgeRoot())
-                    .isInstanceOf(LocalProjectWorkspaceException.class)
-                    .hasMessage("Forge root could not be resolved.");
-        } finally {
-            Files.deleteIfExists(noRoot);
-        }
+    void rootResolverUsesConfiguredManagedDirectory() {
+        Path managed = this.forgeRoot.resolve("managed");
+        assertThat(new ForgeRootResolver(managed).resolveManagedRoot()).isEqualTo(managed);
     }
 
     @Test
     void workspaceCreationFailureUsesTypedException() throws Exception {
+        Files.delete(this.forgeRoot.resolve("forge-projects"));
         Files.writeString(this.forgeRoot.resolve("forge-projects"), "not a directory");
 
         assertThatThrownBy(() -> this.adapter.prepareCloneAttempt(
@@ -145,7 +129,7 @@ class LocalProjectWorkspaceAdapterTest {
         final Path outsideRepository = this.forgeRoot.resolve("outside-repository");
         Files.createDirectories(outsideRepository.resolve(".git"));
         final Path projectWorkspace = this.forgeRoot.resolve("forge-projects").resolve(PROJECT_ID.toString());
-        Files.createDirectories(projectWorkspace);
+        this.adapter.resolveProjectWorkspace(PROJECT_ID);
         Files.createSymbolicLink(projectWorkspace.resolve("service-a"), outsideRepository);
 
         assertThatThrownBy(() -> this.adapter.resolveRepositoryWorkspaceState(

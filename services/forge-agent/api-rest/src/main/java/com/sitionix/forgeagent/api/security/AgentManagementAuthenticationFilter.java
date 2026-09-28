@@ -5,7 +5,7 @@ import jakarta.servlet.http.*;
 import java.io.IOException;
 import java.util.Collections;
 
-/** Enabled-mode guard for every Agent control request, including redispatches. */
+/** Management guard for every Agent control request, including redispatches. */
 public final class AgentManagementAuthenticationFilter implements Filter {
     private final ProtectedCredentialFile credential;
     private final boolean remoteAccessOwned;

@@ -18,7 +18,6 @@ class McpConnectionServiceTest {
     private Runnable onMutationRead;
     private boolean projectExists = true;
     private final McpConnectionRepository repository = new McpConnectionRepository() {
-        public boolean hasRetainedCredentials() { return !secrets.isEmpty() || metadata.values().stream().anyMatch(McpConnection::credentialConfigured); }
         public Optional<McpConnection> findById(UUID installationId, UUID id) { return Optional.ofNullable(metadata.get(id)).filter(c -> c.installationId().equals(installationId)); }
         public List<McpConnection> findAll(UUID installationId) { return metadata.values().stream().filter(c -> c.installationId().equals(installationId)).toList(); }
         public Optional<McpEncryptedCredential> credential(UUID installationId, UUID id) { return findById(installationId,id).map(c -> secrets.get(id)); }

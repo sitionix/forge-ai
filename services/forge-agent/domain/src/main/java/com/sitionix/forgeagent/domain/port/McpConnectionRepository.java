@@ -5,8 +5,6 @@ import java.util.*;
 import java.util.function.UnaryOperator;
 
 public interface McpConnectionRepository {
-    /** Global storage signal for fail-closed downgrade; never reads credential bytes. */
-    boolean hasRetainedCredentials();
     Optional<McpConnection> findById(UUID installationId, UUID id);
     List<McpConnection> findAll(UUID installationId);
     Optional<McpEncryptedCredential> credential(UUID installationId, UUID id);

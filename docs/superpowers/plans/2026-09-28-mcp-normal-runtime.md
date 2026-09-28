@@ -19,7 +19,7 @@
 - Never regenerate existing valid keys/credentials on repeat startup; never expose secrets in configuration values, command arguments, URLs, logs or browser storage.
 - No PR creation, metadata/comments/reviews changes or merge. Fresh CI must reference the implementation commit.
 - Real local acceptance targets Ubuntu/systemd on port 9099; macOS isolation remains NOT_VERIFIED rather than silently using an unsafe fallback.
-- No implementation has run yet. Commands below are planned, not passing results.
+- Implementation/local verification completed; actual results and limits are recorded in [normal-runtime-evidence.md](../../mcp-integrations/normal-runtime-evidence.md). Checkboxes below describe the approved steps, not independent evidence.
 
 ## Review Focus
 

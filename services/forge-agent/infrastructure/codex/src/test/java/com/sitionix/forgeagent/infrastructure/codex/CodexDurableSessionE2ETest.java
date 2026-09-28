@@ -81,7 +81,7 @@ class CodexDurableSessionE2ETest {
     private CodexAppServerClient client(final CodexAppServerProperties properties) {
         return new CodexAppServerClient(
                 this.objectMapper,
-                new DefaultCodexAppServerProcessStarter(properties),
+                new DefaultCodexAppServerProcessStarter(properties, CodexFixtureProcesses.launcher(properties)),
                 properties,
                 new CodexRuntimeWorkspace(properties)
         );

@@ -33,7 +33,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 
 @IntegrationTest
-class ForgeAgentWorkflowRunIT {
+class ForgeAgentWorkflowRunIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
@@ -44,7 +44,7 @@ class ForgeAgentWorkflowRunIT {
         this.updateWorkflow();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_WORKFLOW_RUN)
+                .ping(CREATE_WORKFLOW_RUN).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestCreateWorkflowRun.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -83,7 +83,7 @@ class ForgeAgentWorkflowRunIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_WORKFLOW_RUNS)
+                .ping(LIST_WORKFLOW_RUNS).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$", hasSize(2)))
@@ -113,7 +113,7 @@ class ForgeAgentWorkflowRunIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(GET_WORKFLOW_RUN)
+                .ping(GET_WORKFLOW_RUN).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("runId", runId))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$.id").value(runId.toString()))
@@ -154,7 +154,7 @@ class ForgeAgentWorkflowRunIT {
 
     private void updateWorkflow() {
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW)
+                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)

@@ -25,12 +25,14 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Restarts all application beans and their database connections against the same PostgreSQL database. */
-class ForgeAgentManualRestartIT {
+class ForgeAgentManualRestartIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     private static final PostgreSQLContainer<?> DATABASE = new PostgreSQLContainer<>("postgres:16-alpine");
 
     @BeforeAll
     static void startDatabase() {
         DATABASE.start();
+        try { write("restart-database", DATABASE.getPassword()); }
+        catch (Exception exception) { throw new IllegalStateException("Synthetic database credential setup failed"); }
     }
 
     @AfterAll
@@ -121,7 +123,15 @@ class ForgeAgentManualRestartIT {
     }
 
     private static ServletWebServerApplicationContext startApplication() {
-        return (ServletWebServerApplicationContext) new SpringApplicationBuilder(ForgeAgentApplication.class).run(
+        return (ServletWebServerApplicationContext) new SpringApplicationBuilder(ForgeAgentApplication.class)
+                .initializers(context -> context.addBeanFactoryPostProcessor(factory -> factory.registerSingleton("runtimeBoundaryVerifier",
+                        org.mockito.Mockito.mock(com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryVerifier.class))))
+                .properties(java.util.Map.of(
+                        "forge.mcp.key-file", ROOT.resolve("key").toString(),
+                        "forge.mcp.service-credential-file", ROOT.resolve("service").toString(),
+                        "forge.mcp.database-credential-file", ROOT.resolve("restart-database").toString(),
+                        "forge.agent.workspace-root", MANAGED_WORKSPACE.toString()))
+                .run(
                 "--server.port=0",
                 "--spring.datasource.url=" + DATABASE.getJdbcUrl(),
                 "--spring.datasource.username=" + DATABASE.getUsername(),
@@ -135,7 +145,7 @@ class ForgeAgentManualRestartIT {
         URI uri = URI.create("http://localhost:" + context.getWebServer().getPort()
                 + "/api/v1/workflow-runs/" + run + "/node-runs/" + invocation + "/manual-selection");
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(15))
-                .header("Content-Type", "application/json")
+                .header("Authorization", SERVICE_BEARER).header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString("{\"outputPortId\":\"" + port + "\"}")).build();
         try (HttpClient client = HttpClient.newHttpClient()) {
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());

@@ -1,7 +1,6 @@
 package com.sitionix.forgeproxyit;
 import static org.assertj.core.api.Assertions.*;
 import com.sitionix.forgeai.Application;
-import com.sitionix.forgeai.api.remoteaccess.RemoteAccessOperatorController;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.net.*;
@@ -19,7 +18,7 @@ import org.springframework.test.context.*;
 @SpringBootTest(classes=Application.class,webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties={
     "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
     "spring.config.import=","spring.docker.compose.enabled=false","server.address=127.0.0.1",
-    "forge.mcp.enabled=true","forge.remote-access.enabled=true","forge.remote-access.operator-origin=http://127.0.0.1:9099"})
+    "forge.remote-access.enabled=true","forge.remote-access.operator-origin=http://127.0.0.1:9099"})
 @org.springframework.context.annotation.Import(NexusCombinedOperatorHttpIT.DispatchFixture.class)
 @DirtiesContext
 class NexusCombinedOperatorHttpIT {

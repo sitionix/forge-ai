@@ -4,12 +4,10 @@ import com.sitionix.forgeai.domain.model.mcp.McpConnection;
 import com.sitionix.forgeai.domain.usecase.ManageAgentMcpConnections;
 import java.util.List;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@ConditionalOnProperty(prefix="forge.mcp",name="enabled",havingValue="true")
 @RequestMapping("/api/v1/infrastructure/agents/integrations/mcp/connections")
 public class ForgeAiMcpConnectionsController {
     private final ManageAgentMcpConnections useCase;

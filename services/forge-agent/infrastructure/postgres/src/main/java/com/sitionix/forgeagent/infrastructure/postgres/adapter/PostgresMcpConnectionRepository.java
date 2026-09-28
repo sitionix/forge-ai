@@ -29,12 +29,6 @@ public class PostgresMcpConnectionRepository implements McpConnectionRepository 
         this.transactions = new TransactionTemplate(manager);
     }
 
-    @Override public boolean hasRetainedCredentials() {
-        return Boolean.TRUE.equals(jdbc.queryForObject(
-                "SELECT EXISTS (SELECT 1 FROM mcp_connection_credentials) OR EXISTS "
-                        + "(SELECT 1 FROM mcp_connections WHERE credential_configured=TRUE)", Boolean.class));
-    }
-
     public Optional<McpConnection> findById(UUID installationId, UUID id) {
         return jdbc.query(SELECT + "WHERE m.installation_id=? AND m.id=?", mapper(),installationId,id)
                 .stream().findFirst();

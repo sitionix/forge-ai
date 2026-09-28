@@ -14,7 +14,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.*;
 import org.testcontainers.containers.PostgreSQLContainer;
 @SpringBootTest(classes=ForgeAgentApplication.class,webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties={"forge.mcp.enabled=true","forge.agent.remote-access.management-enabled=true","server.address=127.0.0.1","forge.agent.worker.scheduling-enabled=false"})
+    properties={"forge.agent.remote-access.management-enabled=true","server.address=127.0.0.1","forge.agent.worker.scheduling-enabled=false"})
 @org.springframework.context.annotation.Import(AgentCombinedManagementGuardIT.DispatchFixture.class)
 @DirtiesContext
 class AgentCombinedManagementGuardIT {

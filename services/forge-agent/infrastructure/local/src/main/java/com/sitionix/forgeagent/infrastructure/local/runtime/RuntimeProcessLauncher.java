@@ -21,7 +21,6 @@ public class RuntimeProcessLauncher {
     private volatile boolean ready;
 
     public RuntimeProcessLauncher(RuntimeBoundaryProperties properties) { this.properties = properties; }
-    public boolean enabled() { return properties.enabled(); }
     void markReady() { ready = true; }
 
     public ManagedRuntimeProcess startCodex(Path directory) throws IOException {
@@ -43,7 +42,7 @@ public class RuntimeProcessLauncher {
     }
 
     private ManagedRuntimeProcess start(List<String> arguments, Map<String, String> grantEnvironment) throws IOException {
-        if (!properties.enabled() || !ready) throw unavailable();
+        if (!ready) throw unavailable();
         var command = new ArrayList<>(List.of("start"));
         command.addAll(arguments);
         String execution = arguments.get(1);

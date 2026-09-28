@@ -16,7 +16,18 @@ describe('Settings integrations',()=>{
  const {router}=bootstrapOperatorConsole({document,window,fetcher});expect(document.querySelector('.sidebar-settings')?.textContent).toContain('Settings');expect(document.querySelector('.sidebar-settings a')?.getAttribute('href')).toBe('./settings.html');router.dispose();await tick();
  });
  it('reads one existing session and displays empty state without probing',async()=>{
- const {page,fetcher}=setup();await tick();expect(document.querySelector('#mcpConnections')?.textContent).toContain('No connections');expect(fetcher).toHaveBeenCalledTimes(2);page.dispose();
+ const {page,fetcher}=setup();await tick();expect(document.querySelector('#mcpConnections')?.textContent).toContain('No integrations connected');expect(fetcher).toHaveBeenCalledTimes(2);page.dispose();
+ });
+ it('keeps the compact MCP section and primary Add action around scoped failures',async()=>{
+ const {page,fetcher}=setup();await tick();
+ const section=document.querySelector('#mcpIntegrations')!;
+ expect(section.querySelector('h3')?.textContent).toBe('MCP');
+ expect(section.textContent).toContain('Connect external MCP tools.');
+ expect(section.querySelector('#mcpAdd')?.textContent).toBe('Add integration');
+ fetcher.mockResolvedValue(new Response('{}',{status:503}));
+ (document.querySelector('#mcpRefresh') as HTMLButtonElement).click();await tick();
+ expect(section.querySelector('#mcpError')).not.toBeNull();
+ expect(document.querySelector('h1')?.textContent).toBe('Settings');page.dispose();
  });
  it('shows factual labels and text-safe details',async()=>{
  const {page,fetcher}=setup([connection]);await tick();const list=document.querySelector('#mcpConnections')!;
@@ -26,6 +37,14 @@ describe('Settings integrations',()=>{
  it('renders login and clears secret on submit; no raw error payload',async()=>{
  document.documentElement.innerHTML=html();const fetcher=vi.fn().mockResolvedValue(new Response('{"message":"secret-canary"}',{status:401}));const page=new SettingsPage({document,window,fetcher});page.mount();await tick();expect((document.querySelector('#mcpLogin') as HTMLElement).hidden).toBe(false);
  const input=document.querySelector('#mcpOperatorSecret') as HTMLInputElement;input.value='synthetic-secret';document.querySelector('#mcpLoginForm')!.dispatchEvent(new Event('submit',{cancelable:true}));expect(input.value).toBe('');await tick();expect(document.body.textContent).not.toContain('secret-canary');page.dispose();
+ });
+ it('treats a missing initial operator session as sign in, not a product error',async()=>{
+ document.documentElement.innerHTML=html();
+ const fetcher=vi.fn().mockResolvedValue(new Response('{}',{status:401}));
+ const page=new SettingsPage({document,window,fetcher});page.mount();await tick();
+ expect((document.querySelector('#mcpLogin') as HTMLElement).hidden).toBe(false);
+ expect((document.querySelector('#mcpError') as HTMLElement).hidden).toBe(true);
+ expect(document.querySelector('#mcpNotice')?.textContent).toBe('Sign in to manage integrations.');page.dispose();
  });
  it('discards late list after pagehide and clears rendered state',async()=>{
  document.documentElement.innerHTML=html();let resolve!:(r:Response)=>void;const fetcher=vi.fn().mockResolvedValueOnce(new Response('{"csrfToken":"csrf","csrfHeader":"X-Forge-CSRF"}')).mockImplementationOnce(()=>new Promise<Response>(r=>{resolve=r;}));const page=new SettingsPage({document,window,fetcher});page.mount();await tick();window.dispatchEvent(new Event('pagehide'));resolve(new Response(JSON.stringify([connection])));await tick();expect(document.querySelector('#mcpConnections')?.textContent).toBe('');

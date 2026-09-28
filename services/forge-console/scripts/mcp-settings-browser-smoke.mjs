@@ -16,6 +16,8 @@ const project={id:'11111111-1111-4111-8111-111111111111',name:'Fixture project'}
 let connections=[],createCalls=0,testCalls=0;
 const api='/fgaisox/api/v1',catalog=api+'/infrastructure/agents/integrations/mcp/connections';
 const external=process.env.FORGE_SETTINGS_BASE_URL;
+const normalEmpty=process.env.FORGE_SETTINGS_ACTION==='empty';
+if(normalEmpty) assert.equal(external,'http://127.0.0.1:9099/fgaisox','Normal acceptance requires the real main Nexus on 9099');
 const server=createServer(async(req,res)=>{
   try {
     const path=new URL(req.url,'http://127.0.0.1').pathname;
@@ -73,7 +75,11 @@ try {
   await cdp('Page.enable');await cdp('Page.navigate',{url});
   await until(`document.getElementById('mcpLogin') && (!document.getElementById('mcpLogin').hidden || !document.getElementById('mcpManagement').hidden)`);
   if(await evaluate(`!document.getElementById('mcpLogin').hidden`)) {
-    await fill('mcpOperatorSecret',process.env.FORGE_SETTINGS_OPERATOR_SECRET||'synthetic-operator');
+    const operator=process.env.FORGE_SETTINGS_OPERATOR_SECRET_FILE
+      ?(await readFile(process.env.FORGE_SETTINGS_OPERATOR_SECRET_FILE,'utf8')).trim()
+      :process.env.FORGE_SETTINGS_OPERATOR_SECRET||'synthetic-operator';
+    if(normalEmpty) assert(process.env.FORGE_SETTINGS_OPERATOR_SECRET_FILE,'Use the normal provisioned operator file');
+    await fill('mcpOperatorSecret',operator);
     await evaluate(`document.getElementById('mcpLoginForm').requestSubmit()`);
   }
   await until(`!document.getElementById('mcpManagement').hidden && !document.getElementById('mcpNotice').textContent`);
@@ -82,7 +88,23 @@ try {
   assert.equal(await evaluate(`document.querySelector('.shell > header').getBoundingClientRect().top >= document.querySelector('.operator-sidebar').getBoundingClientRect().bottom`),true,'Compact navigation must not cover Settings');
   await cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});
   const action=process.env.FORGE_SETTINGS_ACTION;
-  if(action==='disable' || action==='enable') {
+  if(normalEmpty) {
+    await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+    assert.equal(await evaluate(`location.port`),'9099');
+    assert.equal(await evaluate(`document.querySelector('.operator-sidebar').getBoundingClientRect().width>0`),true);
+    assert.equal(await evaluate(`!!document.querySelector('.sidebar-nav a[href="./agent-projects.html"]')`),true);
+    assert.equal(await evaluate(`!!document.querySelector('.sidebar-settings a.active')`),true);
+    assert.equal(await evaluate(`document.getElementById('mcpIntegrations').textContent.includes('Connect external MCP tools.')`),true);
+    assert.equal(await evaluate(`document.getElementById('mcpConnections').textContent`),'No integrations connected');
+    assert.equal(await evaluate(`document.getElementById('mcpAdd').textContent`),'Add integration');
+    assert.equal(await evaluate(`document.getElementById('mcpAdd').getBoundingClientRect().height>0`),true);
+    assert.equal(await evaluate(`document.documentElement.scrollWidth<=innerWidth`),true);
+    assert.equal(await evaluate(`document.getElementById('mcpIntegrations').getBoundingClientRect().bottom<innerHeight`),true);
+    assert.equal(await evaluate(`document.body.textContent.includes('MCP integrations are unavailable on this installation')`),false);
+    const result=await evaluate(`fetch(${JSON.stringify(catalog)},{credentials:'same-origin'}).then(async response=>({status:response.status,body:await response.json()}))`);
+    assert.equal(result.status,200);assert.deepEqual(result.body,[]);
+    console.log('NORMAL_SETTINGS_EMPTY_BROWSER_PASS');
+  } else if(action==='disable' || action==='enable') {
     await evaluate(`document.querySelector('[data-connection-id="${process.env.FORGE_SETTINGS_CONNECTION_ID}"]').click()`);
     const before=action==='disable'?'Disable':'Enable',after=action==='disable'?'Enable':'Disable';
     await until(`!document.getElementById('mcpDetailsPanel').hidden && document.getElementById('mcpToggle').textContent===${JSON.stringify(before)}`);

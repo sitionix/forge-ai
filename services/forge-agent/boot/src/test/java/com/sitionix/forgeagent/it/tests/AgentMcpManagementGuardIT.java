@@ -43,7 +43,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 /** Synthetic web guard proof; the privileged OS boundary has a separate fixture. */
-@IntegrationTest(properties = "forge.mcp.enabled=true")
+@IntegrationTest
 @ExtendWith(OutputCaptureExtension.class)
 class AgentMcpManagementGuardIT {
   private static final byte[] SERVICE = new byte[32];

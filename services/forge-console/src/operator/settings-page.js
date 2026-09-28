@@ -48,7 +48,12 @@ export class SettingsPage {
       const result=await this.requests.run('session',({signal})=>this.api.operatorSession(signal));
       if(!result.applied) return;
       this.element('mcpLogin').hidden=true;this.element('mcpManagement').hidden=false;await this.refresh();
-    } catch(error) { this.error(error); }
+    } catch(error) {
+      this.error(error);
+      if(error?.code==='OPERATOR_UNAUTHORIZED' && !this.disposed) {
+        this.clearError();this.notice('Sign in to manage integrations.');
+      }
+    }
   }
   async login() {
     if(this.pending || this.disposed) return;

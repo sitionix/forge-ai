@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "forge.ai.infrastructure.jarvis.base-url=http://127.0.0.1:7071"
         }
 )
-class NexusProxyApplicationContextTest {
+class NexusProxyApplicationContextTest extends com.sitionix.forgeproxyit.infra.NexusManagementFixture {
 
     @Autowired
     private ForgeAgentClient forgeAgentClient;

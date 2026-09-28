@@ -16,7 +16,8 @@ public class RemoteAccessSecurityConfiguration {
     @Bean @Order(1)
     @ConditionalOnProperty(name="forge.remote-access.enabled",havingValue="true")
     SecurityFilterChain remoteAccessSecurity(HttpSecurity http,RemoteAccessOperatorAuthentication authentication,
-            @org.springframework.beans.factory.annotation.Value("${forge.mcp.enabled:false}") boolean combined) throws Exception {
+            org.springframework.beans.factory.ObjectProvider<CombinedOperatorSessionController> sessions) throws Exception {
+        boolean combined = sessions.getIfAvailable() != null;
         String prefix="/api/v1/infrastructure/agents/remote-access";
         var mapper=new ObjectMapper();
         org.springframework.security.web.util.matcher.RequestMatcher login=request -> request.getMethod().equals("POST")

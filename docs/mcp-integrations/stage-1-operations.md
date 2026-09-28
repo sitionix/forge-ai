@@ -1,17 +1,16 @@
 # Stage 1 — operator prerequisites and runtime boundary
 
-Default: `FORGE_MCP_ENABLED=false`. Runtime and management-auth prerequisites have
-passed scoped code review and synthetic tests. The reviewed disposable runtime
-probe passed18 assertions with cleanup; see stage-1-evidence.md and raw result.
-This does not prove installed sudo routing or production Java deployment, which
-remain **NOT_VERIFIED**. No host installation is performed by these source changes.
+MCP is part of normal Forge. On Ubuntu/systemd, `just start` provisions persistent
+protected material and the isolated runtime before restarting main Agent/Nexus.
+There is no global activation switch. Existing valid keys and credentials are
+preserved; unsafe or conflicting files fail preparation instead of being rotated.
 
 ## Runtime contract
 
-With `forge.mcp.enabled=true`, Codex app-server and every local Git invocation use
+Codex app-server and every local Git invocation use
 `RuntimeProcessLauncher`, never the old same-UID ProcessBuilder branch. Spring
-injects the enabled launcher explicitly; legacy constructors preserve off-mode
-unit fixtures. A `SmartInitializingSingleton` runs the actual helper probe before
+injects the managed launcher explicitly; unit fixtures inject synthetic process
+dependencies and do not prove OS isolation. A `SmartInitializingSingleton` runs the actual helper probe before
 the launcher becomes ready. Missing/unsafe helper, same UID, unavailable systemd,
 probe denial failure, or unconfirmed cleanup fail startup with a generic error.
 
@@ -45,7 +44,7 @@ the boundary is runtime UID and service containment, not disabled hooks.
 
 ## Packaged artifacts and prerequisites
 
-Review these artifacts; this document is not authorization to install them:
+Normal systemd installation uses these security artifacts:
 
 - `scripts/runtime/forge-runtime-launcher.py`: root-owned executable, mode 0755,
   installed as `/usr/local/libexec/forge-runtime-launcher`; fixed
@@ -56,11 +55,10 @@ Review these artifacts; this document is not authorization to install them:
   managed roots and Agent unit. Install as `/etc/forge/runtime-launcher.json`,
   root:root 0600, trusted ancestors. Example IDs are placeholders, not provisioning.
 - `config/sudoers/forge-runtime.in`: render control account, validate with
-  `visudo -cf`, install root:root 0440 through separately approved deployment.
+  `visudo -cf`, install root:root 0440 through the normal systemd installer.
   Grant only the exact helper; never Python, shell, systemd-run or systemctl.
-- `config/systemd/forge-agent-mcp-isolation.conf.in`: explicit opt-in drop-in for
-  the narrow sudo route. It changes Agent `NoNewPrivileges` to false. The default
-  Agent unit is unchanged; runtime transient units always retain NNP=true.
+- The main Agent unit uses the narrow runtime sudo route. Runtime transient units
+  always retain `NoNewPrivileges=yes`; no opt-in isolation drop-in is required.
 
 Use distinct non-root control/runtime accounts. Runtime must have no supplementary
 or privileged primary groups and must not share the control primary GID. No Docker
@@ -70,7 +68,7 @@ HOME/CODEX_HOME, PATH, LANG and noninteractive Git, drop capabilities, protect t
 system/cgroup filesystem and control /proc visibility, and stop their whole cgroup.
 The helper does not turn on Codex shell network access.
 
-When MCP management is enabled, provision three distinct protected Agent files:
+Normal startup provisions three distinct protected Agent files:
 the AES key ring (`active=<id>` and `key.<id>=<base64-32-byte-key>` lines), the
 service bearer, and the database password. Nexus uses separate protected operator
 bootstrap and Agent service bearer files. Bearers contain at least 32 random bytes
@@ -78,7 +76,7 @@ encoded as unpadded base64url. Configure file paths only; do not put credential
 values in environment variables, process arguments, URLs, or application YAML.
 The Nexus bootstrap and Agent service bearer values must differ.
 
-With MCP enabled alone, an operator sends the bootstrap secret in the JSON body of
+An operator sends the bootstrap secret in the JSON body of
 `POST /api/v1/operator/session` from the configured browser origin with its exact
 `Origin` and `Host` headers. Nexus returns a host-only `FG_SESSION` HttpOnly,
 SameSite Strict cookie and a `csrfToken`; the browser sends that cookie on later
@@ -115,48 +113,9 @@ inspection before removing the old key from the protected file and restarting.
 If an old key is missing or wrong, the action fails safely and leaves that record
 unchanged. Do not remove an old key while any retained ciphertext still needs it.
 
-To pause integrations while retaining credentials, keep `forge.mcp.enabled=true`
-on Agent and Nexus and set each connection's `enabled=false`. The global flag may
-be changed to false only after an explicitly authorized deprovision: remove MCP
-credentials and their metadata, retire protected key/bootstrap/service files and
-configured paths, and account for backups. Agent refuses off-mode startup if any
-credential row or `credential_configured` flag remains anywhere in its database,
-or if a protected Agent path remains configured. Nexus refuses off-mode startup if
-its protected credential paths remain configured. A query failure also refuses
-Agent startup. No startup path deletes stored credentials. These guards cannot
-discover orphan files whose paths were deliberately removed from configuration or
-protect an older binary without the guard; rollback and backup deprovision need
-separate operator control.
-
-Runtime home must be a stable runtime-owned 0700 directory under a trusted
-root-owned parent, e.g. `/srv/forge-runtime/home`. Workspace roots must be disjoint
-from it. Provision its dedicated `.codex` child as a runtime-owned 0700 directory
-before starting Codex; leave it empty until separately authorized provider setup.
-Configured executable paths must resolve to regular canonical files on the target
-host: a symlink such as this host's `/usr/bin/env` is rejected by the launcher.
-Install the reviewed Codex package with its root-owned adjacent
-`codex-resources/bwrap` ELF resource; copying only the Codex binary is insufficient
-for `workspaceWrite` execution. The disposable proof pins Codex 0.156.1 and bwrap
-SHA256 `77360cb751ccedc5971391444ac86a8a33c15b04d6b4a6fe45f5d25496e62c4c`.
-Review the installed package version and resource hash again before a new rollout.
-Configured paths and Codex working directories use ordinary absolute
-ASCII path components (letters/digits, underscore, dot, dash); spaces, percent
-specifiers and symlink paths are rejected in enabled mode.
-
-Provision `<forge-root>/forge-projects` before enabling the launcher. Its ancestors
-must be root-owned/trusted for helper validation; the managed root itself is
-control-owned, runtime-group, mode 2750. Control must be a member of the runtime
-primary group for shared checkout contents. Runtime cannot change parent entries.
-The enabled workspace adapter creates control-owned setgid project/attempt parents
-2750 and staging checkout directories 2770. Runtime's umask 0007 makes created
-files accessible to that shared group. It does not chmod control HOME/config or
-make project parents runtime-writable. Existing repositories require explicit
-operator ownership/permission verification; no automatic recursive migration runs.
-
-Enabled cleanup uses `SecureDirectoryStream` relative operations with
-`NOFOLLOW_LINKS`. A filesystem provider without secure directory descriptors fails
-closed. Runtime renaming a nested directory and replacing its pathname with a
-control-tree symlink cannot redirect already-open descriptor operations.
+To pause an integration while retaining its credential, explicitly Disable that
+connection. The per-connection state revokes runtime access; it does not remove
+MCP management or rotate protected installation material.
 
 ## Deliberate limitations
 

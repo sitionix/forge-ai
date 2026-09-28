@@ -28,7 +28,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 @IntegrationTest
-class ForgeAgentManualSelectionIT {
+class ForgeAgentManualSelectionIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private WorkflowUseCases workflows;
     @Autowired private WorkflowRunUseCases runs;
@@ -178,7 +178,7 @@ class ForgeAgentManualSelectionIT {
         Fixture f = fixture(false);
         worker.poll();
         assertThat(mvc.perform(post("/api/v1/workflow-runs/{run}/node-runs/{node}/manual-selection", f.runId(), f.invocation())
-                .contentType(MediaType.APPLICATION_JSON).content(body)).andReturn().getResponse().getStatus()).isEqualTo(400);
+                .header("Authorization", SERVICE_BEARER).contentType(MediaType.APPLICATION_JSON).content(body)).andReturn().getResponse().getStatus()).isEqualTo(400);
         assertThat(nodeRuns.findById(f.invocation()).orElseThrow().status()).isEqualTo(NodeRunStatus.WAITING_FOR_MANUAL);
     }
 
@@ -205,7 +205,7 @@ class ForgeAgentManualSelectionIT {
 
     private int select(UUID run, UUID invocation, UUID port) throws Exception {
         var response = mvc.perform(post("/api/v1/workflow-runs/{run}/node-runs/{node}/manual-selection", run, invocation)
-                .contentType(MediaType.APPLICATION_JSON).content("{\"outputPortId\":\"" + port + "\"}"))
+                .header("Authorization", SERVICE_BEARER).contentType(MediaType.APPLICATION_JSON).content("{\"outputPortId\":\"" + port + "\"}"))
                 .andReturn().getResponse();
         if (response.getStatus() == 200) {
             var body = json.readTree(response.getContentAsString());

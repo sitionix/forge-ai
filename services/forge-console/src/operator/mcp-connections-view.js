@@ -13,7 +13,7 @@ export function connectionLabels(connection) {
 }
 export function renderMcpConnections(container,connections) {
   const document=container.ownerDocument;container.replaceChildren();
-  if (!connections.length) { container.append(text(document,'p','No connections. Add a Custom MCP to get started.'));return; }
+  if (!connections.length) { container.append(text(document,'p','No integrations connected'));return; }
   for (const connection of connections) {
     const card=text(document,'article','', 'mcp-card');
     const button=text(document,'button',connection.displayName,'button secondary');button.type='button';button.dataset.connectionId=connection.id;

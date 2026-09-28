@@ -44,7 +44,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
  */
 @EnabledIfSystemProperty(named="forge.codex.stage5-e2e",matches="true")
 @SpringBootTest(classes=ForgeAgentApplication.class,webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties={"forge.mcp.enabled=true","server.address=127.0.0.1","forge.agent.worker.scheduling-enabled=false"})
+    properties={"server.address=127.0.0.1","forge.agent.worker.scheduling-enabled=false"})
 @DirtiesContext
 @ExtendWith(OutputCaptureExtension.class)
 class McpSettingsAcceptanceHttpTest {
@@ -202,7 +202,7 @@ class McpSettingsAcceptanceHttpTest {
         return new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-jar",jar.toString(),
             "--server.address=127.0.0.1","--server.port="+port,"--spring.config.import=","--spring.docker.compose.enabled=false",
             "--spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
-            "--forge.mcp.enabled=true","--forge.mcp.operator-origin="+origin,
+            "--forge.mcp.operator-origin="+origin,
             "--forge.mcp.bootstrap-credential-file="+directory.resolve("operator"),"--forge.mcp.agent-service-credential-file="+directory.resolve("service"),
             "--forge.ai.infrastructure.agent.base-url=http://127.0.0.1:"+agentPort)
             .directory(directory.toFile()).redirectErrorStream(true).redirectOutput(directory.resolve("nexus.log").toFile()).start();

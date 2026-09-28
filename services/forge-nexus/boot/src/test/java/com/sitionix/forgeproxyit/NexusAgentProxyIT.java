@@ -38,7 +38,7 @@ import org.springframework.test.context.ContextConfiguration;
 @ContextConfiguration(classes = Application.class)
 @Import(NexusProxyTestManagerImpl.class)
 @Execution(ExecutionMode.SAME_THREAD)
-class NexusAgentProxyIT {
+class NexusAgentProxyIT extends com.sitionix.forgeproxyit.infra.NexusProxyManagementFixture {
 
     private static final UUID PROJECT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final UUID REPOSITORY_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
@@ -53,18 +53,16 @@ class NexusAgentProxyIT {
     private NexusProxyTestManager testManager;
 
     @Test
-    void operatorSessionIsAbsentInDefaultOffMode() {
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.absentOperatorSessionWhenMcpDisabled())
-                .assertDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.listMcpConnections(404))
-                .assertDefault();
+    void operatorSessionExistsWithoutGlobalActivationSetting() {
+        this.testManager.mockMvc().ping(com.sitionix.forgeproxyit.infra.NexusOperatorMockMvcEndpoints.currentSession())
+                .header("Host", "127.0.0.1:9099").cookie("FG_SESSION", operatorSession).assertDefault();
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"agent-manual-selection-missing-port-request.json",
             "agent-manual-selection-null-port-request.json", "agent-manual-selection-invalid-port-request.json"})
     void invalidManualSelectionIsRejectedBeforeCallingUpstream(final String requestFixture) {
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.invalidManualSelection(requestFixture))
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.invalidManualSelection(requestFixture)).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("workflowRunId", RUN_ID).add("nodeRunId", NODE_RUN_ID))
                 .assertDefault();
     }
@@ -96,7 +94,7 @@ class NexusAgentProxyIT {
         final var waiting = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.waitingManualRun())
                 .pathPattern(WireMockPathParams.create().add("workflowRunId", equalTo(RUN_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.waitingManualRun())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.waitingManualRun()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("workflowRunId", RUN_ID))
                 .andExpectPath(result -> snapshot.set(new ObjectMapper().readTree(result.getResponse().getContentAsString())))
                 .assertDefault();
@@ -113,7 +111,7 @@ class NexusAgentProxyIT {
                 .pathPattern(WireMockPathParams.create().add("workflowRunId", equalTo(run.path("id").asText()))
                         .add("nodeRunId", equalTo(manual.path("id").asText())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.manualSelection())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.manualSelection()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("workflowRunId", run.path("id").asText())
                         .add("nodeRunId", manual.path("id").asText()))
                 .assertDefault(context -> context.mutateRequest(
@@ -162,7 +160,7 @@ class NexusAgentProxyIT {
                         .add("limit", equalTo("25")))
                 .createDefault();
 
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.agentExecutionEvents())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.agentExecutionEvents()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("turnId", TURN_ID))
                 .withQueryParameters(QueryParams.create().add("afterSequence", "7").add("limit", "25"))
                 .assertDefault();
@@ -260,7 +258,7 @@ class NexusAgentProxyIT {
                 .pathPattern(upstreamPath)
                 .urlWithQueryParam(WireMockQueryParams.create().add("sort", equalTo("ram")))
                 .createDefault();
-        testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceProcesses())
+        testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceProcesses()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)
                         .add("connectionId", CONNECTION_ID).add("unit", unit))
                 .withQueryParameters(QueryParams.create().add("sort", "ram"))
@@ -275,7 +273,7 @@ class NexusAgentProxyIT {
             PathParams nexusPath) {
         final var upstream = this.testManager.wiremock().createMapping(upstreamEndpoint)
                 .pathPattern(upstreamPath).createDefault();
-        this.testManager.mockMvc().ping(nexusEndpoint).withPathParameters(nexusPath).assertDefault();
+        this.testManager.mockMvc().ping(nexusEndpoint).withPathParameters(nexusPath).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession).assertDefault();
         upstream.verify();
     }
 
@@ -287,7 +285,7 @@ class NexusAgentProxyIT {
                 .createDefault();
 
         this.testManager.mockMvc()
-                .ping(NexusAgentMockMvcEndpoints.createProject())
+                .ping(NexusAgentMockMvcEndpoints.createProject()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .assertDefault();
 
         upstream.verify();
@@ -304,7 +302,7 @@ class NexusAgentProxyIT {
                 .createDefault();
 
         this.testManager.mockMvc()
-                .ping(NexusAgentMockMvcEndpoints.listTasks())
+                .ping(NexusAgentMockMvcEndpoints.listTasks()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID))
                 .withQueryParameters(QueryParams.create().add("page", "2").add("size", "10"))
                 .assertDefault();
@@ -322,7 +320,7 @@ class NexusAgentProxyIT {
                 .createDefault();
 
         this.testManager.mockMvc()
-                .ping(NexusAgentMockMvcEndpoints.refreshRepository())
+                .ping(NexusAgentMockMvcEndpoints.refreshRepository()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ID)
                         .add("repositoryId", REPOSITORY_ID))
@@ -339,7 +337,7 @@ class NexusAgentProxyIT {
                 .createDefault();
 
         this.testManager.mockMvc()
-                .ping(NexusAgentMockMvcEndpoints.createProjectConflict())
+                .ping(NexusAgentMockMvcEndpoints.createProjectConflict()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .assertDefault();
 
         upstream.verify();
@@ -351,7 +349,7 @@ class NexusAgentProxyIT {
                 .createMapping(ForgeAgentWireMockEndpoints.createLogSource())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.createLogSource())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.createLogSource()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         upstream.verify();
     }
@@ -362,7 +360,7 @@ class NexusAgentProxyIT {
                 .createMapping(ForgeAgentWireMockEndpoints.listLogSources())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.listLogSources())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.listLogSources()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         upstream.verify();
     }
@@ -373,7 +371,7 @@ class NexusAgentProxyIT {
                 .createMapping(ForgeAgentWireMockEndpoints.discoverLogs())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.discoverLogs())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.discoverLogs()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         upstream.verify();
     }
@@ -384,7 +382,7 @@ class NexusAgentProxyIT {
                 .createMapping(ForgeAgentWireMockEndpoints.discoverRuntimeTargets())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.discoverRuntimeTargets())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.discoverRuntimeTargets()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         upstream.verify();
     }
@@ -395,7 +393,7 @@ class NexusAgentProxyIT {
                 .createMapping(ForgeAgentWireMockEndpoints.discoverRuntimeTargetsConflict())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.discoverRuntimeTargetsConflict())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.discoverRuntimeTargetsConflict()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         upstream.verify();
     }
@@ -406,7 +404,7 @@ class NexusAgentProxyIT {
                 .createMapping(ForgeAgentWireMockEndpoints.createLogSourceConflict())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.createLogSourceConflict())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.createLogSourceConflict()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         upstream.verify();
     }
@@ -417,7 +415,7 @@ class NexusAgentProxyIT {
                 .createMapping(ForgeAgentWireMockEndpoints.testSshConnection())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.testSshConnection())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.testSshConnection()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         upstream.verify();
     }
@@ -428,14 +426,14 @@ class NexusAgentProxyIT {
                 .createMapping(ForgeAgentWireMockEndpoints.testSshConnectionFailure())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.testSshConnectionFailure())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.testSshConnectionFailure()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         upstream.verify();
     }
 
     @Test
     void invalidLogsRequestIsRejectedBeforeAnyUpstreamCall() {
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.invalidLogSource())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.invalidLogSource()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
     }
 
@@ -444,14 +442,14 @@ class NexusAgentProxyIT {
         var create = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.createService())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.createService())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.createService()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         create.verify();
 
         var list = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.listServices())
                 .pathPattern(WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())))
                 .createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.listServices())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.listServices()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ID)).assertDefault();
         list.verify();
     }
@@ -465,31 +463,31 @@ class NexusAgentProxyIT {
 
         var get = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.getService())
                 .pathPattern(path).createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.getService())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.getService()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(mvcPath).assertDefault();
         get.verify();
 
         var update = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.updateService())
                 .pathPattern(path).createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.updateService())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.updateService()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(mvcPath).assertDefault();
         update.verify();
 
         var runtime = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.serviceRuntime())
                 .pathPattern(path).createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceRuntime())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceRuntime()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(mvcPath).assertDefault();
         runtime.verify();
 
         var logs = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.serviceLogs())
                 .pathPattern(path).createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceLogs())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceLogs()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(mvcPath).assertDefault();
         logs.verify();
 
         var delete = this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.deleteService())
                 .pathPattern(path).createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.deleteService())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.deleteService()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(mvcPath).assertDefault();
         delete.verify();
     }
@@ -502,7 +500,7 @@ class NexusAgentProxyIT {
         var upstream = this.testManager.wiremock()
                 .createMapping(ForgeAgentWireMockEndpoints.serviceRuntimeFailure())
                 .pathPattern(path).createDefault();
-        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceRuntimeFailure())
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.serviceRuntimeFailure()).header("Host", "127.0.0.1:9099").header("Origin", "http://127.0.0.1:9099").header("X-Forge-CSRF", operatorCsrf).cookie("FG_SESSION", operatorSession)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ID).add("serviceId", SERVICE_ID))
                 .assertDefault();

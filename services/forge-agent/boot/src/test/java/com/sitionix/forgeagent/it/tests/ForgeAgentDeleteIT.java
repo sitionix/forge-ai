@@ -46,7 +46,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 
 @IntegrationTest
-class ForgeAgentDeleteIT {
+class ForgeAgentDeleteIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
@@ -77,25 +77,25 @@ class ForgeAgentDeleteIT {
 
     @Test
     void givenMissingResources_whenDelete_thenResourceSpecificNotFoundIsReturned() {
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .andExpectPath(jsonPath("$.code").value("PROJECT_NOT_FOUND"))
                 .assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(DELETE_AGENT_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_AGENT_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("agentId", UNKNOWN_AGENT_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .andExpectPath(jsonPath("$.code").value("AGENT_NOT_FOUND"))
                 .assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("workflowId", UNKNOWN_WORKFLOW_ID))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .andExpectPath(jsonPath("$.code").value("WORKFLOW_NOT_FOUND"))
                 .assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_TASK_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_TASK_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("taskId", UUID.fromString("50000000-0000-4000-8000-000000009999")))
                 .expectStatus(HttpStatus.NOT_FOUND)
                 .andExpectPath(jsonPath("$.code").value("PROJECT_TASK_NOT_FOUND"))
@@ -110,7 +110,7 @@ class ForgeAgentDeleteIT {
         final UUID runId = this.saveWorkflowRun("SUCCEEDED", taskId);
         this.nodeRunRepository.save(this.nodeRun(UUID.randomUUID(), runId, AGENT_A_ID, "SUCCEEDED"));
 
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.NO_CONTENT)
                 .assertAndCreate();
@@ -132,7 +132,7 @@ class ForgeAgentDeleteIT {
         final UUID taskId = this.saveTask();
         this.saveWorkflowRun("RUNNING", taskId);
 
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.CONFLICT)
                 .andExpectPath(jsonPath("$.code").value("PROJECT_HAS_ACTIVE_EXECUTIONS"))
@@ -146,7 +146,7 @@ class ForgeAgentDeleteIT {
     void givenUnusedAgent_whenDeleteAgent_thenAgentIsRemoved() {
         this.seedProjectAndAgent();
 
-        this.forgeIt.mockMvc().ping(DELETE_AGENT)
+        this.forgeIt.mockMvc().ping(DELETE_AGENT).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
                 .expectStatus(HttpStatus.NO_CONTENT)
                 .assertAndCreate();
@@ -159,7 +159,7 @@ class ForgeAgentDeleteIT {
         this.seedProjectAgentsAndWorkflow();
         this.updateWorkflow();
 
-        this.forgeIt.mockMvc().ping(DELETE_AGENT_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_AGENT_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
                 .expectStatus(HttpStatus.CONFLICT)
                 .andExpectPath(jsonPath("$.code").value("AGENT_IN_USE"))
@@ -170,7 +170,7 @@ class ForgeAgentDeleteIT {
         final UUID runId = this.saveWorkflowRun("RUNNING", null);
         this.nodeRunRepository.save(this.nodeRun(UUID.randomUUID(), runId, AGENT_A_ID, "RUNNING"));
 
-        this.forgeIt.mockMvc().ping(DELETE_AGENT_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_AGENT_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
                 .expectStatus(HttpStatus.CONFLICT)
                 .andExpectPath(jsonPath("$.code").value("AGENT_IN_USE"))
@@ -183,7 +183,7 @@ class ForgeAgentDeleteIT {
         final UUID runId = this.saveWorkflowRun("SUCCEEDED", null);
         this.nodeRunRepository.save(this.nodeRun(UUID.randomUUID(), runId, AGENT_A_ID, "SUCCEEDED"));
 
-        this.forgeIt.mockMvc().ping(DELETE_AGENT)
+        this.forgeIt.mockMvc().ping(DELETE_AGENT).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("agentId", AGENT_A_ID))
                 .expectStatus(HttpStatus.NO_CONTENT)
                 .assertAndCreate();
@@ -197,7 +197,7 @@ class ForgeAgentDeleteIT {
         this.seedProjectAgentsAndWorkflow();
         this.updateWorkflow();
 
-        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW)
+        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.NO_CONTENT)
                 .assertAndCreate();
@@ -208,7 +208,7 @@ class ForgeAgentDeleteIT {
         this.seedProjectAgentsAndWorkflow();
         this.updateWorkflow();
         this.saveTask();
-        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.CONFLICT)
                 .andExpectPath(jsonPath("$.code").value("WORKFLOW_IN_USE"))
@@ -217,7 +217,7 @@ class ForgeAgentDeleteIT {
         this.cleanDatabase();
         this.seedProjectAgentsAndWorkflow();
         this.saveWorkflowRun("RUNNING", null);
-        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.CONFLICT)
                 .andExpectPath(jsonPath("$.code").value("WORKFLOW_IN_USE"))
@@ -226,7 +226,7 @@ class ForgeAgentDeleteIT {
         this.cleanDatabase();
         this.seedProjectAgentsAndWorkflow();
         this.saveWorkflowRun("SUCCEEDED", null);
-        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW)
+        this.forgeIt.mockMvc().ping(DELETE_WORKFLOW).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .expectStatus(HttpStatus.NO_CONTENT)
                 .assertAndCreate();
@@ -241,7 +241,7 @@ class ForgeAgentDeleteIT {
         final UUID runId = this.saveWorkflowRun("RUNNING", taskId);
         this.nodeRunRepository.save(this.nodeRun(UUID.randomUUID(), runId, AGENT_A_ID, "RUNNING"));
 
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_TASK_ERROR)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_TASK_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("taskId", taskId))
                 .expectStatus(HttpStatus.CONFLICT)
                 .andExpectPath(jsonPath("$.code").value("PROJECT_TASK_HAS_ACTIVE_EXECUTIONS"))
@@ -259,7 +259,7 @@ class ForgeAgentDeleteIT {
             nodeRun.setFinishedAt(nodeRun.getCreatedAt().plusSeconds(10));
             this.nodeRunRepository.save(nodeRun);
         }
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_TASK)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_TASK).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("taskId", taskId))
                 .expectStatus(HttpStatus.NO_CONTENT)
                 .assertAndCreate();
@@ -300,7 +300,7 @@ class ForgeAgentDeleteIT {
 
     private void updateWorkflow() {
         this.forgeIt.mockMvc()
-                .ping(UPDATE_WORKFLOW)
+                .ping(UPDATE_WORKFLOW).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("workflowId", WORKFLOW_ID))
                 .withRequest("requestUpdateWorkflowGraph.json")
                 .expectStatus(HttpStatus.OK)

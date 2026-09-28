@@ -32,7 +32,7 @@ class McpRegistryCatalogAdapterTest {
         };
         try (var context = new AnnotationConfigApplicationContext()) {
             context.getEnvironment().getPropertySources().addFirst(
-                    new MapPropertySource("test", Map.of("forge.mcp.enabled", "true")));
+                    new MapPropertySource("test", Map.of()));
             context.register(CacheTestConfiguration.class);
             context.registerBean(org.springframework.cache.CacheManager.class,
                     () -> new McpRegistryHttpClientConfiguration().cacheManager(ticker));

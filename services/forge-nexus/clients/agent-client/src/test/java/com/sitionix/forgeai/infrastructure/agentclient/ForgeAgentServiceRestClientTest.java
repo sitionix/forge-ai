@@ -51,7 +51,7 @@ class ForgeAgentServiceRestClientTest {
       final ForgeAgentHttpClient client = new ForgeAgentHttpClientConfiguration()
           .forgeAgentHttpClient(properties,
               RestClient.builder().defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer caller"),
-              factory.getBeanProvider(AgentServiceCredential.class), true);
+              credential);
 
       assertThat(client.listProjects()).isEmpty();
       assertThat(authorization.get()).isEqualTo(credential.authorization());

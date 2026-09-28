@@ -10,7 +10,6 @@ import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
 import com.sitionix.forgeit.wiremock.api.WireMockPathParams;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.file.*;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
@@ -26,7 +25,7 @@ import org.springframework.context.annotation.*;
 import org.springframework.test.context.*;
 import org.springframework.mock.web.MockHttpSession;
 
-@IntegrationTest(properties={"forge.mcp.enabled=true","forge.remote-access.enabled=true","server.address=127.0.0.1",
+@IntegrationTest(properties={"forge.remote-access.enabled=true","server.address=127.0.0.1",
     "forge.remote-access.operator-origin=http://127.0.0.1:9099",
     "forge.ai.infrastructure.agent.base-url=${forge-it.wiremock.base-url}",
     "forge.ai.infrastructure.knowledge.base-url=${forge-it.wiremock.base-url}",

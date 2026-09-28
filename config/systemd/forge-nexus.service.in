@@ -9,6 +9,7 @@ User=@FORGE_SYSTEMD_USER@
 Group=@FORGE_SYSTEMD_GROUP@
 WorkingDirectory=@FORGE_AI_HOME@
 EnvironmentFile=@FORGE_SYSTEMD_ENV_FILE@
+EnvironmentFile=@FORGE_MCP_MATERIAL_DIR@/nexus.env
 ExecStart=@FORGE_AI_HOME@/scripts/runtime/run-nexus.sh
 SuccessExitStatus=143
 Restart=on-failure

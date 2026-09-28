@@ -183,12 +183,6 @@ public final class NexusAgentMockMvcEndpoints {
     private NexusAgentMockMvcEndpoints() {
     }
 
-    public static Endpoint<Void, Void> absentOperatorSessionWhenMcpDisabled() {
-        return Endpoint.createContract("/api/v1/operator/session", HttpMethod.GET,
-                Void.class, Void.class,
-                (MockmvcDefault) context -> context.expectStatus(HttpStatus.NOT_FOUND.value()));
-    }
-
     public static Endpoint<Void, AgentExecutionEventPageResponse> agentExecutionEvents() {
         return Endpoint.createContract(
                 "/api/v1/infrastructure/agents/agent-execution-turns/{turnId}/events", HttpMethod.GET,

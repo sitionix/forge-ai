@@ -27,16 +27,31 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 
 @IntegrationTest
-class ForgeAgentProjectRepositoryIT {
+class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     private static final UUID PROJECT_ALPHA_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
 
+    @org.springframework.boot.test.mock.mockito.MockBean
+    private com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeProcessLauncher runtimeLauncher;
+
+    @BeforeEach
+    void configureFixtureGit() throws Exception {
+        org.mockito.Mockito.when(runtimeLauncher.startGit(org.mockito.ArgumentMatchers.anyList())).thenAnswer(invocation -> {
+            java.util.List<String> command = invocation.getArgument(0);
+            Process process = new ProcessBuilder(command).start();
+            return new com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess(process, () -> {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+            });
+        });
+    }
+
     @BeforeEach
     void cleanLocalWorkspace() throws IOException {
-        this.deleteRecursively(this.forgeRoot().resolve("forge-projects").resolve(PROJECT_ALPHA_ID.toString()));
+        this.deleteRecursively(MANAGED_WORKSPACE.resolve(PROJECT_ALPHA_ID.toString()));
     }
 
     @Test
@@ -44,7 +59,7 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
+                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -52,7 +67,7 @@ class ForgeAgentProjectRepositoryIT {
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
+                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportSecondProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -66,7 +81,7 @@ class ForgeAgentProjectRepositoryIT {
                 );
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_REPOSITORIES)
+                .ping(LIST_PROJECT_REPOSITORIES).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjectRepositories.json", "id", "createdAt")
@@ -78,7 +93,7 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY_ERROR)
+                .ping(IMPORT_PROJECT_REPOSITORY_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportBlankProjectRepository.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -92,7 +107,7 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY_ERROR)
+                .ping(IMPORT_PROJECT_REPOSITORY_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportInvalidProjectRepository.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
@@ -107,7 +122,7 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
+                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -116,7 +131,7 @@ class ForgeAgentProjectRepositoryIT {
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(CLONE_PROJECT_REPOSITORY)
+                .ping(CLONE_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -125,7 +140,7 @@ class ForgeAgentProjectRepositoryIT {
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_REPOSITORIES)
+                .ping(LIST_PROJECT_REPOSITORIES).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjectRepositoriesCloned.json", "id", "createdAt")
@@ -137,7 +152,7 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
+                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -146,7 +161,7 @@ class ForgeAgentProjectRepositoryIT {
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(CLONE_PROJECT_REPOSITORY)
+                .ping(CLONE_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -154,7 +169,7 @@ class ForgeAgentProjectRepositoryIT {
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(PULL_PROJECT_REPOSITORY)
+                .ping(PULL_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -175,7 +190,7 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
+                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -184,7 +199,7 @@ class ForgeAgentProjectRepositoryIT {
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(CLONE_PROJECT_REPOSITORY)
+                .ping(CLONE_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -192,7 +207,7 @@ class ForgeAgentProjectRepositoryIT {
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(REFRESH_PROJECT_REPOSITORY)
+                .ping(REFRESH_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -213,7 +228,7 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
+                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -222,7 +237,7 @@ class ForgeAgentProjectRepositoryIT {
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(REFRESH_PROJECT_REPOSITORY_ERROR)
+                .ping(REFRESH_PROJECT_REPOSITORY_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -236,7 +251,7 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
+                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -245,7 +260,7 @@ class ForgeAgentProjectRepositoryIT {
         final UUID repositoryId = this.forgeIt.postgresql().get(ProjectRepositoryEntity.class).getAll().getFirst().getId();
 
         this.forgeIt.mockMvc()
-                .ping(PULL_PROJECT_REPOSITORY_ERROR)
+                .ping(PULL_PROJECT_REPOSITORY_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create()
                         .add("projectId", PROJECT_ALPHA_ID)
                         .add("repositoryId", repositoryId))
@@ -259,7 +274,7 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
+                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportInvalidCheckoutProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
@@ -268,7 +283,7 @@ class ForgeAgentProjectRepositoryIT {
         this.createInvalidManagedCheckout("invalid-checkout");
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECT_REPOSITORIES)
+                .ping(LIST_PROJECT_REPOSITORIES).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjectRepositoriesInvalidCheckout.json", "id", "createdAt")
@@ -280,14 +295,14 @@ class ForgeAgentProjectRepositoryIT {
         this.seedProject();
 
         this.forgeIt.mockMvc()
-                .ping(IMPORT_PROJECT_REPOSITORY)
+                .ping(IMPORT_PROJECT_REPOSITORY).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .withRequest("requestImportProjectRepository.json")
                 .expectStatus(HttpStatus.CREATED)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(DELETE_PROJECT)
+                .ping(DELETE_PROJECT).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("projectId", PROJECT_ALPHA_ID))
                 .expectStatus(HttpStatus.NO_CONTENT)
                 .assertAndCreate();
@@ -304,10 +319,12 @@ class ForgeAgentProjectRepositoryIT {
 
     private void createInvalidManagedCheckout(final String repositoryName) {
         try {
-            final Path repositoryPath = this.forgeRoot()
-                    .resolve("forge-projects")
+            final Path repositoryPath = MANAGED_WORKSPACE
                     .resolve(PROJECT_ALPHA_ID.toString())
                     .resolve(repositoryName);
+            new com.sitionix.forgeagent.infrastructure.local.LocalProjectWorkspaceAdapter(
+                    new com.sitionix.forgeagent.infrastructure.local.ForgeRootResolver(MANAGED_WORKSPACE))
+                    .resolveProjectWorkspace(PROJECT_ALPHA_ID);
             Files.createDirectories(repositoryPath.resolve(".git"));
             Files.writeString(repositoryPath.resolve("invalid-git-checkout"), "invalid");
         } catch (final IOException exception) {
@@ -315,16 +332,7 @@ class ForgeAgentProjectRepositoryIT {
         }
     }
 
-    private Path forgeRoot() {
-        Path current = Path.of("").toAbsolutePath().normalize();
-        while (current != null) {
-            if (Files.exists(current.resolve(".git"))) {
-                return current;
-            }
-            current = current.getParent();
-        }
-        return Path.of("").toAbsolutePath().normalize();
-    }
+
 
     private void deleteRecursively(final Path path) throws IOException {
         if (!Files.exists(path)) {

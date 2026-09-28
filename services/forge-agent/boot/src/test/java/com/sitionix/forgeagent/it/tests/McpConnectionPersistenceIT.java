@@ -10,8 +10,6 @@ import com.sitionix.forgeagent.infrastructure.local.mcp.*;
 import com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresMcpConnectionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresMcpToolInventoryRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresForgeInstanceIdentityRepository;
-import com.sitionix.forgeagent.AgentMcpDowngradeConfiguration;
-import com.sitionix.forgeagent.RemoteAccessPairingReconciliation;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import java.net.URI;
@@ -24,10 +22,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 @IntegrationTest
-class McpConnectionPersistenceIT {
+class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     private static final String FP_ONE = "sha256:" + "a".repeat(64);
     private static final String FP_TWO = "sha256:" + "b".repeat(64);
     private static final String FP_THREE = "sha256:" + "c".repeat(64);
@@ -98,31 +95,6 @@ class McpConnectionPersistenceIT {
                 .isInstanceOf(IllegalStateException.class).hasMessage("MCP connection changed during probe");
         assertThat(inventory.list(installation, id)).isEmpty();
         connections.delete(installation, id);
-    }
-
-    @Test void retainedCredentialProbeIgnoresConnectionEnableAndChecksBothStorageSignals() {
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
-        assertThat(repository.hasRetainedCredentials()).isFalse();
-        UUID installation=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(), id=UUID.randomUUID();
-        Instant now=Instant.now();
-        var connection=new McpConnection(id,installation,"retained",URI.create("https://example.org/mcp"),
-                McpAuthType.BEARER,false,McpProjectAccess.all(),Set.of(),true,now,now,null,null);
-        repository.insert(new McpConnectionState(connection,new McpEncryptedCredential("k1",new byte[]{1,2,3})));
-        assertThat(repository.hasRetainedCredentials()).isTrue();
-        new ApplicationContextRunner()
-                .withUserConfiguration(RemoteAccessPairingReconciliation.class,AgentMcpDowngradeConfiguration.class)
-                .withBean(McpConnectionRepository.class,() -> repository)
-                .run(context -> assertThat(context.getStartupFailure()).isNotNull()
-                        .hasRootCauseMessage("MCP downgrade refused: protected material retained or unavailable"));
-        assertThat(repository.credential(installation,id)).contains(new McpEncryptedCredential("k1",new byte[]{1,2,3}));
-        jdbc.update("DELETE FROM mcp_connection_credentials WHERE connection_id=?",id);
-        assertThat(repository.hasRetainedCredentials()).isTrue();
-        jdbc.update("UPDATE mcp_connections SET credential_configured=FALSE WHERE id=?",id);
-        assertThat(repository.hasRetainedCredentials()).isFalse();
-        jdbc.update("INSERT INTO mcp_connection_credentials(connection_id,key_id,ciphertext) VALUES(?,?,?)",id,"k1",new byte[]{1,2,3});
-        assertThat(repository.hasRetainedCredentials()).isTrue();
-        repository.delete(installation,id);
-        assertThat(repository.hasRetainedCredentials()).isFalse();
     }
 
     @Test void migrationAndRoundTripSeparateMetadataFromCiphertext() {

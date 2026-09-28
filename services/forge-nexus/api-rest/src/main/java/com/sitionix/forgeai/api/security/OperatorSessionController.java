@@ -4,14 +4,13 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 @org.springframework.context.annotation.Conditional(McpOnlyCondition.class)
 @RestController
 @RequestMapping("/api/v1/operator/session")
-@ConditionalOnProperty(name="forge.mcp.enabled",havingValue="true")
+
 public final class OperatorSessionController {
     private final OperatorSessionService sessions;
     private final URI origin;

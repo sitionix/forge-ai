@@ -13,7 +13,7 @@ EnvironmentFile=/etc/forge-ai/forge-remote-agent.env
 EnvironmentFile=/etc/forge-ai/forge-remote-endpoint.env
 EnvironmentFile=/etc/forge-remote/management/agent.env
 EnvironmentFile=-/etc/forge-remote/management/local-exec-agent.env
-ExecStart=/usr/bin/java -jar /usr/local/lib/forge-remote/forge-agent.jar --spring.docker.compose.enabled=false --server.address=127.0.0.1 --server.port=7092
+ExecStart=/usr/bin/java -Dloader.main=com.sitionix.forgeremote.agent.RemoteAccessAgentApplication -cp /usr/local/lib/forge-remote/forge-agent.jar org.springframework.boot.loader.launch.PropertiesLauncher --spring.docker.compose.enabled=false --server.address=127.0.0.1 --server.port=7092
 SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5s

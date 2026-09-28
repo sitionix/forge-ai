@@ -3,15 +3,12 @@ package com.sitionix.forgeagent.api.mcp;
 import com.sitionix.forgeagent.application.mcp.McpConnectionService;
 import com.sitionix.forgeagent.domain.model.*;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@ConditionalOnProperty(prefix="forge.mcp",name="enabled",havingValue="true")
 @RequestMapping("/api/v1/integrations/mcp/connections")
 public class McpConnectionsController {
     private final McpConnectionService service;

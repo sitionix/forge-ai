@@ -21,7 +21,7 @@ import org.springframework.http.HttpStatus;
 import static org.assertj.core.api.Assertions.*;
 
 @IntegrationTest
-class ForgeAgentManualNodeFoundationIT {
+class ForgeAgentManualNodeFoundationIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private WorkflowUseCases workflows;
     @Autowired private WorkflowRunUseCases runs;
@@ -48,7 +48,7 @@ class ForgeAgentManualNodeFoundationIT {
                 template.taskInputPortId(), template.taskOutputPortId()));
 
         assertThat(workflows.getWorkflow(template.id()).nodes().getFirst().nodeType()).isEqualTo(NodeType.AGENT);
-        forgeIt.mockMvc().ping(GET_WORKFLOW_RUN)
+        forgeIt.mockMvc().ping(GET_WORKFLOW_RUN).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(PathParams.create().add("runId", runId))
                 .expectStatus(HttpStatus.OK)
                 .andExpectPath(jsonPath("$.nodeRuns[0].nodeType").value("MANUAL"))

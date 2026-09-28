@@ -21,7 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 
 @IntegrationTest
-class ForgeAgentProjectLogsSchemaIT {
+class ForgeAgentProjectLogsSchemaIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
   private static final UUID PROJECT_ID = UUID.fromString("90000000-0000-4000-8000-000000000001");
   private static final UUID SERVICE_ID = UUID.fromString("90000000-0000-4000-8000-000000000010");
@@ -52,7 +52,7 @@ class ForgeAgentProjectLogsSchemaIT {
 
     this.forgeIt
         .mockMvc()
-        .ping(DELETE_PROJECT)
+        .ping(DELETE_PROJECT).header("Authorization", SERVICE_BEARER)
         .withPathParameters(PathParams.create().add("projectId", PROJECT_ID))
         .expectStatus(HttpStatus.NO_CONTENT)
         .assertAndCreate();

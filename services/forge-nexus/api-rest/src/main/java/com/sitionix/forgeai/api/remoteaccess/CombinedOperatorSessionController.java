@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 /** Canonical Console routes delegated to the existing combined-mode session owner. */
 @RestController
 @RequiredArgsConstructor
-@ConditionalOnProperty(name={"forge.mcp.enabled","forge.remote-access.enabled"},havingValue="true")
+@ConditionalOnProperty(name="forge.remote-access.enabled",havingValue="true")
 @RequestMapping("/api/v1/operator/session")
 public class CombinedOperatorSessionController {
     private final RemoteAccessOperatorAuthentication authentication;

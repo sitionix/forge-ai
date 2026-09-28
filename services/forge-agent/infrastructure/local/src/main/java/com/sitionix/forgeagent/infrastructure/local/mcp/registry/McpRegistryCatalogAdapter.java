@@ -8,13 +8,12 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 
 @Component
-@ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
+
 public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
     private static final Pattern REMOTE_URL_TEMPLATE = Pattern.compile(
             "^(?:https?://[^\\s]+|\\{[a-zA-Z_][a-zA-Z0-9_]*\\}[^\\s]*)$");

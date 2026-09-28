@@ -21,7 +21,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.test.web.servlet.MockMvc;
 
 @IntegrationTest
-class ForgeAgentProjectAssetIT {
+class ForgeAgentProjectAssetIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     private static final UUID PROJECT_ID = UUID.fromString("90000000-0000-4000-8000-000000000001");
     private static final UUID OTHER_PROJECT_ID = UUID.fromString("10000000-0000-4000-8000-000000000002");
 
@@ -40,30 +40,30 @@ class ForgeAgentProjectAssetIT {
                 .to(SSH_CONNECTION.withJson("logs_ssh.json"))
                 .build();
 
-        this.forgeIt.mockMvc().ping(CREATE_PROJECT_ASSET)
+        this.forgeIt.mockMvc().ping(CREATE_PROJECT_ASSET).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(project(PROJECT_ID))
                 .withRequest("requestCreateProjectAsset.json")
                 .expectStatus(HttpStatus.CREATED).assertAndCreate();
         final ProjectAssetEntity asset = this.forgeIt.postgresql().get(ProjectAssetEntity.class)
                 .getAll().stream().findFirst().orElseThrow();
 
-        this.forgeIt.mockMvc().ping(LIST_PROJECT_ASSETS)
+        this.forgeIt.mockMvc().ping(LIST_PROJECT_ASSETS).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(project(PROJECT_ID)).expectStatus(HttpStatus.OK).assertAndCreate();
-        this.forgeIt.mockMvc().ping(GET_PROJECT_ASSET)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_ASSET).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(asset(PROJECT_ID, asset.getId()))
                 .expectStatus(HttpStatus.OK).assertAndCreate();
-        this.forgeIt.mockMvc().ping(GET_PROJECT_ASSET_ERROR)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_ASSET_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(asset(OTHER_PROJECT_ID, asset.getId()))
                 .expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
-        this.forgeIt.mockMvc().ping(CREATE_PROJECT_ASSET_ERROR)
+        this.forgeIt.mockMvc().ping(CREATE_PROJECT_ASSET_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(project(OTHER_PROJECT_ID))
                 .withRequest("requestCreateProjectAsset.json")
                 .expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(GET_PROJECT_ASSET_METRICS)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_ASSET_METRICS).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(asset(PROJECT_ID, asset.getId()))
                 .expectStatus(HttpStatus.OK).expectResponse("responseAssetMetrics.json").assertAndCreate();
-        this.forgeIt.mockMvc().ping(GET_PROJECT_ASSET_CAPABILITIES)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_ASSET_CAPABILITIES).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(asset(PROJECT_ID, asset.getId()))
                 .expectStatus(HttpStatus.OK).expectResponse("responseAssetCapabilities.json").assertAndCreate();
 
@@ -71,7 +71,7 @@ class ForgeAgentProjectAssetIT {
                         "/api/v1/projects/{projectId}/assets/{assetId}/monitoring",
                         PROJECT_ID,
                         asset.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", SERVICE_BEARER).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"camera.service\",\"provider\":\"SYSTEMD\",\"target\":\"camera.service\",\"enabled\":true}"))
                 .andExpect(status().isCreated())
                 .andReturn();
@@ -89,11 +89,11 @@ class ForgeAgentProjectAssetIT {
                 .getAll().stream().findFirst().orElseThrow();
         assertThat(monitoring.getAssetId()).isEqualTo(asset.getId());
         assertThat(monitoring.getServiceId()).isNull();
-        this.forgeIt.mockMvc().ping(LIST_PROJECT_ASSET_MONITORING)
+        this.forgeIt.mockMvc().ping(LIST_PROJECT_ASSET_MONITORING).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(asset(PROJECT_ID, asset.getId()))
                 .expectStatus(HttpStatus.OK).assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_ASSET)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_ASSET).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(asset(PROJECT_ID, asset.getId()))
                 .expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
         assertThat(this.forgeIt.postgresql().get(ProjectAssetEntity.class).getAll()).isEmpty();

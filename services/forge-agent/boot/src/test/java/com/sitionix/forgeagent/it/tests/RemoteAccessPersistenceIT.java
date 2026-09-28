@@ -492,7 +492,7 @@ class RemoteAccessPersistenceIT {
     }
 
     private static org.springframework.context.ConfigurableApplicationContext startApplication() {
-        return new org.springframework.boot.builder.SpringApplicationBuilder(com.sitionix.forgeagent.ForgeAgentApplication.class)
+        return new org.springframework.boot.builder.SpringApplicationBuilder(com.sitionix.forgeremote.agent.RemoteAccessAgentApplication.class)
                 .run("--server.port=0", "--spring.datasource.url="+DATABASE.getJdbcUrl(),
                         "--spring.datasource.username="+DATABASE.getUsername(), "--spring.datasource.password="+DATABASE.getPassword(),
                         "--forge.agent.worker.scheduling-enabled=false", "--spring.main.banner-mode=off");

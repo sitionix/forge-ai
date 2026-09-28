@@ -8,14 +8,13 @@ import java.time.Clock;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Objects;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods=false)
-@ConditionalOnProperty(name="forge.mcp.enabled",havingValue="true")
+
 @org.springframework.context.annotation.Conditional(McpOnlyCondition.class)
 @EnableConfigurationProperties(McpManagementProperties.class)
 public class OperatorManagementSecurityConfiguration {

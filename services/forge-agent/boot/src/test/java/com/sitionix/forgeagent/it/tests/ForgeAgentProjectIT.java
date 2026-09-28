@@ -15,12 +15,12 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @IntegrationTest
-class ForgeAgentProjectIT {
+class ForgeAgentProjectIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     @Test
-    void mcpRoutesAreAbsentWhenFeatureIsOff() {
-        forgeIt.mockMvc().ping(com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_MCP_CONNECTIONS)
-                .expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
+    void mcpRoutesExistWithoutGlobalActivationSetting() {
+        forgeIt.mockMvc().ping(com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_MCP_CONNECTIONS).header("Authorization", SERVICE_BEARER)
+                .expectStatus(HttpStatus.OK).assertAndCreate();
     }
 
     @Autowired
@@ -37,7 +37,7 @@ class ForgeAgentProjectIT {
         assertThat(this.environment.getProperty("spring.flyway.enabled", Boolean.class)).isTrue();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT)
+                .ping(CREATE_PROJECT).header("Authorization", SERVICE_BEARER)
                 .withRequest("requestCreateProject.json")
                 .expectStatus(HttpStatus.CREATED)
                 .expectResponse("responseCreateProject.json", "id", "createdAt", "updatedAt")
@@ -60,7 +60,7 @@ class ForgeAgentProjectIT {
                 .build();
 
         this.forgeIt.mockMvc()
-                .ping(LIST_PROJECTS)
+                .ping(LIST_PROJECTS).header("Authorization", SERVICE_BEARER)
                 .expectStatus(HttpStatus.OK)
                 .expectResponse("responseListProjects.json")
                 .assertAndCreate();
@@ -73,13 +73,13 @@ class ForgeAgentProjectIT {
     @Test
     void givenDuplicateNormalizedProjectName_whenCreateProject_thenConflictIsReturned() {
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT)
+                .ping(CREATE_PROJECT).header("Authorization", SERVICE_BEARER)
                 .withRequest("requestCreateProject.json")
                 .expectStatus(HttpStatus.CREATED)
                 .assertAndCreate();
 
         this.forgeIt.mockMvc()
-                .ping(CREATE_PROJECT_ERROR)
+                .ping(CREATE_PROJECT_ERROR).header("Authorization", SERVICE_BEARER)
                 .withRequest("requestCreateProjectLowercase.json")
                 .expectStatus(HttpStatus.CONFLICT)
                 .expectResponse("responseDuplicateProjectError.json")

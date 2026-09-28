@@ -47,8 +47,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        classes = McpGatewayEndToEndHttpTest.TestApp.class,
-        properties = "forge.mcp.enabled=true")
+        classes = McpGatewayEndToEndHttpTest.TestApp.class)
 class McpGatewayEndToEndHttpTest {
     private static final String SECRET = "synthetic-external-credential";
 

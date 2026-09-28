@@ -45,7 +45,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 @IntegrationTest(properties = {
-    "forge.mcp.enabled=true",
+
     "forge.mcp.operator-origin=http://127.0.0.1:9099",
     "forge.ai.infrastructure.agent.base-url=${forge-it.wiremock.base-url}",
     "forge.ai.infrastructure.agent.connect-timeout=5s",

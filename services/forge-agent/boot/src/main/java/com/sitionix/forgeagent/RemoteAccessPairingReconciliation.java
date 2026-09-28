@@ -4,17 +4,16 @@ import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessAccessorPair
 import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessGrantorPairing;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import jakarta.annotation.PostConstruct;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import jakarta.annotation.PreDestroy;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 @Component
-@DependsOn("mcpDowngradeGuard")
 @RequiredArgsConstructor
 @Slf4j
 public class RemoteAccessPairingReconciliation {
@@ -32,7 +31,7 @@ public class RemoteAccessPairingReconciliation {
         return thread;
     });
 
-    @PostConstruct
+    @EventListener(ApplicationReadyEvent.class)
     public void start() {
         timer.scheduleWithFixedDelay(this::reconcile, 1, 10, TimeUnit.SECONDS);
     }

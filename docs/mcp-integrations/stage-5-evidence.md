@@ -170,7 +170,7 @@ No minor review findings were deferred. The four required fixes above have RED â
 - `MILESTONE_A`: normal Agent-owned workflow after UI create; actual managed launcher/credential-file/config injection; Agent/Forge restart followed by fresh runtime grant without manual MCP config.
 - Root-systemd mount/process/reader sandbox isolation and management-secret unreadability. Prior [Stage 4 evidence](stage-4-evidence.md) is historical and was not rerun as privileged Stage 5 deployment evidence.
 - Native joined fixture on Stage 4's pinned 0.157.0 CLI: NOT_VERIFIED here; installed disposable probe used 0.158.0.
-- Production deployment/provisioning; existing `forge.mcp.enabled` and protected management files remain prerequisites. No default feature flag was changed.
+- Historical Stage 5 deployment/provisioning was NOT_VERIFIED here. The former global activation prerequisite is OBSOLETE; current provisioning and real local runtime results are recorded in [normal-runtime-evidence.md](normal-runtime-evidence.md). Protected management material remains mandatory.
 - `LIVE_PROVIDER = NOT_VERIFIED`; all MCP/model endpoints in the acceptance fixture are local synthetic fixtures. `LIVE_REGISTRY = NOT_VERIFIED`; Stage 5 did not use catalog calls.
 - Actual bearer/secret-header Custom UI joined to a provider: NOT_VERIFIED; browser stub verifies write-only UI behavior, existing Stage 1/2 backend suites verify credential boundaries separately.
 

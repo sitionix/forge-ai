@@ -13,16 +13,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.*;
 import javax.sql.DataSource;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
 
-/** Enabled-mode files and runtime isolation must be proven before MCP management is available. */
+/** Protected files and runtime isolation must be proven before MCP management is available. */
 @Configuration(proxyBeanMethods=false)
-@ConditionalOnProperty(name="forge.mcp.enabled",havingValue="true")
 @EnableConfigurationProperties(McpManagementProperties.class)
 public class AgentMcpProtectedConfiguration {
     @Bean Object mcpProtectedPrerequisites(McpManagementProperties settings,RuntimeBoundaryVerifier verifier,

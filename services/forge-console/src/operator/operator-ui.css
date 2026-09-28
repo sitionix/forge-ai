@@ -6129,3 +6129,10 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 @media (max-width: 600px) {
   .sidebar-brand .sidebar-title { display: none; }
 }
+
+.settings-header h1 { margin: 0 0 24px; }
+#mcpIntegrations h3 { margin: 0; font-size: 1.2rem; }
+.mcp-description { color: var(--muted); margin: 8px 0 24px; }
+#mcpConnections:has(> p:only-child) { padding: 24px 0 8px; color: var(--muted); }
+.mcp-details { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 24px; }
+#mcpIntegrations .error-box { margin: 16px 0; }

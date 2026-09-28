@@ -20,7 +20,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.test.web.servlet.MockMvc;
 
 @IntegrationTest
-class ForgeAgentProjectServiceIT {
+class ForgeAgentProjectServiceIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     private static final UUID PROJECT_ID = UUID.fromString("90000000-0000-4000-8000-000000000001");
     private static final UUID OTHER_PROJECT_ID = UUID.fromString("10000000-0000-4000-8000-000000000002");
     private static final UUID SEEDED_SERVICE_ID = UUID.fromString("90000000-0000-4000-8000-000000000010");
@@ -38,7 +38,7 @@ class ForgeAgentProjectServiceIT {
                 .to(PROJECT_SERVICE.withJson("logs_service.json"))
                 .build();
 
-        this.forgeIt.mockMvc().ping(CREATE_PROJECT_SERVICE)
+        this.forgeIt.mockMvc().ping(CREATE_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(project(PROJECT_ID))
                 .withRequest("requestCreateProjectService.json")
                 .expectStatus(HttpStatus.CREATED).assertAndCreate();
@@ -46,32 +46,32 @@ class ForgeAgentProjectServiceIT {
                 .getAll().stream().filter(service -> !SEEDED_SERVICE_ID.equals(service.getId()))
                 .findFirst().orElseThrow();
 
-        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(service(PROJECT_ID, created.getId()))
                 .expectStatus(HttpStatus.OK).assertAndCreate();
-        this.forgeIt.mockMvc().ping(LIST_PROJECT_SERVICES)
+        this.forgeIt.mockMvc().ping(LIST_PROJECT_SERVICES).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(project(PROJECT_ID)).expectStatus(HttpStatus.OK).assertAndCreate();
-        this.forgeIt.mockMvc().ping(UPDATE_PROJECT_SERVICE)
+        this.forgeIt.mockMvc().ping(UPDATE_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(service(PROJECT_ID, created.getId()))
                 .withRequest("requestUpdateProjectService.json")
                 .expectStatus(HttpStatus.OK).assertAndCreate();
-        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE_RUNTIME)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE_RUNTIME).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(service(PROJECT_ID, created.getId()))
                 .expectStatus(HttpStatus.OK).assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE_ERROR)
+        this.forgeIt.mockMvc().ping(GET_PROJECT_SERVICE_ERROR).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(service(OTHER_PROJECT_ID, created.getId()))
                 .expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(CREATE_LOG_SOURCE)
+        this.forgeIt.mockMvc().ping(CREATE_LOG_SOURCE).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(project(PROJECT_ID))
                 .withRequest("requestCreateServiceLogSource.json")
                 .expectStatus(HttpStatus.CREATED).assertAndCreate();
-        this.forgeIt.mockMvc().ping(LIST_SERVICE_LOG_SOURCES)
+        this.forgeIt.mockMvc().ping(LIST_SERVICE_LOG_SOURCES).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(service(PROJECT_ID, SEEDED_SERVICE_ID))
                 .expectStatus(HttpStatus.OK).assertAndCreate();
 
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_SERVICE)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(service(PROJECT_ID, SEEDED_SERVICE_ID))
                 .expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
         assertThat(this.forgeIt.postgresql().get(LogSourceEntity.class).getAll())
@@ -87,7 +87,7 @@ class ForgeAgentProjectServiceIT {
                 .to(LOG_SOURCE.withJson("logs_source_service_app.json"))
                 .build();
 
-        this.forgeIt.mockMvc().ping(DELETE_PROJECT_SERVICE)
+        this.forgeIt.mockMvc().ping(DELETE_PROJECT_SERVICE).header("Authorization", SERVICE_BEARER)
                 .withPathParameters(service(PROJECT_ID, SEEDED_SERVICE_ID))
                 .expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
 
@@ -99,12 +99,12 @@ class ForgeAgentProjectServiceIT {
                     assertThat(source.getDockerContainer()).isEqualTo("app");
                 });
 
-        this.mockMvc.perform(get("/api/v1/projects/{projectId}/log-sources", PROJECT_ID))
+        this.mockMvc.perform(get("/api/v1/projects/{projectId}/log-sources", PROJECT_ID).header("Authorization", SERVICE_BEARER))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
 
         this.mockMvc.perform(get("/api/v1/projects/{projectId}/logs/stream", PROJECT_ID)
-                        .queryParam("sourceId", legacySourceId.toString())
+                        .header("Authorization", SERVICE_BEARER).queryParam("sourceId", legacySourceId.toString())
                         .queryParam("lines", "10"))
                 .andExpect(status().isNotFound());
     }

@@ -24,7 +24,7 @@ class DefaultGitCommandRunnerTest {
         final Path parentPidFile = this.tempDir.resolve("parent.pid");
         final Path childPidFile = this.tempDir.resolve("child.pid");
         final Path script = this.writeProcessTreeScript(parentPidFile, childPidFile);
-        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner(new GitFixtureProcesses());
 
         assertThatThrownBy(() -> runner.run(List.of("/bin/sh", script.toString()),
                 new GitCommandExecutionPolicy(Duration.ofSeconds(1))))
@@ -37,7 +37,7 @@ class DefaultGitCommandRunnerTest {
 
     @Test
     void capturesStdoutCorrectly() {
-        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner(new GitFixtureProcesses());
 
         final GitCommandResult result = runner.run(List.of("/bin/sh", "-c", "printf 'hello\\nworld\\n'"),
                 new GitCommandExecutionPolicy(Duration.ofSeconds(5)));
@@ -48,7 +48,7 @@ class DefaultGitCommandRunnerTest {
 
     @Test
     void largeStdoutDoesNotDeadlock() {
-        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner(new GitFixtureProcesses());
 
         final GitCommandResult result = runner.run(List.of("/bin/sh", "-c", "yes output | head -n 200000"),
                 new GitCommandExecutionPolicy(Duration.ofSeconds(5)));
@@ -60,7 +60,7 @@ class DefaultGitCommandRunnerTest {
 
     @Test
     void timeoutStillAppliesWhileOutputIsBeingProduced() {
-        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner(new GitFixtureProcesses());
 
         assertThatThrownBy(() -> runner.run(List.of("/bin/sh", "-c", "while true; do printf 'output\\n'; done"),
                 new GitCommandExecutionPolicy(Duration.ofMillis(200))))
@@ -72,7 +72,7 @@ class DefaultGitCommandRunnerTest {
     void timeoutCoversInheritedOutputPipesAfterRootProcessExits() throws Exception {
         final Path childPidFile = this.tempDir.resolve("inherited-pipe-child.pid");
         final Path script = this.writeInheritedPipeScript(childPidFile);
-        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner(new GitFixtureProcesses());
         final Instant startedAt = Instant.now();
 
         assertThatThrownBy(() -> runner.run(List.of("/bin/sh", script.toString()),
@@ -89,7 +89,7 @@ class DefaultGitCommandRunnerTest {
         final Path parentPidFile = this.tempDir.resolve("parent.pid");
         final Path childPidFile = this.tempDir.resolve("child.pid");
         final Path script = this.writeProcessTreeScript(parentPidFile, childPidFile);
-        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner();
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner(new GitFixtureProcesses());
         final AtomicReference<Throwable> thrown = new AtomicReference<>();
         final AtomicBoolean interruptedStatus = new AtomicBoolean();
         final Thread runnerThread = new Thread(() -> {

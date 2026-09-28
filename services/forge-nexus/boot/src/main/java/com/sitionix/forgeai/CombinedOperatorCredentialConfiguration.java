@@ -14,7 +14,7 @@ import org.springframework.context.annotation.Configuration;
 
 /** Combined mode has one RA operator authority and two distinct service audiences. */
 @Configuration(proxyBeanMethods=false)
-@ConditionalOnProperty(name={"forge.mcp.enabled","forge.remote-access.enabled"},havingValue="true")
+@ConditionalOnProperty(name="forge.remote-access.enabled",havingValue="true")
 public class CombinedOperatorCredentialConfiguration {
     @Bean Object combinedOperatorCredentials(
             @Value("${forge.remote-access.operator-secret-file}") Path operator,

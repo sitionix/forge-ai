@@ -116,7 +116,14 @@ public final class LiveCodexRecoveryFixture {
     public List<RecordedProcess> inspectionProcesses() { return List.copyOf(this.inspectionProcesses); }
 
     private CodexAppServerProcessStarter starter(final List<RecordedProcess> processes) {
-        final var delegate = new DefaultCodexAppServerProcessStarter(this.properties);
+        final CodexAppServerProcessStarter delegate = cwd -> {
+            try {
+                Process process = new ProcessBuilder(this.properties.getCommand()).directory(cwd.toFile()).start();
+                return new StartedCodexAppServer(process, this.properties.getCommand(), java.time.Instant.now());
+            } catch (java.io.IOException failure) {
+                throw new CodexTransportException("Fixture process unavailable", failure);
+            }
+        };
         return cwd -> {
             final var started = delegate.start(cwd);
             final var recorded = new RecordedProcess(started.process(), this.mapper);
