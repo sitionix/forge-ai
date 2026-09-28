@@ -69,6 +69,17 @@ Paths below are relative to the repository root. No Maven/npm dependency changes
 | Saved connection reload | New PostgreSQL adapter/identity instances read identical persisted metadata | PASS; not an Agent restart |
 | Nexus restart | Child Nexus process restarted; browser uses same persisted Agent connection and disables it | PASS; not full Forge restart |
 
+## Final review regression fixes
+
+One fresh read-only whole-branch review found four normal-use defects. All were reproduced before implementation and fixed in one pass:
+
+- `SELECTED → ALL` now sends `projectIds=[]`; hidden checked IDs cannot produce an invalid backend access policy.
+- An uncertain create still prevents another create, while a confirmed saved connection remains editable. Editing it does not discard the separate unresolved create.
+- Scoped Settings/dialog `[hidden]` CSS preserves actual hidden steps and hides project choices for `ALL`. Real Chrome failed on computed `display=grid` before the fix and passes `display=none` after it.
+- A completed Test/action for A refreshes the list without overwriting a newer selection of B. Existing request cancellation controls reads; a small selection revision controls action ownership. Detail loading clears the old actionable selection.
+
+Three new unit regressions failed on the old code, then passed (21 focused form/page tests). Production-built browser regression also went RED → GREEN. The full Console suite after the pass is 617/617 across 27 files; typecheck/build pass. Full Agent/Nexus verify and the opt-in joined fixture were repeated after the pass with fixed, repackaged Console assets: 1427 Agent tests (10 opt-in skips), 381 Nexus tests (zero skips), 1 joined test (zero skips), all PASS. No additional HTTP/cache/runtime architecture was introduced.
+
 ## Commands and results
 
 Focused session regression:
@@ -91,7 +102,7 @@ npm --prefix services/forge-console run build
 node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
 ```
 
-PASS: typecheck/build; 27 files, 614 tests; real Chrome default stub flow. Browser replacement/cancel is stub-backed, not a live provider claim. Native close-event and compact-navigation failures were reproduced before fixes. No-auth create payload regression failed on `KEEP` before omitting update-only credential action.
+PASS: typecheck/build; 27 files, 617 tests; real Chrome default stub flow. Browser replacement/cancel is stub-backed, not a live provider claim. Native close-event and compact-navigation failures were reproduced before fixes. No-auth create payload regression failed on `KEEP` before omitting update-only credential action.
 
 Joined actual disposable fixture (build Nexus jar with current Console assets first):
 
@@ -117,7 +128,18 @@ git diff --check
 - Runtime Python: PASS, 20 tests.
 - Whitespace check: PASS.
 - Dependency analysis: NOT_APPLICABLE; no dependency/POM changes.
-- Fresh PR CI: NOT_VERIFIED until exact-head run completes.
+- Fresh PR CI: NOT_VERIFIED when this local evidence was recorded; inspect the exact final published HEAD run separately. Local tests are not a CI claim.
+
+## Implementation decisions and their limits
+
+- Regular branch in the existing checkout follows the current AGENTS instructions; no worktree was created.
+- ForgeIT uses the accepted Failsafe `verify` path because Surefire deliberately excludes these classes. Using `test` alone would leave HTTP contracts unexercised.
+- The installed disposable Codex CLI is 0.158.0. Parameterizing the fixture did not change Stage 4's default 0.157.0 or production/personal configuration; it cannot certify the pinned version.
+- Synthetic trusted execution leases, direct CLI launch and a mocked privileged verifier are explicit fixture substitutions. They leave normal worker/systemd launch, Forge-generated configuration and privileged isolation unverified.
+- Repository reload and Nexus-only restart prove their named boundaries. They cannot establish a full Agent/Forge restart or deployment persistence.
+- The reviewer did not inspect an unavailable future PR CI. Exact published-head CI must be reported from GitHub separately; a missing or unfinished run is not PASS.
+
+No minor review findings were deferred. The four required fixes above have RED → GREEN regression evidence.
 
 ## Remaining prerequisites / NOT_VERIFIED
 

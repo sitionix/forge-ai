@@ -27,7 +27,7 @@ export class McpConnectionForm {
   controls() {
     for(const control of this.element('mcpConnectionDialog').querySelectorAll('input,select,textarea,button')) control.disabled=this.pending;
     this.element('mcpFormClose').disabled=false;
-    this.element('mcpSaveTest').disabled=this.pending || !!this.uncertainCreate;
+    this.element('mcpSaveTest').disabled=this.pending || (!this.saved && !!this.uncertainCreate);
     this.element('mcpRetest').disabled=this.pending || !this.saved;
     this.element('mcpSaveAccess').disabled=this.pending || !this.saved;
   }
@@ -98,12 +98,12 @@ export class McpConnectionForm {
         catch(error) {if(this.current(operation) && error.status>=400 && error.status<500) this.uncertainCreate=null;throw error;}
       }
       if(!this.current(operation)) return;
-      this.uncertainCreate=null;this.saved=saved;this.element('mcpCredentialChange').value='KEEP';this.credentials();
+      if(!this.saved) this.uncertainCreate=null;this.saved=saved;this.element('mcpCredentialChange').value='KEEP';this.credentials();
       this.element('mcpFormNotice').textContent='Connection saved. Testing the saved endpoint…';this.onConfirmed(saved.id);
       await this.probe(operation);
     } catch(error) {
       this.error(error,operation);
-      if(this.current(operation) && this.uncertainCreate) this.element('mcpRecovery').hidden=false;
+      if(this.current(operation) && !this.saved && this.uncertainCreate) this.element('mcpRecovery').hidden=false;
     } finally {this.finish(operation);}
   }
   async readSaved(operation) {
@@ -136,7 +136,8 @@ export class McpConnectionForm {
     if(!this.saved) return;const operation=this.begin();if(!operation) return;
     const id=this.saved.id;
     const tools=[...this.element('mcpToolChoices').querySelectorAll('input:checked')].map(input=>this.tools[Number(input.value)]).map(tool=>({name:tool.name,schemaFingerprint:tool.schemaFingerprint}));
-    const access={scope:this.element('mcpProjectScope').value,projectIds:[...this.element('mcpProjectChoices').querySelectorAll('input:checked')].map(input=>input.value)};
+    const scope=this.element('mcpProjectScope').value;
+    const access={scope,projectIds:scope==='ALL'?[]:[...this.element('mcpProjectChoices').querySelectorAll('input:checked')].map(input=>input.value)};
     try {
       await this.api.approve(id,tools,operation.signal);if(!this.current(operation)) return;
       await this.api.update(id,{displayName:this.saved.displayName,endpoint:this.saved.endpoint,transport:'STREAMABLE_HTTP',authType:this.saved.authType,projectAccess:access,allowedTools:[],credentialChange:'KEEP'},operation.signal);

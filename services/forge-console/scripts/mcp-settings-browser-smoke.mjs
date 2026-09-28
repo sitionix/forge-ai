@@ -88,6 +88,7 @@ try {
     console.log('SETTINGS_DISABLE_CONFIRMED');
   } else {
     await click('mcpAdd');await until(`document.getElementById('mcpConnectionDialog').open`);
+    assert.equal(await evaluate(`getComputedStyle(document.getElementById('mcpAccess')).display`),'none','Permissions must be hidden before saving');
     await fill('mcpName','Stage 5 Echo');await fill('mcpEndpoint',process.env.FORGE_SETTINGS_MCP_ENDPOINT||'https://fixture.example/mcp');
     if(!external) {
       await fill('mcpAuthType','BEARER');await evaluate(`document.getElementById('mcpAuthType').dispatchEvent(new Event('change'))`);
@@ -96,6 +97,9 @@ try {
     }
     await click('mcpSaveTest');await until(`!document.getElementById('mcpAccess').hidden && !document.getElementById('mcpSaveAccess').disabled`);
     assert.equal(await evaluate(`document.getElementById('mcpBearer').value`),'');
+    await fill('mcpProjectScope','ALL');await evaluate(`document.getElementById('mcpProjectScope').dispatchEvent(new Event('change'))`);
+    assert.equal(await evaluate(`getComputedStyle(document.getElementById('mcpProjectChoices')).display`),'none','ALL must hide project choices');
+    await fill('mcpProjectScope','SELECTED');await evaluate(`document.getElementById('mcpProjectScope').dispatchEvent(new Event('change'))`);
     await evaluate(`document.querySelector('#mcpToolChoices input').click();document.querySelector('#mcpProjectChoices input').click()`);
     await click('mcpSaveAccess');await until(`document.getElementById('mcpFormNotice').textContent.startsWith('Permissions saved')`);
     const id=await evaluate(`window.__forgeMountedOperatorPage.form.saved.id`);

@@ -6108,6 +6108,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 
 .sidebar-settings { padding: 12px; border-top: 1px solid var(--line); }
 .settings-shell { max-width: 1100px; }
+.settings-shell [hidden], #mcpConnectionDialog [hidden] { display: none !important; }
 .mcp-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .mcp-card { padding: 16px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 #mcpDetails { overflow-wrap: anywhere; }

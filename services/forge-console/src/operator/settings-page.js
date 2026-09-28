@@ -8,7 +8,7 @@ export class SettingsPage {
     this.document=document;this.window=window;
     this.api=new McpApi({fetcher,location:window.location});
     this.requests=new RequestCoordinator();this.listeners=new window.AbortController();
-    this.disposed=false;this.selected=null;this.pending=false;
+    this.disposed=false;this.selection=0;this.selected=null;this.pending=false;
     this.form=new McpConnectionForm({document,window,api:this.api,onConfirmed:id=>void this.confirmed(id),onError:error=>this.error(error)});
   }
   element(id) { return this.document.getElementById(id); }
@@ -30,7 +30,7 @@ export class SettingsPage {
   notice(message) { this.element('mcpNotice').textContent=message; }
   clearError() { this.element('mcpError').hidden=true;this.element('mcpError').textContent='';this.element('mcpRetry').hidden=true; }
   resetView() {
-    this.selected=null;this.element('mcpConnections').replaceChildren();this.element('mcpDetails').replaceChildren();this.element('mcpDetailsPanel').hidden=true;
+    this.selection+=1;this.selected=null;this.element('mcpConnections').replaceChildren();this.element('mcpDetails').replaceChildren();this.element('mcpDetailsPanel').hidden=true;
     this.element('mcpOperatorSecret').value='';
   }
   error(error) {
@@ -59,8 +59,9 @@ export class SettingsPage {
       this.element('mcpLogin').hidden=true;this.element('mcpManagement').hidden=false;await this.refresh();
     } catch(error) { this.error(error); } finally { this.pending=false; }
   }
-  async refresh() {
-    if(this.disposed) return;this.clearError();this.notice('Loading connections…');this.requests.abort('details');this.selected=null;this.element('mcpDetailsPanel').hidden=true;
+  async refresh(resetDetails=true) {
+    if(this.disposed) return;this.clearError();this.notice('Loading connections…');
+    if(resetDetails) {this.selection+=1;this.requests.abort('details');this.selected=null;this.element('mcpDetailsPanel').hidden=true;}
     try {
       const result=await this.requests.run('list',({signal})=>this.api.list(signal));
       if(!result.applied) return;
@@ -68,7 +69,7 @@ export class SettingsPage {
     } catch(error) { this.error(error); }
   }
   async details(id) {
-    if(this.disposed) return;this.clearError();this.notice('Loading connection…');
+    if(this.disposed) return;this.selection+=1;this.selected=null;this.element('mcpDetailsPanel').hidden=true;this.clearError();this.notice('Loading connection…');
     try {
       const result=await this.requests.run('details',async({signal})=>{
         const [connection,tools,projects]=await Promise.all([this.api.get(id,signal),this.api.inventory(id,signal),this.api.projects(signal)]);
@@ -80,7 +81,9 @@ export class SettingsPage {
       this.element('mcpDetailsPanel').hidden=false;this.element('mcpToggle').textContent=result.value.connection.enabled?'Disable':'Enable';this.notice('');
     } catch(error) { this.error(error); }
   }
-  async confirmed(id) { if(await this.refresh() && !this.disposed) await this.details(id); }
+  async confirmed(id,selection=this.selection) {
+    if(await this.refresh(false) && !this.disposed && this.selection===selection) await this.details(id);
+  }
   async add() {
     if(this.pending || this.disposed) return;this.pending=true;
     try {
@@ -90,7 +93,7 @@ export class SettingsPage {
   }
   async mutate(action) {
     if(this.pending || this.disposed || !this.selected) return;
-    const connection=this.selected.connection;
+    const connection=this.selected.connection;const selection=this.selection;
     if(action==='remove' && !this.window.confirm('Remove this connection and revoke its runtime access? This cannot be undone.')) return;
     this.pending=true;this.clearError();
     for(const id of ['mcpTest','mcpToggle','mcpRemove','mcpEdit','mcpAdd']) this.element(id).disabled=true;
@@ -98,11 +101,11 @@ export class SettingsPage {
       const result=await this.requests.run('action',({signal})=> action==='test'?this.api.test(connection.id,signal)
         :action==='remove'?this.api.remove(connection.id,signal):this.api.setEnabled(connection.id,!connection.enabled,signal));
       if(!result.applied) return;
-      if(action==='remove') await this.refresh();else await this.confirmed(connection.id);
+      if(action==='remove') await this.refresh(this.selection===selection);else await this.confirmed(connection.id,selection);
       if(!this.disposed) this.notice(action==='remove'?'Connection removed.':action==='test'?'Check succeeded. New or changed tools require explicit approval.':'Enabled state updated.');
     } catch(error) {
       if(this.disposed) return;
-      if(!['OPERATOR_UNAUTHORIZED','OPERATOR_FORBIDDEN'].includes(error?.code)) await this.refresh();
+      if(!['OPERATOR_UNAUTHORIZED','OPERATOR_FORBIDDEN'].includes(error?.code)) await this.refresh(this.selection===selection);
       this.error(error);
     } finally {
       this.pending=false;

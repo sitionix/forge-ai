@@ -38,6 +38,20 @@ describe('Settings integrations',()=>{
  vi.spyOn(window,'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);(document.querySelector('#mcpRemove') as HTMLButtonElement).click();expect(fetcher.mock.calls.some(c=>c[1]?.method==='DELETE')).toBe(false);
  (document.querySelector('#mcpRemove') as HTMLButtonElement).click();await tick();expect(fetcher.mock.calls.filter(c=>c[1]?.method==='DELETE')).toHaveLength(1);page.dispose();vi.restoreAllMocks();
  });
+ it('a completed test for A never overwrites a newer selection of B',async()=>{
+ document.documentElement.innerHTML=html();const other={...connection,id:'two',displayName:'Connection B',endpoint:'https://b.example/mcp'};
+ let finish!:(response:Response)=>void;
+ const fetcher=vi.fn(async(url:string)=>{
+ if(url.endsWith('/operator/session')) return new Response('{"csrfToken":"csrf","csrfHeader":"X-Forge-CSRF"}');
+ if(url.endsWith('/connections')) return new Response(JSON.stringify([connection,other]));
+ if(url.endsWith('/test')) return new Promise<Response>(resolve=>{finish=resolve;});
+ return new Response(JSON.stringify(url.endsWith('/tools')||url.endsWith('/projects')?[]:url.endsWith('/two')?other:connection));
+ });
+ const page=new SettingsPage({document,window,fetcher});page.mount();await tick();
+ (document.querySelector('[data-connection-id="one"]') as HTMLButtonElement).click();await tick();(document.querySelector('#mcpTest') as HTMLButtonElement).click();await tick();
+ (document.querySelector('[data-connection-id="two"]') as HTMLButtonElement).click();await tick();expect(document.querySelector('#mcpDetails')?.textContent).toContain(other.endpoint);
+ finish(new Response('{}'));await tick();expect(document.querySelector('#mcpDetails')?.textContent).toContain(other.endpoint);expect(document.querySelector('#mcpConnections')?.textContent).toContain('Connection B');page.dispose();
+ });
  it('logout clears dialog credential state and late detail cannot return',async()=>{
  const {page}=setup([connection]);await tick();(document.querySelector('#mcpAdd') as HTMLButtonElement).click();await tick();(document.querySelector('#mcpBearer') as HTMLInputElement).value='synthetic-canary';(document.querySelector('#mcpLogout') as HTMLButtonElement).click();await tick();
  expect((document.querySelector('#mcpBearer') as HTMLInputElement).value).toBe('');expect((document.querySelector('#mcpConnectionDialog') as HTMLDialogElement).open).toBe(false);expect((document.querySelector('#mcpManagement') as HTMLElement).hidden).toBe(true);page.dispose();

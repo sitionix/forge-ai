@@ -23,6 +23,18 @@ describe('Custom MCP form',()=>{
  (document.querySelector('#mcpToolChoices input') as HTMLInputElement).checked=true;(document.querySelector('#mcpProjectChoices input') as HTMLInputElement).checked=true;click('mcpSaveAccess');await tick();
  expect(api.approve).toHaveBeenCalledWith('saved',[{name:'echo',schemaFingerprint:tools[0]!.schemaFingerprint}],expect.any(AbortSignal));expect(api.update.mock.calls[0]![1].projectAccess).toEqual({scope:'SELECTED',projectIds:['project']});expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();
  });
+ it('switches selected projects to ALL without retaining hidden project IDs',async()=>{
+ const {form,api}=setup();form.openEdit({...base,projectAccess:{scope:'SELECTED',projectIds:['project']}},tools,[{id:'project',name:'P'}]);
+ expect((document.querySelector('#mcpProjectChoices input') as HTMLInputElement).checked).toBe(true);
+ input('mcpProjectScope','ALL');document.querySelector('#mcpProjectScope')!.dispatchEvent(new Event('change'));click('mcpSaveAccess');await tick();
+ expect(api.update.mock.calls[0]![1].projectAccess).toEqual({scope:'ALL',projectIds:[]});form.dispose();
+ });
+ it('an uncertain create blocks another create but not editing a confirmed connection',async()=>{
+ const {form,api}=setup();api.create.mockRejectedValueOnce(Object.assign(new Error('Unavailable'),{status:503}));form.openCreate([]);input('mcpName','Echo');input('mcpEndpoint',base.endpoint);click('mcpSaveTest');await tick();form.close();
+ form.openEdit(base,tools,[]);expect((document.querySelector('#mcpSaveTest') as HTMLButtonElement).disabled).toBe(false);
+ click('mcpSaveTest');await tick();expect(api.update).toHaveBeenCalledWith('saved',expect.any(Object),expect.any(AbortSignal));form.close();
+ form.openCreate([]);expect((document.querySelector('#mcpSaveTest') as HTMLButtonElement).disabled).toBe(true);expect(api.create).toHaveBeenCalledTimes(1);form.dispose();
+ });
  it('failed probe retains saved ID and next explicit test does not recreate',async()=>{
  const {form,api}=setup();api.test.mockRejectedValueOnce(Object.assign(new Error('Credentials required'),{code:'MCP_AUTH_REQUIRED',status:401}));form.openCreate([]);input('mcpName','Echo');input('mcpEndpoint',base.endpoint);click('mcpSaveTest');await tick();expect(document.querySelector('#mcpFormNotice')?.textContent).toContain('saved');click('mcpRetest');await tick();expect(api.create).toHaveBeenCalledTimes(1);expect(api.test).toHaveBeenCalledTimes(2);form.close();expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();
  });
