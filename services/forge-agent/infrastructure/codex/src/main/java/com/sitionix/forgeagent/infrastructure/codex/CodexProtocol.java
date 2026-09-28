@@ -6,6 +6,7 @@ final class CodexProtocol {
     static final String INITIALIZED = "initialized";
     static final String THREAD_START = "thread/start";
     static final String THREAD_RESUME = "thread/resume";
+    static final String MCP_SERVER_STATUS_LIST = "mcpServerStatus/list";
     static final String THREAD_READ = "thread/read";
     static final String THREAD_TURNS_LIST = "thread/turns/list";
     static final String THREAD_ITEMS_LIST = "thread/items/list";

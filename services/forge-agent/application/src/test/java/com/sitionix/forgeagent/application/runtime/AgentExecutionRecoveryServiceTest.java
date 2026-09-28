@@ -71,7 +71,7 @@ class AgentExecutionRecoveryServiceTest {
         this.service = new AgentExecutionRecoveryService(
                 this.sessions, List.of(this.inspector), this.workflows, this.workspaces, this.nodeRuns,
                 this.completionProcessor, this.coordinator, CLOCK);
-        this.claim = this.claim(NodeRunStatus.RUNNING, "codex", "0.154.0", "thread-exact", "turn-exact");
+        this.claim = this.claim(NodeRunStatus.RUNNING, "codex", "0.157.0", "thread-exact", "turn-exact");
         when(this.sessions.claimExpiredRecovery(anyString())).thenAnswer(call -> Optional.of(this.claim));
         when(this.sessions.reconcileRecovery(any(), any())).thenReturn(true);
     }
@@ -79,7 +79,7 @@ class AgentExecutionRecoveryServiceTest {
     @Test void committedRecoveryRevokesOldRuntimeGrant() {
         var gateway = mock(com.sitionix.forgeagent.application.mcp.McpGatewayService.class);
         service.setMcpGateway(gateway);
-        claim = claim(NodeRunStatus.CANCELLED, "codex", "0.154.0", "thread-exact", "turn-exact");
+        claim = claim(NodeRunStatus.CANCELLED, "codex", "0.157.0", "thread-exact", "turn-exact");
         org.assertj.core.api.Assertions.assertThat(service.reconcileExpired()).isEqualTo(1);
         verify(gateway).revokeExecution(claim.turnId());
     }
@@ -155,7 +155,7 @@ class AgentExecutionRecoveryServiceTest {
         });
         assertThat(this.service.reconcileExpired()).isEqualTo(1);
         verify(this.inspector).inspect(new AgentExecutionRecoveryInspection(
-                "codex", "0.154.0", "thread-exact", "turn-exact", this.workspace, NOW.plusSeconds(27)));
+                "codex", "0.157.0", "thread-exact", "turn-exact", this.workspace, NOW.plusSeconds(27)));
         final var result = this.reconciliation();
         switch (state) {
             case TERMINAL -> {
@@ -181,7 +181,7 @@ class AgentExecutionRecoveryServiceTest {
     void incompleteIdentityNeverInspectsOrResolvesWorkspace(final String missing) {
         this.claim = this.claim(NodeRunStatus.RUNNING,
                 missing.startsWith("provider") ? this.missing(missing) : "codex",
-                missing.startsWith("version") ? this.missing(missing) : "0.154.0",
+                missing.startsWith("version") ? this.missing(missing) : "0.157.0",
                 missing.startsWith("thread") ? this.missing(missing) : "thread-exact",
                 missing.startsWith("turn") ? this.missing(missing) : "turn-exact");
         assertThat(this.service.reconcileExpired()).isEqualTo(1);
@@ -193,7 +193,7 @@ class AgentExecutionRecoveryServiceTest {
     @ValueSource(strings = {"provider", "version"})
     void unsupportedProviderOrVersionFailsBeforeWorkspaceResolution(final String unsupported) {
         this.claim = this.claim(NodeRunStatus.RUNNING, unsupported.equals("provider") ? "other" : "codex",
-                unsupported.equals("version") ? "0.153.2" : "0.154.0", "thread-exact", "turn-exact");
+                unsupported.equals("version") ? "0.153.2" : "0.157.0", "thread-exact", "turn-exact");
         assertThat(this.service.reconcileExpired()).isEqualTo(1);
         this.assertUnknown(this.reconciliation());
         verify(this.inspector, never()).inspect(any());
@@ -204,7 +204,7 @@ class AgentExecutionRecoveryServiceTest {
     @ValueSource(strings = {"workflow-missing", "workflow-error", "workspace-missing", "workspace-error", "inspection-error", "timeout", "null-result", "supports-error"})
     void failuresStayUnknown(final String scenario) {
         when(this.nodeRuns.findById(this.claim.nodeRunId())).thenReturn(Optional.of(this.nodeRun(NodeRunStatus.RUNNING, null)));
-        when(this.inspector.supports("codex", "0.154.0")).thenReturn(true);
+        when(this.inspector.supports("codex", "0.157.0")).thenReturn(true);
         if (scenario.equals("supports-error")) {
             when(this.inspector.supports(any(), any())).thenThrow(new IllegalStateException("registry error"));
         } else if (scenario.equals("workflow-error")) {
@@ -330,7 +330,7 @@ class AgentExecutionRecoveryServiceTest {
 
     private void inspectable() {
         when(this.nodeRuns.findById(this.claim.nodeRunId())).thenReturn(Optional.of(this.nodeRun(NodeRunStatus.RUNNING, null)));
-        when(this.inspector.supports("codex", "0.154.0")).thenReturn(true);
+        when(this.inspector.supports("codex", "0.157.0")).thenReturn(true);
         when(this.workflows.findById(this.claim.workflowRunId())).thenReturn(Optional.of(this.workflow()));
         when(this.workspaces.resolve(any(), any())).thenReturn(this.workspace);
     }

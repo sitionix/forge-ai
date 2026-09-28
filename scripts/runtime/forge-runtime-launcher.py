@@ -5,6 +5,7 @@ No caller-selected config, executable, environment, property, PID or unit name.
 import fcntl
 import errno
 import grp
+import io
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ import stat
 import subprocess
 import sys
 import time
+import tomllib
 import uuid
 
 CONFIG = Path('/etc/forge/runtime-launcher.json')
@@ -23,6 +25,9 @@ RECEIPTS = Path('/run/forge-runtime')
 SYSTEMCTL = '/usr/bin/systemctl'
 SYSTEMD_RUN = '/usr/bin/systemd-run'
 SAFE_ENV = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}
+MAX_GRANT_ENVELOPE = 262144
+GRANT_NAME = re.compile(r'FORGE_MCP_GRANT_[0-9A-F]{32}\Z')
+GRANT_VALUE = re.compile(r'[A-Za-z0-9_-]{1,256}\Z')
 
 
 def identifier(value):
@@ -45,6 +50,13 @@ def trusted_path(path, directory=False):
     return path
 
 
+def has_codex_isolation_config(data):
+    isolation = {'codex_config', 'empty_system_config'}
+    if not isinstance(data, dict) or (set(data) & isolation) not in (set(), isolation):
+        raise ValueError('unsafe configuration')
+    return isolation <= data.keys()
+
+
 def load_config():
     trusted_path(Path(__file__))
     trusted_path(Path(sys.executable).resolve())
@@ -53,10 +65,13 @@ def load_config():
     required = {'installation', 'control_uid', 'runtime_uid', 'runtime_gid', 'runtime_home',
                 'workspace_roots', 'agent_unit', 'max_lifetime_seconds', 'codex_binary',
                 'git_binary', 'env_binary'}
-    if not isinstance(data, dict) or set(data) != required:
+    isolated = has_codex_isolation_config(data)
+    if set(data) != required | ({'codex_config', 'empty_system_config'} if isolated else set()):
         raise ValueError('unsafe configuration')
     identifier(data['installation'])
     fixed_paths = [data.get(key) for key in ['runtime_home','codex_binary','git_binary','env_binary']]
+    if isolated:
+        fixed_paths.extend([data.get(key) for key in ['codex_config','empty_system_config']])
     if not isinstance(data.get('workspace_roots'), list): raise ValueError('unsafe configuration')
     fixed_paths.extend(data['workspace_roots'])
     if any(not isinstance(path,str) or not re.fullmatch(r'/[A-Za-z0-9_./-]+',path) for path in fixed_paths):
@@ -105,6 +120,17 @@ def load_config():
     return data
 
 
+def validate_codex_isolation_config(config):
+    if not has_codex_isolation_config(config):
+        raise ValueError('Codex isolation configuration unavailable')
+    for key in ['codex_config', 'empty_system_config']:
+        trusted_path(config[key])
+    base = tomllib.loads(Path(config['codex_config']).read_text())
+    if any(key in base for key in ['mcp_servers', 'plugins', 'marketplaces']) or tomllib.loads(
+            Path(config['empty_system_config']).read_text()):
+        raise ValueError('unsafe Codex base configuration')
+
+
 def caller(config):
     if os.geteuid() != 0 or os.getuid() != 0 or os.environ.get('SUDO_UID') != str(config['control_uid']):
         raise ValueError('unauthorized caller')
@@ -114,7 +140,7 @@ def unit_name(config, execution):
     return 'forge-runtime-' + identifier(config['installation']) + '-' + identifier(execution) + '.service'
 
 
-def service_command(config, execution, cwd, command):
+def service_command(config, execution, cwd, command, credential_path=None):
     props = ['User='+str(config['runtime_uid']), 'Group='+str(config['runtime_gid']),
              'SupplementaryGroups=', 'NoNewPrivileges=yes', 'CapabilityBoundingSet=',
              'AmbientCapabilities=', 'KillMode=control-group', 'TimeoutStopSec=5s',
@@ -126,11 +152,35 @@ def service_command(config, execution, cwd, command):
              'Delegate=no', 'UMask=0007',
              'WorkingDirectory='+cwd,
              'ReadWritePaths='+config['runtime_home']+' '+' '.join(config['workspace_roots'])]
+    if credential_path is not None:
+        if not has_codex_isolation_config(config):
+            raise ValueError('Codex isolation configuration unavailable')
+        codex_home = config['runtime_home']+'/.codex'
+        props.extend(['LoadCredential=forge-mcp-grants:'+str(credential_path),
+                      'BindReadOnlyPaths='+config['codex_config']+':'+codex_home+'/config.toml',
+                      'BindReadOnlyPaths='+config['empty_system_config']+':/etc/codex/config.toml',
+                      'InaccessiblePaths='+codex_home+'/plugins',
+                      'InaccessiblePaths='+codex_home+'/.agents/plugins'])
+    launch_command = command if credential_path is not None else [
+        config['env_binary'], '-i', 'HOME='+config['runtime_home'],
+        'CODEX_HOME='+config['runtime_home']+'/.codex', 'PATH=/usr/bin:/bin',
+        'LANG=C.UTF-8', 'GIT_TERMINAL_PROMPT=0', *command]
     return [SYSTEMD_RUN, '--quiet', '--pipe', '--wait', '--collect', '--service-type=exec',
             '--unit='+unit_name(config, execution), *['--property='+p for p in props], '--',
-            config['env_binary'], '-i', 'HOME='+config['runtime_home'],
-            'CODEX_HOME='+config['runtime_home']+'/.codex', 'PATH=/usr/bin:/bin',
-            'LANG=C.UTF-8', 'GIT_TERMINAL_PROMPT=0', *command]
+            *launch_command]
+
+
+def validate_codex_mount_targets(config):
+    home = Path(config['runtime_home'])
+    paths = [(home/'.codex', True), (home/'.codex/config.toml', False),
+             (home/'.codex/plugins', True), (home/'.codex/.agents', True),
+             (home/'.codex/.agents/plugins', True)]
+    for path, directory in paths:
+        info = path.lstat()
+        expected = stat.S_ISDIR if directory else stat.S_ISREG
+        if (not expected(info.st_mode) or info.st_uid not in (0, config['runtime_uid'])
+                or info.st_mode & 0o022):
+            raise ValueError('unsafe Codex mount target')
 
 
 def control(*args):
@@ -206,6 +256,83 @@ def locked_receipt(config, execution):
             time.sleep(.05)
 
 
+def credential_path(config, execution):
+    return RECEIPTS/identifier(config['installation'])/(identifier(execution)+'.credential')
+
+
+def validate_grants(value):
+    if not isinstance(value, dict) or any(not isinstance(key, str) or not GRANT_NAME.fullmatch(key)
+            or not isinstance(token, str) or not GRANT_VALUE.fullmatch(token)
+            for key, token in value.items()):
+        raise ValueError('invalid runtime grant envelope')
+    return value
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result: raise ValueError('duplicate runtime grant name')
+        result[key] = value
+    return result
+
+
+def read_startup_envelope(reader):
+    payload = bytearray()
+    deadline = time.monotonic() + 5
+    try: descriptor = reader.fileno()
+    except (AttributeError, OSError, io.UnsupportedOperation): descriptor = None
+    while len(payload) <= MAX_GRANT_ENVELOPE:
+        if descriptor is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([descriptor], [], [], remaining)[0]:
+                raise ValueError('runtime grant envelope timed out')
+        chunk = reader.read(1)
+        if not chunk: raise ValueError('incomplete runtime grant envelope')
+        if chunk == b'\n':
+            try: return validate_grants(json.loads(payload, object_pairs_hook=unique_object))
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                raise ValueError('invalid runtime grant envelope') from error
+        payload.extend(chunk)
+    raise ValueError('runtime grant envelope too large')
+
+
+def write_credential(config, execution, grants):
+    receipt_directory(config)
+    path = credential_path(config, execution)
+    encoded = json.dumps(validate_grants(grants), separators=(',', ':'), sort_keys=True).encode()
+    if len(encoded) > MAX_GRANT_ENVELOPE: raise ValueError('runtime grant envelope too large')
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        if os.fstat(fd).st_uid != os.geteuid() or os.fstat(fd).st_nlink != 1:
+            raise ValueError('unsafe credential source')
+        remaining = memoryview(encoded)
+        while remaining:
+            written = os.write(fd, remaining)
+            if written <= 0: raise OSError('credential source write failed')
+            remaining = remaining[written:]
+        os.fsync(fd)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(fd)
+    return path
+
+
+def runtime_codex(binary, home):
+    folder = os.environ.get('CREDENTIALS_DIRECTORY')
+    if not folder or not re.fullmatch(r'/[A-Za-z0-9_./-]+', folder):
+        raise ValueError('missing runtime credentials')
+    source = Path(folder)/'forge-mcp-grants'
+    payload = source.read_bytes()
+    if len(payload) > MAX_GRANT_ENVELOPE: raise ValueError('runtime credentials too large')
+    grants = validate_grants(json.loads(payload, object_pairs_hook=unique_object))
+    environment = {'HOME':home, 'CODEX_HOME':home+'/.codex', 'PATH':'/usr/bin:/bin',
+                   'LANG':'C.UTF-8', 'GIT_TERMINAL_PROMPT':'0'}
+    environment.update(grants)
+    os.execve(binary, [binary, 'app-server', '--stdio'], environment)
+
+
 def stop(config, execution):
     with locked_receipt(config, execution) as receipt:
         value = receipt.read()
@@ -216,22 +343,31 @@ def stop(config, execution):
         if value != json.dumps({'state':'stopped'}):
             stop_unit(config, execution)
             receipt.seek(0); receipt.truncate(); receipt.write(json.dumps({'state':'stopped'})); receipt.flush()
+        credential_path(config, execution).unlink(missing_ok=True)
 
 
-def start(config, execution, cwd, command, probe_input=None):
+def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
     child = None
     claimed = False
+    credential = None
     def terminate(signum, frame):
         raise InterruptedError('launcher interrupted')
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
     try:
+        if codex_grants is not None:
+            validate_codex_isolation_config(config)
         with locked_receipt(config, execution) as receipt:
             if receipt.read():
                 raise ValueError('execution already used')
             receipt.seek(0); receipt.write(json.dumps({'state':'starting'})); receipt.flush()
             claimed = True
-            child = subprocess.Popen(service_command(config, execution, cwd, command), env=SAFE_ENV,
+            if codex_grants is not None:
+                validate_codex_mount_targets(config)
+                credential = write_credential(config, execution, codex_grants)
+                command = [str(Path(sys.executable).resolve()), '-I', str(Path(__file__)),
+                           '--runtime-codex', config['codex_binary'], config['runtime_home']]
+            child = subprocess.Popen(service_command(config, execution, cwd, command, credential), env=SAFE_ENV,
                                      stdin=subprocess.PIPE if probe_input is not None else None,
                                      stdout=subprocess.PIPE if probe_input is not None else None,
                                      stderr=subprocess.DEVNULL if probe_input is not None else None)
@@ -254,6 +390,7 @@ def start(config, execution, cwd, command, probe_input=None):
         try:
             if claimed: stop(config, execution)
         finally:
+            if credential is not None: credential.unlink(missing_ok=True)
             if child is not None and child.poll() is None:
                 child.terminate()
                 try: child.wait(timeout=5)
@@ -368,7 +505,16 @@ def main(args):
         kind, execution = args[1:3]
         identifier(execution)
         if kind == 'codex' and len(args) == 4:
-            return start(config, execution, workspace(config, args[3]), [config['codex_binary'], 'app-server', '--stdio'])
+            return start(config, execution, workspace(config, args[3]),
+                         [config['codex_binary'], 'app-server', '--stdio'])
+        if kind == 'codex' and len(args) == 5 and args[4] == '--mcp':
+            if not has_codex_isolation_config(config):
+                raise ValueError('Codex isolation configuration unavailable')
+            reader = os.fdopen(os.dup(sys.stdin.fileno()), 'rb', buffering=0)
+            try: grants = read_startup_envelope(reader)
+            finally: reader.close()
+            return start(config, execution, workspace(config, args[3]),
+                         [config['codex_binary'], 'app-server', '--stdio'], codex_grants=grants)
         if kind == 'git':
             if sum(map(len, args)) > 131072: raise ValueError('argument limit exceeded')
             return start(config, execution, config['workspace_roots'][0], git_command(config, args[3:]))
@@ -377,6 +523,8 @@ def main(args):
 
 if __name__ == '__main__':
     try:
+        if len(sys.argv) == 4 and sys.argv[1] == '--runtime-codex' and os.geteuid() != 0:
+            runtime_codex(sys.argv[2], sys.argv[3])
         if sys.argv[1:] == ['--runtime-probe'] and os.geteuid() != 0:
             print(json.dumps(runtime_report(read_request())))
             sys.exit(0)

@@ -25,10 +25,23 @@ final class CodexSessionProtocol {
 
     String resumeThread(final CodexJsonRpcTransport transport, final String threadId,
                         final String developerInstructions, final Duration timeout) {
+        return this.resumeThread(transport, threadId, developerInstructions, null, timeout);
+    }
+
+    String resumeThread(final CodexJsonRpcTransport transport, final String threadId,
+                        final String developerInstructions, final JsonNode invocation, final Duration timeout) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         if (developerInstructions != null) params.put("developerInstructions", developerInstructions);
         params.put("threadId", requireIdentity(threadId, "Codex resume requires a valid threadId"));
         params.put("excludeTurns", true);
+        if (invocation != null) {
+            ObjectNode fresh = this.requireParams(invocation);
+            for (String field : new String[]{"cwd", "sandbox", "approvalPolicy", "runtimeWorkspaceRoots", "config"}) {
+                if (!fresh.hasNonNull(field))
+                    throw new CodexTransportException("Codex resume invocation is incomplete");
+                params.set(field, fresh.get(field).deepCopy());
+            }
+        }
         final String resumedThreadId = requireThreadId(transport.request(CodexProtocol.THREAD_RESUME, params, timeout));
         if (!threadId.equals(resumedThreadId)) {
             throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,

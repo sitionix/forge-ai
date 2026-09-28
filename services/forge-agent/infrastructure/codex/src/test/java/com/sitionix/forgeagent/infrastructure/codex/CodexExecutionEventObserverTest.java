@@ -10,12 +10,29 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
+import com.sitionix.forgeagent.domain.model.McpExecutionSelection;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class CodexExecutionEventObserverTest {
     private final ObjectMapper json = new ObjectMapper();
+
+    @Test
+    void mcpConnectionDiagnosticBecomesFixedWarningAfterTurnIdentity() {
+        var callbacks = new RecordingCallbacks();
+        var observer = new CodexExecutionEventObserver(new CodexAgentExecutionEventMapper(json), callbacks);
+        var connectionId = UUID.fromString("01234567-89ab-4cde-8012-3456789abcde");
+        observer.mcpDiagnostics(List.of(new McpExecutionSelection.Diagnostic(
+                connectionId, "synthetic-secret-canary")));
+        observer.activate("turn-1");
+
+        assertThat(callbacks.events).extracting(AgentExecutionEventCandidate::type)
+                .containsExactly(AgentExecutionEventType.TURN, AgentExecutionEventType.WARNING);
+        assertThat(callbacks.events.get(1).payload()).contains(connectionId.toString())
+                .doesNotContain("synthetic-secret-canary");
+    }
 
     @Test
     void buffersBeforeTurnIdentityThenFlushesInObservedOrderAfterSemanticStart() throws Exception {

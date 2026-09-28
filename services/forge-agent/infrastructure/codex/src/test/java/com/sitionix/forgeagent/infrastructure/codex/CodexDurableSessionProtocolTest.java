@@ -17,6 +17,12 @@ class CodexDurableSessionProtocolTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
+    void durableAndRecoveryVersionsFollowAuditedNativeFixture() {
+        assertThat(CodexAppServerClient.SUPPORTED_DURABLE_VERSION).isEqualTo("0.157.0");
+        assertThat(CodexAppServerClient.SUPPORTED_RECOVERY_VERSION).isEqualTo("0.157.0");
+    }
+
+    @Test
     void durableThreadCreationUsesEphemeralFalseAndExtractsThreadIdentity() throws Exception {
         final Harness harness = this.harness();
         final JsonNode params = this.objectMapper.readTree("""
@@ -50,6 +56,31 @@ class CodexDurableSessionProtocolTest {
         this.reply(harness.process(), request, "{\"thread\":{\"id\":\"thread-durable-1\"}}");
 
         assertThat(result.get(1, TimeUnit.SECONDS)).isEqualTo("thread-durable-1");
+        harness.transport().close();
+    }
+
+    @Test
+    void resumeCarriesInvocationConfigWithoutStartingAnotherThread() throws Exception {
+        final Harness harness = this.harness();
+        final JsonNode startParams = this.objectMapper.readTree("""
+                {"cwd":"/workspace","sandbox":"workspace-write","approvalPolicy":"never",
+                 "runtimeWorkspaceRoots":["/workspace"],
+                 "config":{"sandbox_workspace_write.network_access":false,
+                           "mcp_servers":{"forge_test":{"enabled_tools":["search"]}}}}
+                """);
+        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> harness.protocol().resumeThread(
+                harness.transport(), "thread-durable-1", null, startParams, Duration.ofSeconds(1)));
+
+        final JsonNode request = this.readRequest(harness.process());
+        assertThat(request.path("method").asText()).isEqualTo("thread/resume");
+        assertThat(request.path("params").path("threadId").asText()).isEqualTo("thread-durable-1");
+        for (String key : List.of("cwd", "sandbox", "approvalPolicy", "runtimeWorkspaceRoots", "config")) {
+            assertThat(request.path("params").path(key)).isEqualTo(startParams.path(key));
+        }
+        this.reply(harness.process(), request, "{\"thread\":{\"id\":\"thread-durable-1\"}}");
+
+        assertThat(result.get(1, TimeUnit.SECONDS)).isEqualTo("thread-durable-1");
+        assertThat(harness.process().pendingClientRequestBytes()).isZero();
         harness.transport().close();
     }
 

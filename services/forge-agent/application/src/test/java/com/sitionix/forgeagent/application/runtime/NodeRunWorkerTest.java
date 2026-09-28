@@ -11,6 +11,7 @@ import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeRunExecutionModel;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
+import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
 import java.time.Duration;
@@ -53,6 +54,20 @@ class NodeRunWorkerTest {
 
     private ExecutorService executorService;
     private NodeRunWorker worker;
+
+    @Test
+    void mcpFailureDoesNotPersistRawExceptionMessage() {
+        when(this.nodeRunRepository.findPendingIds()).thenReturn(List.of(NODE_RUN_A));
+        when(this.lifecycle.tryStart(NODE_RUN_A)).thenReturn(Optional.of(this.claim(NODE_RUN_A)));
+        when(this.agentExecutor.execute(this.claim(NODE_RUN_A)))
+                .thenThrow(new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "synthetic-secret-canary"));
+
+        this.worker.poll();
+        this.executorService.close();
+
+        verify(this.lifecycle).fail(NODE_RUN_A,
+                new NodeRunFailure("MCP_EXECUTION_FAILED", "MCP execution failed."));
+    }
 
     @BeforeEach
     void setUp() {

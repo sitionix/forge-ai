@@ -84,7 +84,7 @@ class ResetAgentExecutionContextUseCaseTest {
     private static AgentExecutionSession session(final NodeContextMode mode, final AgentExecutionSessionStatus status,
                                                   final Instant resetAt) {
         return new AgentExecutionSession(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null,
-                "codex", "thread-1", "0.154.0", mode, status, null, null, null, 1, null, null, null,
+                "codex", "thread-1", "0.157.0", mode, status, null, null, null, 1, null, null, null,
                 Instant.now(), Instant.now(), null, resetAt, mode == NodeContextMode.REUSE_WITHIN_WORKFLOW_ITERATION ? UUID.randomUUID() : null);
     }
 }

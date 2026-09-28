@@ -8,18 +8,22 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeagent.application.runtime.AgentExecutor;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
+import com.sitionix.forgeagent.application.mcp.McpExecutionSelectionService;
+import com.sitionix.forgeagent.domain.model.McpExecutionPreparation;
 import com.sitionix.forgeagent.domain.model.NodeInputContribution;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeRunOutput;
 import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.port.AgentExecutionDispatchGuard;
+import com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionEventRecorder;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
@@ -37,18 +41,32 @@ public final class CodexAgentExecutor implements AgentExecutor {
     private final AgentSessionLeaseService sessionLeaseService;
     private final AgentExecutionEventRecorder eventRecorder;
     private final AgentExecutionDispatchGuard dispatchGuard;
+    private final McpExecutionSelectionService mcpSelectionService;
+    private final CodexAppServerProperties properties;
     private final ConcurrentHashMap<UUID, ExecutionCancellation> activeExecutions = new ConcurrentHashMap<>();
 
     @Autowired
     public CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client,
                               final AgentSessionLeaseService sessionLeaseService,
                               final AgentExecutionEventRecorder eventRecorder,
-                              final AgentExecutionDispatchGuard dispatchGuard) {
+                              final AgentExecutionDispatchGuard dispatchGuard,
+                              @Nullable final McpExecutionSelectionService mcpSelectionService,
+                              final CodexAppServerProperties properties) {
         this.objectMapper = objectMapper;
         this.client = client;
         this.sessionLeaseService = sessionLeaseService;
         this.eventRecorder = eventRecorder;
         this.dispatchGuard = dispatchGuard;
+        this.mcpSelectionService = mcpSelectionService;
+        this.properties = properties;
+    }
+
+    CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client,
+                       final AgentSessionLeaseService sessionLeaseService,
+                       final AgentExecutionEventRecorder eventRecorder,
+                       final AgentExecutionDispatchGuard dispatchGuard) {
+        this(objectMapper, client, sessionLeaseService, eventRecorder, dispatchGuard,
+                null, new CodexAppServerProperties());
     }
 
     CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client,
@@ -65,95 +83,128 @@ public final class CodexAgentExecutor implements AgentExecutor {
         if (!PROVIDER_ID.equals(claim.executionModel().providerId())) {
             throw new IllegalStateException("Agent provider is not supported.");
         }
-        final JsonNode userOutputSchema = this.parseOutputSchema(claim);
-        final boolean selectionRequired = claim.availableOutputs().size() > 1;
-        final JsonNode effectiveOutputSchema = selectionRequired
-                ? this.effectiveOutputSchema(userOutputSchema, claim.availableOutputs())
-                : userOutputSchema;
-        final CodexTurnRequest request = new CodexTurnRequest(
-                this.userInput(claim),
-                WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions()),
-                claim.executionModel().modelId(),
-                claim.executionModel().effortId(),
-                effectiveOutputSchema,
-                claim.executionWorkspace(),
-                claim.agentSessionClaim() != null && claim.agentSessionClaim().contextMode()
-                        == com.sitionix.forgeagent.domain.model.NodeContextMode.SHARED_SESSION_GROUP
-        );
-        final String outputText;
-        if (claim.agentSessionClaim() == null) {
-            outputText = this.client.execute(request);
-        } else {
-            final ExecutionCancellation cancellation = new ExecutionCancellation();
-            this.activeExecutions.put(claim.nodeRunId(), cancellation);
-            try {
-                final CodexExecutionIdentityCallbacks callbacks =
-                        new CodexExecutionIdentityCallbacks() {
-                        @Override public void executionStarted(final Runnable cancel) {
-                            cancellation.register(cancel);
-                        }
-                        @Override public void conversationStarted(String threadId, String version) {
-                            CodexAgentExecutor.this.persistConversationIdentity(claim, threadId, version);
-                        }
-                        @Override public void turnStarted(String turnId) {
-                            CodexAgentExecutor.this.persistTurnIdentity(claim, turnId);
-                            if (CodexAgentExecutor.this.eventRecorder != null) {
-                                CodexAgentExecutor.this.eventRecorder.activate(claim.agentSessionClaim());
+        final McpExecutionPreparation prepared;
+        try {
+            prepared = this.mcpSelectionService == null ? null
+                    : this.mcpSelectionService.prepare(claim, Instant.now().plus(this.properties.getTurnTimeout()));
+        } catch (RuntimeException failure) {
+            throw new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "MCP execution preparation failed.");
+        }
+        try {
+            final JsonNode userOutputSchema = this.parseOutputSchema(claim);
+            final boolean selectionRequired = claim.availableOutputs().size() > 1;
+            final JsonNode effectiveOutputSchema = selectionRequired
+                    ? this.effectiveOutputSchema(userOutputSchema, claim.availableOutputs())
+                    : userOutputSchema;
+            final CodexTurnRequest request = new CodexTurnRequest(
+                    this.userInput(claim),
+                    WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions()),
+                    claim.executionModel().modelId(),
+                    claim.executionModel().effortId(),
+                    effectiveOutputSchema,
+                    claim.executionWorkspace(),
+                    claim.agentSessionClaim() != null && claim.agentSessionClaim().contextMode()
+                            == com.sitionix.forgeagent.domain.model.NodeContextMode.SHARED_SESSION_GROUP,
+                    prepared == null ? null : prepared.selection()
+            );
+            final String outputText;
+            if (claim.agentSessionClaim() == null) {
+                outputText = prepared == null ? this.client.execute(request)
+                        : this.client.execute(request, prepared.launchGrants());
+            } else {
+                final ExecutionCancellation cancellation = new ExecutionCancellation();
+                this.activeExecutions.put(claim.nodeRunId(), cancellation);
+                try {
+                    final CodexExecutionIdentityCallbacks callbacks =
+                            new CodexExecutionIdentityCallbacks() {
+                            @Override public void executionStarted(final Runnable cancel) {
+                                cancellation.register(cancel);
                             }
-                        }
-                        @Override public void dispatchTurnStart(final Runnable writeRequest) {
-                            if (CodexAgentExecutor.this.dispatchGuard == null) {
-                                throw new IllegalStateException("Tracked execution requires a dispatch guard.");
+                            @Override public void conversationStarted(String threadId, String version) {
+                                CodexAgentExecutor.this.persistConversationIdentity(claim, threadId, version);
                             }
-                            CodexAgentExecutor.this.dispatchGuard.dispatch(claim.agentSessionClaim(), writeRequest);
-                        }
-                        @Override public void executionEvent(
-                                com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate event) {
-                            if (CodexAgentExecutor.this.eventRecorder != null) {
-                                CodexAgentExecutor.this.eventRecorder.record(claim.agentSessionClaim(), event);
+                            @Override public void turnStarted(String turnId) {
+                                CodexAgentExecutor.this.persistTurnIdentity(claim, turnId);
+                                if (CodexAgentExecutor.this.eventRecorder != null) {
+                                    CodexAgentExecutor.this.eventRecorder.activate(claim.agentSessionClaim());
+                                }
                             }
-                        }
-                        @Override public void eventCaptureCompleted(
-                                com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate event) {
-                            if (CodexAgentExecutor.this.eventRecorder != null) {
-                                CodexAgentExecutor.this.eventRecorder.complete(claim.agentSessionClaim(), event);
+                            @Override public void dispatchTurnStart(final Runnable writeRequest) {
+                                if (CodexAgentExecutor.this.dispatchGuard == null) {
+                                    throw new IllegalStateException("Tracked execution requires a dispatch guard.");
+                                }
+                                CodexAgentExecutor.this.dispatchGuard.dispatch(claim.agentSessionClaim(), writeRequest);
                             }
-                        }
-                        @Override public void eventCaptureDegraded(final RuntimeException failure) {
-                            if (CodexAgentExecutor.this.eventRecorder != null) {
-                                CodexAgentExecutor.this.eventRecorder.degrade(
-                                        claim.agentSessionClaim(), "normalize", failure);
+                            @Override public void executionEvent(
+                                    com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate event) {
+                                if (CodexAgentExecutor.this.eventRecorder != null) {
+                                    CodexAgentExecutor.this.eventRecorder.record(claim.agentSessionClaim(), event);
+                                }
                             }
-                        }
-                        };
-                outputText = claim.agentSessionClaim().contextMode() == com.sitionix.forgeagent.domain.model.NodeContextMode.FRESH_EACH_NODE_RUN
-                        ? this.client.executeTrackedFresh(request, callbacks)
-                        : this.client.executeDurable(request, claim.agentSessionClaim().providerConversationId(),
-                                claim.agentSessionClaim().providerVersion(), callbacks);
-            } catch (ConflictException exception) {
-                throw exception;
-            } catch (CodexExecutionException exception) {
-                if (exception.phase() == CodexExecutionFailurePhase.TURN_EXECUTION) throw exception;
-                final String code = switch (exception.phase()) {
-                    case THREAD_START -> "AGENT_CONTEXT_START_FAILED";
-                    case THREAD_RESUME -> "AGENT_CONTEXT_RESUME_FAILED";
-                    case IDENTITY -> "AGENT_CONTEXT_IDENTITY_MISMATCH";
-                    case TURN_EXECUTION -> throw exception;
-                };
-                final String message = exception.phase() == CodexExecutionFailurePhase.THREAD_RESUME
-                        ? "Could not continue the existing context. No fresh context was started."
-                        : exception.phase() == CodexExecutionFailurePhase.THREAD_START
-                            ? "Could not start the agent context."
-                            : "Provider execution identity did not match the Forge session.";
-                throw new ConflictException(code, message);
-            } catch (RuntimeException exception) {
-                throw exception;
-            } finally {
-                cancellation.executionFinished();
-                this.reconcileCancellation(claim.nodeRunId(), cancellation);
+                            @Override public void eventCaptureCompleted(
+                                    com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate event) {
+                                if (CodexAgentExecutor.this.eventRecorder != null) {
+                                    CodexAgentExecutor.this.eventRecorder.complete(claim.agentSessionClaim(), event);
+                                }
+                            }
+                            @Override public void eventCaptureDegraded(final RuntimeException failure) {
+                                if (CodexAgentExecutor.this.eventRecorder != null) {
+                                    CodexAgentExecutor.this.eventRecorder.degrade(
+                                            claim.agentSessionClaim(), "normalize", failure);
+                                }
+                            }
+                            };
+                    outputText = this.executeTracked(request, claim, prepared, callbacks);
+                } catch (ConflictException exception) {
+                    throw exception;
+                } catch (CodexExecutionException exception) {
+                    if (exception.phase() == CodexExecutionFailurePhase.TURN_EXECUTION) throw exception;
+                    final String code = switch (exception.phase()) {
+                        case THREAD_START -> "AGENT_CONTEXT_START_FAILED";
+                        case THREAD_RESUME -> "AGENT_CONTEXT_RESUME_FAILED";
+                        case IDENTITY -> "AGENT_CONTEXT_IDENTITY_MISMATCH";
+                        case TURN_EXECUTION -> throw exception;
+                    };
+                    final String message = exception.phase() == CodexExecutionFailurePhase.THREAD_RESUME
+                            ? "Could not continue the existing context. No fresh context was started."
+                            : exception.phase() == CodexExecutionFailurePhase.THREAD_START
+                                ? "Could not start the agent context."
+                                : "Provider execution identity did not match the Forge session.";
+                    throw new ConflictException(code, message);
+                } catch (RuntimeException exception) {
+                    throw exception;
+                } finally {
+                    cancellation.executionFinished();
+                    this.reconcileCancellation(claim.nodeRunId(), cancellation);
+                }
+            }
+            return this.parseExecutionResult(outputText, claim.availableOutputs(), selectionRequired);
+        } catch (RuntimeException failure) {
+            if (prepared != null && !(failure instanceof ConflictException))
+                throw new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "MCP execution failed.");
+            throw failure;
+        } finally {
+            if (prepared != null && claim.agentSessionClaim() != null) {
+                try { this.mcpSelectionService.revoke(claim.agentSessionClaim()); }
+                catch (RuntimeException failure) {
+                    throw new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "MCP grant cleanup failed.");
+                }
             }
         }
-        return this.parseExecutionResult(outputText, claim.availableOutputs(), selectionRequired);
+    }
+
+    private String executeTracked(final CodexTurnRequest request, final NodeExecutionClaim claim,
+                                  final McpExecutionPreparation prepared,
+                                  final CodexExecutionIdentityCallbacks callbacks) {
+        if (claim.agentSessionClaim().contextMode()
+                == com.sitionix.forgeagent.domain.model.NodeContextMode.FRESH_EACH_NODE_RUN) {
+            return prepared == null ? this.client.executeTrackedFresh(request, callbacks)
+                    : this.client.executeTrackedFresh(request, prepared.launchGrants(), callbacks);
+        }
+        String threadId = claim.agentSessionClaim().providerConversationId();
+        String version = claim.agentSessionClaim().providerVersion();
+        return prepared == null ? this.client.executeDurable(request, threadId, version, callbacks)
+                : this.client.executeDurable(request, threadId, version, prepared.launchGrants(), callbacks);
     }
 
     @Override

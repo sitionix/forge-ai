@@ -17,12 +17,16 @@ import com.sitionix.forgeagent.application.runtime.AgentExecutionEventRecorder;
 import com.sitionix.forgeagent.application.runtime.AgentSessionLeaseService;
 import com.sitionix.forgeagent.application.runtime.AgentExecutionResult;
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
+import com.sitionix.forgeagent.application.mcp.McpExecutionSelectionService;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventStatus;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventType;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
+import com.sitionix.forgeagent.domain.model.McpExecutionPreparation;
+import com.sitionix.forgeagent.domain.model.McpExecutionSelection;
+import com.sitionix.forgeagent.domain.model.McpRuntimeLaunchGrants;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import java.time.Instant;
 import com.sitionix.forgeagent.domain.model.NodeInputContribution;
@@ -34,6 +38,7 @@ import com.sitionix.forgeagent.domain.model.RunPort;
 import com.sitionix.forgeagent.domain.port.AgentExecutionEventRepository;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -59,6 +64,47 @@ class CodexAgentExecutorTest {
             this.objectMapper,
             this.client
     );
+
+    @Test
+    void selectedMcpGrantsArePassedOnlyToLaunchAndRevokedAfterSuccessOrFailure() {
+        var selectionService = mock(McpExecutionSelectionService.class);
+        var codex = mock(CodexClient.class);
+        var claim = this.trackedClaim("thread-existing");
+        var selection = new McpExecutionSelection(List.of(), List.of());
+        var grants = new McpRuntimeLaunchGrants(Map.of());
+        when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
+                .thenReturn(new McpExecutionPreparation(selection, grants));
+        when(codex.executeDurable(any(), any(), any(), any(McpRuntimeLaunchGrants.class), any()))
+                .thenReturn("{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}")
+                .thenThrow(new CodexTransportException("synthetic-secret-canary"));
+        var executor = new CodexAgentExecutor(this.objectMapper, codex, null, null, null,
+                selectionService, new CodexAppServerProperties());
+
+        executor.execute(claim);
+        verify(codex).executeDurable(argThat(request -> request.mcpSelection() == selection),
+                org.mockito.ArgumentMatchers.eq("thread-existing"), any(),
+                org.mockito.ArgumentMatchers.eq(grants), any());
+        verify(selectionService).revoke(claim.agentSessionClaim());
+        assertThatThrownBy(() -> executor.execute(claim))
+                .hasMessageNotContaining("synthetic-secret-canary");
+        verify(selectionService, org.mockito.Mockito.times(2)).revoke(claim.agentSessionClaim());
+    }
+
+    @Test
+    void failedMcpPreparationDoesNotStartCodexOrExposeCause() {
+        var selectionService = mock(McpExecutionSelectionService.class);
+        var codex = mock(CodexClient.class);
+        var claim = this.trackedClaim("thread-existing");
+        when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
+                .thenThrow(new IllegalStateException("synthetic-secret-canary"));
+        var executor = new CodexAgentExecutor(this.objectMapper, codex, null, null, null,
+                selectionService, new CodexAppServerProperties());
+
+        assertThatThrownBy(() -> executor.execute(claim))
+                .hasMessage("MCP execution preparation failed.")
+                .hasNoCause();
+        verify(codex, never()).execute(any());
+    }
 
     @Test
     void usesClaimModelEffortAndExactParsedOutputSchema() throws Exception {

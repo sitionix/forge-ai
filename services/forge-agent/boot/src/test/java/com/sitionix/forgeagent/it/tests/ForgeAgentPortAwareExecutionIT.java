@@ -458,7 +458,7 @@ class ForgeAgentPortAwareExecutionIT {
     void recoveredReusableResetChangesResumeToRetryAndCompletesWithNewContext() {
         this.seed();
         this.saveReusableTerminalWorkflow();
-        final var old = this.expiredRecoveryExecution("0.154.0");
+        final var old = this.expiredRecoveryExecution("0.157.0");
         doReturn(ProviderTurnRecoveryResult.terminal(ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Completed."))
                 .when(this.recoveryInspector).inspect(any());
         assertThat(this.recoveryService.reconcileExpired()).isEqualTo(1);
@@ -498,7 +498,7 @@ class ForgeAgentPortAwareExecutionIT {
     }
 
     private void finishResetTurn(final NodeExecutionClaim claim, final String conversationId) {
-        this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), conversationId, "0.154.0");
+        this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), conversationId, "0.157.0");
         this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "turn-" + claim.nodeRunId());
         assertThat(this.agentExecutionEventRepository.activate(claim.agentSessionClaim())).isTrue();
         assertThat(this.agentExecutionEventRepository.append(claim.agentSessionClaim(),
@@ -562,7 +562,7 @@ class ForgeAgentPortAwareExecutionIT {
         final var old = this.agentExecutionSessionRepository.findByNodeRunId(first.nodeRunId()).orElseThrow();
         assertThat(old.session().status()).isEqualTo(AgentExecutionSessionStatus.IDLE);
         assertThat(old.session().providerConversationId()).isNotBlank();
-        assertThat(old.session().providerVersion()).isEqualTo("0.154.0");
+        assertThat(old.session().providerVersion()).isEqualTo("0.157.0");
         final var oldNode = this.nodeRunRepository.findById(first.nodeRunId()).orElseThrow();
         final var oldEvents = this.agentExecutionEventRepository.findPage(first.agentSessionClaim().turnId(), 0, 200).orElseThrow();
         final var requestsBefore = provider.executionProcesses().stream().flatMap(process -> process.requests().stream()).toList();
@@ -706,7 +706,7 @@ class ForgeAgentPortAwareExecutionIT {
         this.complete(this.onlyPending(run.id(), IMPLEMENTER), "{\"patch\":\"preserved\"}");
         final var parent = this.onlyPending(run.id(), STRATEGY);
         final var old = this.lifecycle.tryStart(parent.id()).orElseThrow();
-        this.agentSessionLeaseService.persistConversation(old.agentSessionClaim(), "iteration-recovery-thread", "0.154.0");
+        this.agentSessionLeaseService.persistConversation(old.agentSessionClaim(), "iteration-recovery-thread", "0.157.0");
         this.agentSessionLeaseService.persistTurn(old.agentSessionClaim(), "iteration-recovery-turn");
         this.jdbcTemplate.update("UPDATE agent_execution_sessions SET lease_expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=?", old.agentSessionClaim().sessionId());
         doReturn(ProviderTurnRecoveryResult.terminal(ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Completed"))
@@ -791,7 +791,7 @@ class ForgeAgentPortAwareExecutionIT {
                                 .singleElement().satisfies(request -> assertThat(request.path("params").path("threadId").asText())
                                         .isEqualTo(allocation.session().providerConversationId()));
                     } else {
-                        if (turn == 0) this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "iteration-" + node.contextIterationId() + "-" + source, "0.154.0");
+                        if (turn == 0) this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "iteration-" + node.contextIterationId() + "-" + source, "0.157.0");
                         this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "turn-" + node.id());
                         UUID selected = source.equals(STRATEGY) ? this.outputSelector.selectOutput(new NodeRunOutput("{}"), claim.availableOutputs(), claim.executionModel()) : null;
                         this.lifecycle.succeed(node.id(), new AgentExecutionResult(new NodeRunOutput("{}"), selected), claim.agentSessionClaim());
@@ -871,7 +871,7 @@ class ForgeAgentPortAwareExecutionIT {
         final var iteration = UUID.randomUUID();
         final var first = this.allocateSharedInvocation(run.id(), IMPLEMENTER, iteration);
         final var claim = this.agentExecutionSessionRepository.acquire(first.id(), "setup").orElseThrow();
-        this.agentExecutionSessionRepository.persistProviderConversation(claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken(), "before-reset", "0.154.0");
+        this.agentExecutionSessionRepository.persistProviderConversation(claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken(), "before-reset", "0.157.0");
         this.agentExecutionSessionRepository.finish(claim.sessionId(), claim.turnId(), claim.leaseOwnerId(), claim.leaseToken(), AgentExecutionTurnStatus.SUCCEEDED, null, null, false);
         final var locked = new java.util.concurrent.CountDownLatch(1);
         final var release = new java.util.concurrent.CountDownLatch(1);
@@ -918,7 +918,7 @@ class ForgeAgentPortAwareExecutionIT {
         this.complete(a, "{}");
         final var b = this.onlyPending(run.id(), STRATEGY);
         final var active = this.lifecycle.tryStart(b.id()).orElseThrow();
-        this.agentSessionLeaseService.persistConversation(active.agentSessionClaim(), "stop-shared-thread", "0.154.0");
+        this.agentSessionLeaseService.persistConversation(active.agentSessionClaim(), "stop-shared-thread", "0.157.0");
         this.agentSessionLeaseService.persistTurn(active.agentSessionClaim(), "stop-shared-turn-b");
         final var history = this.agentExecutionSessionRepository.findByNodeRunId(a.id()).orElseThrow().turn();
         assertThat(this.agentExecutionSessionRepository.findSession(active.agentSessionClaim().sessionId()).orElseThrow().activeNodeRunId()).isEqualTo(b.id());
@@ -1000,7 +1000,7 @@ class ForgeAgentPortAwareExecutionIT {
                     assertThat(requests.stream().filter(r -> "turn/start".equals(r.path("method").asText())))
                             .singleElement().satisfies(r -> assertThat(r.path("params").path("outputSchema").toString()).contains(role));
                 } else {
-                    if (index == 0) this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "shared-" + node.contextIterationId(), "0.154.0");
+                    if (index == 0) this.agentSessionLeaseService.persistConversation(claim.agentSessionClaim(), "shared-" + node.contextIterationId(), "0.157.0");
                     this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "turn-" + node.id());
                     final UUID selected = source.equals(STRATEGY) ? this.outputSelector.selectOutput(new NodeRunOutput("{}"), claim.availableOutputs(), claim.executionModel()) : null;
                     this.lifecycle.succeed(node.id(), new AgentExecutionResult(new NodeRunOutput("{}"), selected), claim.agentSessionClaim());
@@ -1217,7 +1217,7 @@ class ForgeAgentPortAwareExecutionIT {
 
         final var beforeRecovery = this.agentExecutionSessionRepository.findByWorkflowRunId(orphanRun.id()).getFirst();
         assertThat(beforeRecovery.session().providerConversationId()).isNotBlank();
-        assertThat(beforeRecovery.session().providerVersion()).isEqualTo("0.154.0");
+        assertThat(beforeRecovery.session().providerVersion()).isEqualTo("0.157.0");
         assertThat(beforeRecovery.turn().providerTurnId()).isNotBlank();
         assertThat(beforeRecovery.turn().status()).isEqualTo(AgentExecutionTurnStatus.ACTIVE);
         assertThat(beforeRecovery.turn().providerRecoveryState()).isNull();
@@ -1517,7 +1517,7 @@ class ForgeAgentPortAwareExecutionIT {
         final var run = this.workflowRunUseCases.createWorkflowRun(WORKFLOW_ID, new CreateWorkflowRunCommand("Fence stale callback."));
         final var normal = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow().agentSessionClaim();
         if (operation.startsWith("event")) {
-            this.agentSessionLeaseService.persistConversation(normal, "thread-before-recovery", "0.154.0");
+            this.agentSessionLeaseService.persistConversation(normal, "thread-before-recovery", "0.157.0");
             this.agentSessionLeaseService.persistTurn(normal, "turn-before-recovery");
             assertThat(this.agentExecutionEventRepository.activate(normal)).isTrue();
         }
@@ -1564,7 +1564,7 @@ class ForgeAgentPortAwareExecutionIT {
     private boolean normalCallback(final AgentSessionExecutionClaim normal, final String operation) {
         return switch (operation) {
             case "conversation" -> this.agentExecutionSessionRepository.persistProviderConversation(
-                    normal.sessionId(), normal.leaseOwnerId(), normal.leaseToken(), "late-thread", "0.154.0");
+                    normal.sessionId(), normal.leaseOwnerId(), normal.leaseToken(), "late-thread", "0.157.0");
             case "turn" -> this.agentExecutionSessionRepository.persistProviderTurn(
                     normal.sessionId(), normal.turnId(), normal.leaseOwnerId(), normal.leaseToken(), "late-turn");
             case "renew" -> this.agentExecutionSessionRepository.renew(normal.sessionId(), normal.leaseOwnerId(), normal.leaseToken());
@@ -1987,7 +1987,7 @@ class ForgeAgentPortAwareExecutionIT {
             final String status, final String contextMode, final String sessionStatus) {
         this.seed();
         this.saveRecoveryWorkflow(contextMode);
-        final var normal = this.expiredRecoveryExecution("0.154.0");
+        final var normal = this.expiredRecoveryExecution("0.157.0");
         this.jdbcTemplate.update("""
                 UPDATE node_runs SET status=?,output='{"authoritative":true}'::jsonb,
                     failure_code=?,failure_message=?,finished_at=CURRENT_TIMESTAMP-INTERVAL '1 hour'
@@ -2043,7 +2043,7 @@ class ForgeAgentPortAwareExecutionIT {
             final String scenario, final String contextMode, final String sessionStatus, final String failureCode) {
         this.seed();
         this.saveRecoveryWorkflow(contextMode);
-        final var normal = this.expiredRecoveryExecution("UNSUPPORTED_VERSION".equals(scenario) ? "0.153.2" : "0.154.0");
+        final var normal = this.expiredRecoveryExecution("UNSUPPORTED_VERSION".equals(scenario) ? "0.153.2" : "0.157.0");
         if ("MISSING_THREAD".equals(scenario)) {
             this.jdbcTemplate.update("UPDATE agent_execution_sessions SET provider_conversation_id=NULL WHERE id=?", normal.sessionId());
         } else if ("MISSING_TURN".equals(scenario)) {
@@ -2054,7 +2054,7 @@ class ForgeAgentPortAwareExecutionIT {
             final AgentExecutionRecoveryInspection inspection = invocation.getArgument(0);
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
             assertThat(inspection.providerId()).isEqualTo("codex");
-            assertThat(inspection.providerVersion()).isEqualTo("0.154.0");
+            assertThat(inspection.providerVersion()).isEqualTo("0.157.0");
             assertThat(inspection.providerConversationId()).isEqualTo("thread-" + normal.nodeRunId());
             assertThat(inspection.providerTurnId()).isEqualTo("turn-" + normal.nodeRunId());
             assertThat(inspection.executionWorkspace().cwd()).isEqualTo(this.projectWorkspace());
@@ -2110,7 +2110,7 @@ class ForgeAgentPortAwareExecutionIT {
     void terminalFreshRecoveryRetriesThroughANewSessionAndNormalWorkerCompletion() throws Exception {
         this.seed();
         this.saveTerminalWorkflow();
-        final var oldClaim = this.expiredRecoveryExecution("0.154.0");
+        final var oldClaim = this.expiredRecoveryExecution("0.157.0");
         final UUID workflowRunId = this.nodeRunRepository.findById(oldClaim.nodeRunId()).orElseThrow().workflowRunId();
         doReturn(ProviderTurnRecoveryResult.terminal(
                 ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Exact completed turn."))
@@ -2286,7 +2286,7 @@ class ForgeAgentPortAwareExecutionIT {
     void terminalReusableRecoveryResumesSameSessionWithNextTurnAndIsIdempotentUnderRace() throws Exception {
         this.seed();
         this.saveReusableTerminalWorkflow();
-        final var oldClaim = this.expiredRecoveryExecution("0.154.0");
+        final var oldClaim = this.expiredRecoveryExecution("0.157.0");
         final UUID workflowRunId = this.nodeRunRepository.findById(oldClaim.nodeRunId()).orElseThrow().workflowRunId();
         doReturn(ProviderTurnRecoveryResult.terminal(
                 ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Exact completed turn."))
@@ -2336,7 +2336,7 @@ class ForgeAgentPortAwareExecutionIT {
                 WORKFLOW_ID, new CreateWorkflowRunCommand("Resume routing after recovery."));
         final NodeExecutionClaim claim = this.lifecycle.tryStart(this.onlyPending(run.id(), A).id()).orElseThrow();
         final AgentSessionExecutionClaim session = claim.agentSessionClaim();
-        this.agentSessionLeaseService.persistConversation(session, "thread-" + session.nodeRunId(), "0.154.0");
+        this.agentSessionLeaseService.persistConversation(session, "thread-" + session.nodeRunId(), "0.157.0");
         this.agentSessionLeaseService.persistTurn(session, "turn-" + session.nodeRunId());
         assertThat(this.agentExecutionEventRepository.activate(session)).isTrue();
         this.jdbcTemplate.update("""
@@ -2398,7 +2398,7 @@ class ForgeAgentPortAwareExecutionIT {
     void slowProviderDeadlinePersistsUnknownBeforeRecoveryLeaseExpiresAndPreventsReclaim() {
         this.seed();
         this.saveReusableTerminalWorkflow();
-        final var normal = this.expiredRecoveryExecution("0.154.0");
+        final var normal = this.expiredRecoveryExecution("0.157.0");
         final var claimed = this.agentExecutionSessionRepository.claimExpiredRecovery("deadline-integration").orElseThrow();
         final Instant databaseNow = this.jdbcTemplate.queryForObject(
                 "SELECT clock_timestamp()", java.sql.Timestamp.class).toInstant();
@@ -2414,7 +2414,7 @@ class ForgeAgentPortAwareExecutionIT {
         final var inspectionStarted = new java.util.concurrent.CountDownLatch(1);
         final var releaseInspection = new java.util.concurrent.CountDownLatch(1);
         final var inspectionExited = new java.util.concurrent.CountDownLatch(1);
-        when(deadlineInspector.supports("codex", "0.154.0")).thenReturn(true);
+        when(deadlineInspector.supports("codex", "0.157.0")).thenReturn(true);
         when(deadlineInspector.inspect(any())).thenAnswer(invocation -> {
             final AgentExecutionRecoveryInspection inspection = invocation.getArgument(0);
             assertThat(inspection.deadline()).isEqualTo(shortExpiry.minusSeconds(3));
@@ -2461,7 +2461,7 @@ class ForgeAgentPortAwareExecutionIT {
     void crashedRecoveryIsReinspectedAndStaleApplicationResultCannotOverwriteReplacementWhileWorkerStaysUsable() throws Exception {
         this.seed();
         this.saveReusableTerminalWorkflow();
-        final var normal = this.expiredRecoveryExecution("0.154.0");
+        final var normal = this.expiredRecoveryExecution("0.157.0");
         final var inspected = new java.util.concurrent.CountDownLatch(1);
         final var releaseOldInspection = new java.util.concurrent.CountDownLatch(1);
         final var inspections = new java.util.concurrent.atomic.AtomicInteger();
@@ -2577,7 +2577,7 @@ class ForgeAgentPortAwareExecutionIT {
 
     private void recoverTerminal(final NodeExecutionClaim claim) {
         this.agentSessionLeaseService.persistConversation(
-                claim.agentSessionClaim(), "thread-" + claim.nodeRunId(), "0.154.0");
+                claim.agentSessionClaim(), "thread-" + claim.nodeRunId(), "0.157.0");
         this.agentSessionLeaseService.persistTurn(claim.agentSessionClaim(), "turn-" + claim.nodeRunId());
         assertThat(this.agentExecutionEventRepository.activate(claim.agentSessionClaim())).isTrue();
         this.jdbcTemplate.update(

@@ -2,14 +2,18 @@ package com.sitionix.forgeagent.infrastructure.codex;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
+import com.sitionix.forgeagent.domain.model.McpExecutionSelection;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 final class CodexExecutionEventObserver {
     private final CodexAgentExecutionEventMapper mapper;
     private final CodexExecutionIdentityCallbacks callbacks;
     private final List<PendingObservedEvent> pending = new ArrayList<>();
+    private List<McpExecutionSelection.Diagnostic> mcpDiagnostics = List.of();
     private String threadId;
     private String turnId;
     private boolean active;
@@ -23,6 +27,14 @@ final class CodexExecutionEventObserver {
 
     synchronized void bindThread(final String threadId) {
         this.threadId = threadId;
+    }
+
+    synchronized void allowMcpTools(final Map<String, Set<String>> tools) {
+        this.mapper.allowMcpTools(tools);
+    }
+
+    synchronized void mcpDiagnostics(final List<McpExecutionSelection.Diagnostic> diagnostics) {
+        this.mcpDiagnostics = List.copyOf(diagnostics);
     }
 
     synchronized void observe(final String method, final JsonNode params) {
@@ -48,6 +60,8 @@ final class CodexExecutionEventObserver {
         this.turnId = turnId;
         this.active = true;
         this.callbacks.executionEvent(this.mapper.turnStarted(turnId, Instant.now()));
+        this.mcpDiagnostics.forEach(diagnostic -> this.callbacks.executionEvent(
+                this.mapper.mcpDiagnostic(diagnostic, Instant.now())));
         this.pending.stream()
                 .filter(observed -> turnId.equals(observed.providerTurnId()))
                 .map(PendingObservedEvent::candidate)
