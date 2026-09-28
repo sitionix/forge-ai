@@ -9,7 +9,7 @@ isolation, project/tool policy and explicit per-connection `enabled` remain.
 
 | Check | Result | Evidence |
 | --- | --- | --- |
-| NORMAL_JUST_START | NOT_VERIFIED | Post-amendment restart pending; earlier authenticated-runtime run is historical. |
+| NORMAL_JUST_START | NOT_VERIFIED | Post-amendment restart blocked by pending OS sudo password dialog; no new restart executed. Earlier authenticated-runtime run is historical. |
 | MAIN_NEXUS_HEALTH | NOT_VERIFIED | Post-amendment actual main runtime check pending. |
 | MAIN_AGENT_HEALTH | NOT_VERIFIED | Post-amendment actual main runtime check pending. |
 | SETTINGS_HTTP | NOT_VERIFIED | Actual main built asset check pending. |
@@ -24,7 +24,7 @@ isolation, project/tool policy and explicit per-connection `enabled` remain.
 | FULL_NEXUS_VERIFY | PASS | 352 declared tests, 0 failures/errors/skips; 69 ForgeIT tests. |
 | CONSOLE_TESTS | PASS | Typecheck, 622 tests across 28 files, production build; browser smoke against explicit stub passed separately. |
 | RUNTIME_TESTS | PASS | 47 Python runtime tests; additional Remote Access suite: 110 tests, 2 skips. |
-| CI | NOT_VERIFIED | Previous exact-commit Build 36437708115 failed two startup fixtures; these fixtures are corrected locally. Fresh amended commit CI pending. |
+| CI | PASS | [Fresh Build 36442800724](https://github.com/sitionix/forge-ai/actions/runs/36442800724): all five jobs succeeded for implementation commit `70b74b49284febb8a30d050be3a8f25e157373d9`. |
 
 ## Changes and boundaries
 
@@ -71,6 +71,11 @@ just start
 python3 -I scripts/runtime/mcp-normal-runtime-acceptance.py --started-after <restart-marker>
 ```
 
+Previous implementation CI 36437708115 failed two old startup fixtures. Disposable
+installation fixtures replaced their dependency on host provisioning; the fresh
+Build above passed them. This evidence update changes documentation only, after
+CI completed for the exact implementation commit.
+
 Maven clean verification preceded final verification to eliminate stale deleted
 security classes. Initial amended Nexus verify exposed an obsolete session-route
 assertion; it was removed with its unused endpoint contracts. A later import
@@ -99,3 +104,7 @@ A fresh final read-only review found no new correctness findings. Earlier adopti
 findings were fixed RED→GREEN. Earlier MCP/RA operator-owner findings were superseded
 by the user's explicit deletion of MCP auth/provisioning. This does not certify CI
 or mergeability. PR metadata/comments/reviews and merge state remain untouched.
+
+The user-requested OS password dialog remains pending. No password was requested
+in chat or stored. `just stop/start` has not been executed after this amendment;
+old service health and earlier authenticated Chrome runs are not current PASS.
