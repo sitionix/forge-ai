@@ -3,6 +3,7 @@ import { AgentProjectsPage } from './agent-projects-page.js';
 import { JarvisPage } from './jarvis-page.js';
 import { KnowledgeGraphPage } from './knowledge-graph-page.js';
 import { KnowledgeOverviewPage } from './knowledge-overview-page.js';
+import { SettingsPage } from './settings-page.js';
 import { RemoteAccessPage } from './remote-access-page.js';
 import { OperatorRouter } from './operator-router.js';
 import { escapeHtml } from './dom-render-helpers.js';
@@ -29,6 +30,7 @@ export function bootstrapOperatorConsole(options = {}) {
   });
   initSidebar(documentRef, windowRef, pageName);
   const registry = {
+    settings: () => new SettingsPage({document:documentRef,window:windowRef,fetcher:options.fetcher,runtimeConfig}),
     'remote-access': () => new RemoteAccessPage({document: documentRef, window: windowRef, fetcher: options.fetcher, runtimeConfig}),
     knowledge: () => new KnowledgeOverviewPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
     'knowledge-graph': () => new KnowledgeGraphPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
@@ -37,7 +39,7 @@ export function bootstrapOperatorConsole(options = {}) {
   };
   const router = new OperatorRouter(registry, { document: documentRef });
   const mountedPage = router.mount(pageName);
-  if (pageName === 'remote-access') {
+  if (pageName === 'remote-access' || pageName === 'settings') {
     // pagehide disposes requests/secrets; BFCache restoration needs fresh ownership.
     windowRef.addEventListener('pageshow', event => {
       if (event.persisted) windowRef.__forgeMountedOperatorPage = router.mount(pageName);
@@ -97,6 +99,7 @@ export function initSidebar(documentRef = document, windowRef = window, page = d
           </a>
         `).join('')}
       </nav>
+      <nav class="sidebar-settings" aria-label="Settings"><a class="sidebar-link ${page === 'settings' ? 'active' : ''}" href="./settings.html"><span class="sidebar-icon">⚙</span><span class="sidebar-label"><strong>Settings</strong></span></a></nav>
     </aside>
   `);
   documentRef.getElementById('sidebarToggle')?.addEventListener('click', () => {

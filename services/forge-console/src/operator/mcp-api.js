@@ -30,7 +30,7 @@ export class McpApi {
   clear() { this.#csrf = null; this.#csrfHeader = null; this.#generation += 1; }
   failure(status, code, correlationId) {
     const safeCode = Object.hasOwn(messages,code) ? code : status === 401 ? 'OPERATOR_UNAUTHORIZED'
-      : status === 403 ? 'OPERATOR_FORBIDDEN' : 'MCP_REQUEST_FAILED';
+      : status === 403 ? 'OPERATOR_FORBIDDEN' : status === 503 ? 'UPSTREAM_UNAVAILABLE' : 'MCP_REQUEST_FAILED';
     const error = Object.assign(new Error(messages[safeCode]),{status,code:safeCode});
     if (typeof correlationId === 'string' && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(correlationId)) error.correlationId = correlationId;
     return error;
