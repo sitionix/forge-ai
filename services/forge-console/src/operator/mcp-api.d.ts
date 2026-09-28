@@ -11,7 +11,7 @@ export interface McpConnection {
 export interface McpCommand {
   displayName: string; endpoint: string; transport: 'STREAMABLE_HTTP';
   authType: McpConnection['authType']; projectAccess: McpProjectAccess; allowedTools: string[];
-  credentialChange: 'KEEP' | 'REPLACE' | 'REMOVE'; credential?: {bearer?: string; headers?: Record<string,string>};
+  credentialChange?: 'KEEP' | 'REPLACE' | 'REMOVE'; credential?: {bearer?: string; headers?: Record<string,string>};
 }
 export class McpApi {
   constructor(options?: {fetcher?: (url:string,init:RequestInit)=>Promise<Response>;location?:Pick<Location,'pathname'>});

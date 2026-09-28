@@ -107,7 +107,7 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
 
 
 class CodexRpc:
-    def __init__(self, cwd, home, grant):
+    def __init__(self, cwd, home, grant, expected_version="0.157.0"):
         environment = {'HOME': str(home), 'CODEX_HOME': str(home), 'PATH': os.environ['PATH'],
                        'LANG': 'C.UTF-8', 'GIT_TERMINAL_PROMPT': '0',
                        'FORGE_PROBE_MODEL_KEY': 'synthetic-model-key'}
@@ -130,7 +130,7 @@ class CodexRpc:
         threading.Thread(target=read_stdout, daemon=True).start()
         initialized = self.call('initialize', {'clientInfo': {'name': 'forge_stage4', 'version': '0'},
                                 'capabilities': {'experimentalApi': True}})
-        assert '/0.157.0' in initialized['result']['userAgent'], 'audited Codex version mismatch: ' + initialized['result']['userAgent']
+        assert '/' + expected_version + ' ' in initialized['result']['userAgent'], 'audited Codex version mismatch: ' + initialized['result']['userAgent']
         self.send({'method': 'initialized', 'params': {}})
 
     def send(self, value):
@@ -179,7 +179,7 @@ def config(base, cwd):
             'web_search': 'disabled', 'features': {'shell_tool': True}, 'agents': {'enabled': False}}
 
 
-def run():
+def run(expected_version="0.157.0"):
     global active_grant
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), FixtureHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -202,7 +202,7 @@ def run():
                     'wire_api = "responses"\nenv_key = "FORGE_PROBE_MODEL_KEY"\n')
             thread_id = None
             for index, grant in enumerate(GRANTS):
-                rpc = CodexRpc(cwd, home, grant)
+                rpc = CodexRpc(cwd, home, grant, expected_version)
                 try:
                     if index == 0:
                         started = rpc.call('thread/start', {'cwd': str(cwd), 'model': 'synthetic-model',
@@ -245,7 +245,7 @@ def run():
                         raise AssertionError('revoked grant was accepted')
                     except urllib.error.HTTPError as error:
                         assert error.code == 401
-            recovery = CodexRpc(cwd, home, None)
+            recovery = CodexRpc(cwd, home, None, expected_version)
             try:
                 read = recovery.call('thread/read', {'threadId': thread_id, 'includeTurns': True})
                 assert read['result']['thread']['id'] == thread_id

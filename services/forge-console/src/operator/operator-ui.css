@@ -6119,3 +6119,12 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 #mcpToolChoices label, #mcpProjectChoices label { display: flex; gap: 8px; align-items: flex-start; }
 #mcpToolChoices input, #mcpProjectChoices input { width: auto; }
 #mcpSecretHeaders { -webkit-text-security: disc; }
+.settings-shell .panel { padding: 24px; margin-bottom: 20px; }
+@media (max-width: 1000px) {
+  .operator-sidebar, body.sidebar-collapsed .operator-sidebar { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .sidebar-nav { min-width: 0; }
+  .sidebar-settings { padding: 10px 12px; border-top: 0; }
+}
+@media (max-width: 600px) {
+  .sidebar-brand .sidebar-title { display: none; }
+}

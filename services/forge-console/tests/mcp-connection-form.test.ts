@@ -18,7 +18,7 @@ beforeEach(()=>{
 describe('Custom MCP form',()=>{
  it('creates once disabled with deny-all policy, tests saved ID and explicitly saves access',async()=>{
  const {form,api}=setup();form.openCreate([{id:'project',name:'P'}]);input('mcpName','Echo');input('mcpEndpoint',base.endpoint);click('mcpSaveTest');click('mcpSaveTest');await tick();
- expect(api.create).toHaveBeenCalledTimes(1);expect(api.create.mock.calls[0]![0]).toMatchObject({projectAccess:{scope:'SELECTED',projectIds:[]},allowedTools:[],transport:'STREAMABLE_HTTP'});expect(api.test).toHaveBeenCalledWith('saved',expect.any(AbortSignal));
+ expect(api.create).toHaveBeenCalledTimes(1);expect(api.create.mock.calls[0]![0]).toMatchObject({projectAccess:{scope:'SELECTED',projectIds:[]},allowedTools:[],transport:'STREAMABLE_HTTP'});expect(api.create.mock.calls[0]![0]).not.toHaveProperty('credentialChange');expect(api.test).toHaveBeenCalledWith('saved',expect.any(AbortSignal));
  expect(document.querySelector('#mcpToolChoices img')).toBeNull();expect((document.querySelector('#mcpToolChoices input') as HTMLInputElement).checked).toBe(false);
  (document.querySelector('#mcpToolChoices input') as HTMLInputElement).checked=true;(document.querySelector('#mcpProjectChoices input') as HTMLInputElement).checked=true;click('mcpSaveAccess');await tick();
  expect(api.approve).toHaveBeenCalledWith('saved',[{name:'echo',schemaFingerprint:tools[0]!.schemaFingerprint}],expect.any(AbortSignal));expect(api.update.mock.calls[0]![1].projectAccess).toEqual({scope:'SELECTED',projectIds:['project']});expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();
@@ -40,6 +40,10 @@ describe('Custom MCP form',()=>{
  });
  it('ambiguous create reconciles metadata without retry, explicit selection resumes saved ID',async()=>{
  const {form,api}=setup();api.create.mockRejectedValueOnce(Object.assign(new Error('Unavailable'),{status:503}));form.openCreate([]);input('mcpName','Echo');input('mcpEndpoint',base.endpoint);click('mcpSaveTest');await tick();click('mcpSaveTest');await tick();expect(api.create).toHaveBeenCalledTimes(1);api.list.mockResolvedValue([base]);click('mcpReconcile');await tick();(document.querySelector('#mcpRecoveredConnections button') as HTMLButtonElement).click();await tick();click('mcpRetest');await tick();expect(api.test).toHaveBeenCalledWith('saved',expect.any(AbortSignal));expect(api.create).toHaveBeenCalledTimes(1);form.dispose();
+ });
+ it('a delayed native close event from the previous dialog does not close a new form',()=>{
+ const {form}=setup();form.openCreate([]);form.close();form.openCreate([]);document.querySelector('#mcpConnectionDialog')!.dispatchEvent(new Event('close'));
+ expect((document.querySelector('#mcpConnectionDialog') as HTMLDialogElement).open).toBe(true);form.dispose();
  });
  it('partial access save re-reads authoritative state and reports failure',async()=>{
  const {form,api}=setup();api.update.mockRejectedValueOnce(new Error('safe failure'));form.openEdit(base,tools,[]);click('mcpSaveAccess');await tick();expect(api.get).toHaveBeenCalled();expect(document.querySelector('#mcpFormError')?.textContent).toContain('Refresh');form.dispose();

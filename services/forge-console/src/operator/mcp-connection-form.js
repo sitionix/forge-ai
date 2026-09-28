@@ -5,7 +5,6 @@ export class McpConnectionForm {
     this.listen('mcpConnectionForm','submit',event=>{event.preventDefault();void this.saveAndTest();});
     this.listen('mcpFormClose','click',()=>this.close());
     this.listen('mcpConnectionDialog','cancel',event=>{event.preventDefault();this.close();});
-    this.listen('mcpConnectionDialog','close',()=>{if(this.active) this.close();});
     this.listen('mcpAuthType','change',()=>{this.clearSecrets();this.credentials();});
     this.listen('mcpCredentialChange','change',()=>{this.clearSecrets();this.credentials();});
     this.listen('mcpProjectScope','change',()=>this.projectScope());
@@ -82,6 +81,7 @@ export class McpConnectionForm {
         command.credential={headers:values};
       } else throw new Error('Enter a replacement credential or choose Keep / Remove.');
     }
+    if(!this.saved && credentialChange!=='REPLACE') delete command.credentialChange;
     return command;
   }
   async saveAndTest() {
