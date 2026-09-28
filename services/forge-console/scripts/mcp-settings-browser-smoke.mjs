@@ -81,11 +81,27 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride',{width:780,height:800,deviceScaleFactor:1,mobile:false});
   assert.equal(await evaluate(`document.querySelector('.shell > header').getBoundingClientRect().top >= document.querySelector('.operator-sidebar').getBoundingClientRect().bottom`),true,'Compact navigation must not cover Settings');
   await cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});
-  if(process.env.FORGE_SETTINGS_ACTION==='disable') {
+  const action=process.env.FORGE_SETTINGS_ACTION;
+  if(action==='disable' || action==='enable') {
     await evaluate(`document.querySelector('[data-connection-id="${process.env.FORGE_SETTINGS_CONNECTION_ID}"]').click()`);
-    await until(`!document.getElementById('mcpDetailsPanel').hidden && document.getElementById('mcpToggle').textContent==='Disable'`);
-    await click('mcpToggle');await until(`document.getElementById('mcpToggle').textContent==='Enable' && !document.getElementById('mcpToggle').disabled`);
-    console.log('SETTINGS_DISABLE_CONFIRMED');
+    const before=action==='disable'?'Disable':'Enable',after=action==='disable'?'Enable':'Disable';
+    await until(`!document.getElementById('mcpDetailsPanel').hidden && document.getElementById('mcpToggle').textContent===${JSON.stringify(before)}`);
+    await click('mcpToggle');await until(`document.getElementById('mcpToggle').textContent===${JSON.stringify(after)} && !document.getElementById('mcpToggle').disabled`);
+    console.log(action==='disable'?'SETTINGS_DISABLE_CONFIRMED':'SETTINGS_ENABLE_CONFIRMED');
+  } else if(action==='permissions') {
+    await evaluate(`document.querySelector('[data-connection-id="${process.env.FORGE_SETTINGS_CONNECTION_ID}"]').click()`);
+    await until(`!document.getElementById('mcpDetailsPanel').hidden && document.getElementById('mcpToggle').textContent==='Enable'`);
+    await click('mcpEdit');await until(`document.getElementById('mcpConnectionDialog').open`);
+    assert.equal(await evaluate(`document.getElementById('mcpSaveAccess').disabled`),false);
+    await fill('mcpProjectScope','SELECTED');await evaluate(`document.getElementById('mcpProjectScope').dispatchEvent(new Event('change'))`);
+    const toolName=process.env.FORGE_SETTINGS_TOOL_NAME||'echo';
+    await evaluate(`document.querySelectorAll('#mcpToolChoices input').forEach(input=>input.checked=input.parentElement.textContent===${JSON.stringify(toolName)} || input.parentElement.textContent.startsWith(${JSON.stringify(toolName+' —')}))`);
+    assert.equal(await evaluate(`document.querySelectorAll('#mcpToolChoices input:checked').length`),1);
+    await evaluate(`document.querySelectorAll('#mcpProjectChoices input').forEach(input=>input.checked=input.value===${JSON.stringify(process.env.FORGE_SETTINGS_PROJECT_ID)})`);
+    assert.equal(await evaluate(`document.querySelectorAll('#mcpProjectChoices input:checked').length`),1);
+    await click('mcpSaveAccess');await until(`document.getElementById('mcpFormNotice').textContent.startsWith('Permissions saved')`);
+    await click('mcpFormClose');await until(`!document.getElementById('mcpDetailsPanel').hidden && document.getElementById('mcpToggle').textContent==='Enable'`);
+    console.log('SETTINGS_PERMISSIONS_DISABLED_CONFIRMED');
   } else {
     await click('mcpAdd');await until(`document.getElementById('mcpConnectionDialog').open`);
     assert.equal(await evaluate(`getComputedStyle(document.getElementById('mcpAccess')).display`),'none','Permissions must be hidden before saving');
@@ -110,6 +126,8 @@ try {
     if(!external) {
       assert.equal(createCalls,1);assert.equal(testCalls,1);assert.equal(connections[0].allowedTools.length,1);assert.deepEqual(connections[0].projectAccess.projectIds,[project.id]);
       await click('mcpEdit');await until(`document.getElementById('mcpConnectionDialog').open`);
+      assert.equal(await evaluate(`document.getElementById('mcpSaveAccess').disabled`),true,'Enabled permission save must be blocked');
+      assert.equal(await evaluate(`!document.getElementById('mcpAccessGuard').hidden && document.getElementById('mcpAccessGuard').textContent`),'Disable this connection before changing tool or project access.');
       await fill('mcpCredentialChange','REPLACE');await evaluate(`document.getElementById('mcpCredentialChange').dispatchEvent(new Event('change'))`);await fill('mcpBearer','replacement-canary');await click('mcpSaveTest');
       await until(`document.getElementById('mcpFormNotice').textContent.startsWith('Check succeeded')`);await click('mcpFormClose');
       await click('mcpAdd');await until(`document.getElementById('mcpConnectionDialog').open`);await fill('mcpBearer','cancel-canary');await click('mcpFormClose');

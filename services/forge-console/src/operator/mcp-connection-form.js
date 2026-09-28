@@ -29,7 +29,8 @@ export class McpConnectionForm {
     this.element('mcpFormClose').disabled=false;
     this.element('mcpSaveTest').disabled=this.pending || (!this.saved && !!this.uncertainCreate);
     this.element('mcpRetest').disabled=this.pending || !this.saved;
-    this.element('mcpSaveAccess').disabled=this.pending || !this.saved;
+    this.element('mcpSaveAccess').disabled=this.pending || this.saved?.enabled!==false;
+    this.element('mcpAccessGuard').hidden=!this.saved || this.saved.enabled===false;
   }
   openCreate(projects) { this.open(null,[],projects); }
   openEdit(connection,inventory,projects) { this.open(connection,inventory,projects); }
@@ -133,7 +134,7 @@ export class McpConnectionForm {
     this.element('mcpProjectScope').value=this.saved?.projectAccess.scope||'SELECTED';this.projectScope();
   }
   async saveAccess() {
-    if(!this.saved) return;const operation=this.begin();if(!operation) return;
+    if(this.saved?.enabled!==false) return;const operation=this.begin();if(!operation) return;
     const id=this.saved.id;
     const tools=[...this.element('mcpToolChoices').querySelectorAll('input:checked')].map(input=>this.tools[Number(input.value)]).map(tool=>({name:tool.name,schemaFingerprint:tool.schemaFingerprint}));
     const scope=this.element('mcpProjectScope').value;

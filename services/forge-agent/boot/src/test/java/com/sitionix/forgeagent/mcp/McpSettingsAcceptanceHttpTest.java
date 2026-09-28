@@ -54,6 +54,7 @@ class McpSettingsAcceptanceHttpTest {
     static Path directory;
     static HttpServer upstream;
     static int toolCalls;
+    static String lastTool;
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) throws Exception {
         DB.start();directory=Files.createTempDirectory("mcp-settings-acceptance-");
         protectedFile("service",SERVICE);protectedFile("operator",OPERATOR);
@@ -71,8 +72,12 @@ class McpSettingsAcceptanceHttpTest {
                 if(!body.has("id")) {exchange.sendResponseHeaders(202,-1);return;}
                 Object result=switch(body.path("method").asText()) {
                     case "initialize" -> Map.of("protocolVersion","2025-11-25","capabilities",Map.of("tools",Map.of()),"serverInfo",Map.of("name","echo-fixture","version","1"));
-                    case "tools/list" -> Map.of("tools",List.of(Map.of("name","echo","description","Read-only fixture echo","inputSchema",Map.of("type","object","properties",Map.of("text",Map.of("type","string"))))));
-                    case "tools/call" -> {toolCalls++;yield Map.of("content",List.of(Map.of("type","text","text","fixture:read-only")),"isError",false);}
+                    case "tools/list" -> Map.of("tools",List.of(
+                        Map.of("name","echo","description","Read-only fixture echo","inputSchema",
+                            Map.of("type","object","properties",Map.of("text",Map.of("type","string")))),
+                        Map.of("name","inspect","description","Read-only fixture inspect","inputSchema",
+                            Map.of("type","object","properties",Map.of()))));
+                    case "tools/call" -> {toolCalls++;lastTool=body.path("params").path("name").asText();yield Map.of("content",List.of(Map.of("type","text","text","fixture:read-only")),"isError",false);}
                     default -> throw new IllegalArgumentException("Unknown fixture method");
                 };
                 byte[] response=json.writeValueAsBytes(Map.of("jsonrpc","2.0","id",body.get("id"),"result",result));
@@ -101,7 +106,7 @@ class McpSettingsAcceptanceHttpTest {
     @Autowired PlatformTransactionManager transactions;
     @Autowired ObjectMapper json;
 
-    @Test void browserSaveRealPersistenceNativeCallsReloadAndBrowserDisable(CapturedOutput output) throws Exception {
+    @Test void browserPermissionsStayDisabledUntilExplicitEnableAndUseConfirmedPolicy(CapturedOutput output) throws Exception {
         Instant now=Instant.now();UUID projectId=UUID.randomUUID();
         projects.save(new Project(projectId,"Stage 5 Fixture","stage 5 fixture",now,now));
         Path root=repositoryRoot();Path nexusJar=root.resolve("services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar");
@@ -132,10 +137,10 @@ class McpSettingsAcceptanceHttpTest {
             assertThat(toolCalls).isEqualTo(2);
             UUID otherProject=UUID.randomUUID();
             projects.save(new Project(otherProject,"Other Fixture","other fixture",now,now));
-            var forbidden=trustedLease(otherProject,now);
-            assertThatThrownBy(()->runtime.issue(forbidden,now.plusSeconds(180),id)).isInstanceOf(McpGatewayAccessException.class);
-            UUID unrelatedWorkflow=sessions.findSession(forbidden.sessionId()).orElseThrow().workflowRunId();
-            var withoutMcp=selection.prepare(new NodeExecutionClaim(unrelatedWorkflow,forbidden.nodeRunId(),null,"read-only","fixture","fixture",null,null,null,List.of(),null),now.plusSeconds(180));
+            var otherClaim=trustedLease(otherProject,now);
+            assertThatThrownBy(()->runtime.issue(otherClaim,now.plusSeconds(180),id)).isInstanceOf(McpGatewayAccessException.class);
+            UUID unrelatedWorkflow=sessions.findSession(otherClaim.sessionId()).orElseThrow().workflowRunId();
+            var withoutMcp=selection.prepare(new NodeExecutionClaim(unrelatedWorkflow,otherClaim.nodeRunId(),null,"read-only","fixture","fixture",null,null,null,List.of(),null),now.plusSeconds(180));
             assertThat(withoutMcp.selection().entries()).isEmpty();
             assertThat(toolCalls).isEqualTo(2);
             // Restart Nexus, retaining the real Agent/PostgreSQL state; not a full Forge restart.
@@ -151,6 +156,31 @@ class McpSettingsAcceptanceHttpTest {
                 assertThat(denied.statusCode()).isEqualTo(401);assertThat(denied.body()).doesNotContain(second.token());
             }
             assertThat(toolCalls).isEqualTo(2);
+            String changed=browser(root,origin,"permissions",id,otherProject);
+            assertThat(changed).contains("SETTINGS_PERMISSIONS_DISABLED_CONFIRMED","SETTINGS_BROWSER_ACTUAL_NEXUS_PASS");
+            var savedPolicy=connections.get(id);
+            assertThat(savedPolicy.enabled()).isFalse();
+            assertThat(savedPolicy.projectAccess().projectIds()).containsExactly(otherProject);
+            assertThat(savedPolicy.allowedTools()).extracting(McpAllowedTool::name).containsExactly("inspect");
+            assertThatThrownBy(()->runtime.issue(claim,Instant.now().plusSeconds(180),id)).isInstanceOf(McpGatewayAccessException.class);
+            assertThatThrownBy(()->runtime.issue(otherClaim,Instant.now().plusSeconds(180),id)).isInstanceOf(McpGatewayAccessException.class);
+            assertThatThrownBy(()->runtime.call(second.token(),id,"echo",connection.allowedTools().iterator().next().schemaFingerprint(),"{}"))
+                .isInstanceOf(McpGatewayAccessException.class);
+            assertThat(toolCalls).isEqualTo(2);
+            assertThat(browser(root,origin,"enable",id)).contains("SETTINGS_ENABLE_CONFIRMED","SETTINGS_BROWSER_ACTUAL_NEXUS_PASS");
+            assertThat(connections.get(id).enabled()).isTrue();
+            assertThatThrownBy(()->runtime.issue(claim,Instant.now().plusSeconds(180),id)).isInstanceOf(McpGatewayAccessException.class);
+            var next=runtime.issue(otherClaim,Instant.now().plusSeconds(180),id);
+            var grant=runtime.authorize(next.token(),id);
+            assertThat(grant.projectId()).isEqualTo(otherProject);assertThat(grant.tools()).isEqualTo(savedPolicy.allowedTools());
+            assertThatThrownBy(()->runtime.call(next.token(),id,"echo",connection.allowedTools().iterator().next().schemaFingerprint(),"{}"))
+                .isInstanceOf(McpGatewayAccessException.class);
+            assertThat(toolCalls).isEqualTo(2);
+            var inspect=savedPolicy.allowedTools().iterator().next();
+            assertThat(runtime.call(next.token(),id,inspect.name(),inspect.schemaFingerprint(),"{}").isError()).isFalse();
+            assertThat(toolCalls).isEqualTo(3);assertThat(lastTool).isEqualTo("inspect");
+            assertThat(output.getAll()).doesNotContain(next.token());
+            assertThat(Files.readString(directory.resolve("nexus.log"))).doesNotContain(next.token());
             assertThat(output.getAll()).doesNotContain(OPERATOR,SERVICE,first.token(),second.token());
             assertThat(Files.readString(directory.resolve("nexus.log"))).doesNotContain(OPERATOR,SERVICE,first.token(),second.token());
         } finally {stop(nexus);}
@@ -189,10 +219,17 @@ class McpSettingsAcceptanceHttpTest {
         throw new AssertionError("Disposable Nexus did not become ready; inspect private fixture log");
     }
     private String browser(Path root,String origin,String action,UUID id) throws Exception {
+        return browser(root,origin,action,id,null);
+    }
+    private String browser(Path root,String origin,String action,UUID id,UUID projectId) throws Exception {
         var builder=new ProcessBuilder("node",root.resolve("services/forge-console/scripts/mcp-settings-browser-smoke.mjs").toString());
         builder.environment().put("FORGE_SETTINGS_BASE_URL",origin+"/fgaisox");builder.environment().put("FORGE_SETTINGS_OPERATOR_SECRET",OPERATOR);
         builder.environment().put("FORGE_SETTINGS_MCP_ENDPOINT","http://127.0.0.1:"+upstream.getAddress().getPort()+"/mcp");
         builder.environment().put("FORGE_SETTINGS_ACTION",action);if(id!=null)builder.environment().put("FORGE_SETTINGS_CONNECTION_ID",id.toString());
+        if(projectId!=null) {
+            builder.environment().put("FORGE_SETTINGS_PROJECT_ID",projectId.toString());
+            builder.environment().put("FORGE_SETTINGS_TOOL_NAME","inspect");
+        }
         return run(builder,Duration.ofSeconds(45));
     }
     private static String run(ProcessBuilder builder,Duration budget) throws Exception {

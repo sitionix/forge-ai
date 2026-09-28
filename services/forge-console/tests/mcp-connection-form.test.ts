@@ -21,7 +21,20 @@ describe('Custom MCP form',()=>{
  expect(api.create).toHaveBeenCalledTimes(1);expect(api.create.mock.calls[0]![0]).toMatchObject({projectAccess:{scope:'SELECTED',projectIds:[]},allowedTools:[],transport:'STREAMABLE_HTTP'});expect(api.create.mock.calls[0]![0]).not.toHaveProperty('credentialChange');expect(api.test).toHaveBeenCalledWith('saved',expect.any(AbortSignal));
  expect(document.querySelector('#mcpToolChoices img')).toBeNull();expect((document.querySelector('#mcpToolChoices input') as HTMLInputElement).checked).toBe(false);
  (document.querySelector('#mcpToolChoices input') as HTMLInputElement).checked=true;(document.querySelector('#mcpProjectChoices input') as HTMLInputElement).checked=true;click('mcpSaveAccess');await tick();
- expect(api.approve).toHaveBeenCalledWith('saved',[{name:'echo',schemaFingerprint:tools[0]!.schemaFingerprint}],expect.any(AbortSignal));expect(api.update.mock.calls[0]![1].projectAccess).toEqual({scope:'SELECTED',projectIds:['project']});expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();
+ expect(api.approve).toHaveBeenCalledWith('saved',[{name:'echo',schemaFingerprint:tools[0]!.schemaFingerprint}],expect.any(AbortSignal));expect(api.update.mock.calls[0]![1].projectAccess).toEqual({scope:'SELECTED',projectIds:['project']});expect(api.get).toHaveBeenCalledWith('saved',expect.any(AbortSignal));expect(api.approve.mock.invocationCallOrder[0]).toBeLessThan(api.update.mock.invocationCallOrder[0]!);expect(api.update.mock.invocationCallOrder[0]).toBeLessThan(api.get.mock.invocationCallOrder.at(-1)!);expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();
+ });
+ it('enabled connections require explicit Disable and cannot dispatch permission mutations',async()=>{
+ const {form,api}=setup();form.openEdit({...base,enabled:true,projectAccess:{scope:'ALL',projectIds:[]}},tools,[{id:'project-a',name:'A'}]);
+ const save=document.getElementById('mcpSaveAccess') as HTMLButtonElement;
+ expect(save.disabled).toBe(true);expect((document.querySelector('#mcpAccessGuard') as HTMLElement).hidden).toBe(false);expect(document.querySelector('#mcpAccess')?.textContent).toContain('Disable this connection before changing tool or project access.');
+ (document.querySelector('#mcpToolChoices input') as HTMLInputElement).checked=true;input('mcpProjectScope','SELECTED');(document.querySelector('#mcpProjectChoices input') as HTMLInputElement).checked=true;
+ save.dispatchEvent(new Event('click'));await tick();
+ expect(api.approve).not.toHaveBeenCalled();expect(api.update).not.toHaveBeenCalled();expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();
+ });
+ it('the permission handler rejects enabled state even if its button is manually activated',async()=>{
+ const {form,api}=setup();form.openEdit({...base,enabled:true,projectAccess:{scope:'ALL',projectIds:[]}},tools,[]);
+ const save=document.getElementById('mcpSaveAccess') as HTMLButtonElement;save.disabled=false;save.click();await tick();
+ expect(api.approve).not.toHaveBeenCalled();expect(api.update).not.toHaveBeenCalled();expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();
  });
  it('switches selected projects to ALL without retaining hidden project IDs',async()=>{
  const {form,api}=setup();form.openEdit({...base,projectAccess:{scope:'SELECTED',projectIds:['project']}},tools,[{id:'project',name:'P'}]);
@@ -58,7 +71,10 @@ describe('Custom MCP form',()=>{
  expect((document.querySelector('#mcpConnectionDialog') as HTMLDialogElement).open).toBe(true);form.dispose();
  });
  it('partial access save re-reads authoritative state and reports failure',async()=>{
- const {form,api}=setup();api.update.mockRejectedValueOnce(new Error('safe failure'));form.openEdit(base,tools,[]);click('mcpSaveAccess');await tick();expect(api.get).toHaveBeenCalled();expect(document.querySelector('#mcpFormError')?.textContent).toContain('Refresh');form.dispose();
+ const {form,api}=setup();api.update.mockRejectedValueOnce(new Error('safe failure'));
+ const partial={...base,projectAccess:{scope:'ALL' as const,projectIds:[]},allowedTools:[{name:'echo',schemaFingerprint:tools[0]!.schemaFingerprint}]};api.get.mockResolvedValue(partial);
+ form.openEdit({...base,projectAccess:{scope:'ALL',projectIds:[]}},tools,[{id:'project-a',name:'A'}]);
+ (document.querySelector('#mcpToolChoices input') as HTMLInputElement).checked=true;input('mcpProjectScope','SELECTED');(document.querySelector('#mcpProjectChoices input') as HTMLInputElement).checked=true;click('mcpSaveAccess');await tick();expect(api.get).toHaveBeenCalledWith('saved',expect.any(AbortSignal));expect(api.inventory).toHaveBeenCalledWith('saved',expect.any(AbortSignal));expect(api.approve).toHaveBeenCalledTimes(1);expect(api.approve).toHaveBeenCalledWith('saved',[{name:'echo',schemaFingerprint:tools[0]!.schemaFingerprint}],expect.any(AbortSignal));expect(api.update).toHaveBeenCalledTimes(1);expect((document.querySelector('#mcpProjectScope') as HTMLSelectElement).value).toBe('ALL');expect((document.querySelector('#mcpToolChoices input') as HTMLInputElement).checked).toBe(true);expect(api.setEnabled).not.toHaveBeenCalled();expect((document.querySelector('#mcpSaveAccess') as HTMLButtonElement).disabled).toBe(false);expect(document.querySelector('#mcpFormError')?.textContent).toContain('Permissions may be partially saved. Refresh');form.dispose();
  });
  it('supports secret headers and explicit credential removal without logging values',async()=>{
  const {form,api}=setup();form.openEdit({...base,authType:'SECRET_HEADERS',credentialConfigured:true},[],[]);input('mcpCredentialChange','REPLACE');input('mcpSecretHeaders','{"X-Api-Key":"header-canary"}');click('mcpSaveTest');expect((document.querySelector('#mcpSecretHeaders') as HTMLTextAreaElement).value).toBe('');await tick();expect(api.update.mock.calls[0]![1].credential).toEqual({headers:{'X-Api-Key':'header-canary'}});form.dispose();
