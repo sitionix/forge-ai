@@ -6106,9 +6106,16 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .remote-access-shell .remote-session-card { border-color: rgba(27, 36, 31, 0.16); }
 .remote-access-shell h2:first-child { margin-top: 0; }
 
-.sidebar-settings { padding: 12px; border-top: 1px solid var(--border); }
+.sidebar-settings { padding: 12px; border-top: 1px solid var(--line); }
 .settings-shell { max-width: 1100px; }
 .mcp-actions { display: flex; flex-wrap: wrap; gap: 12px; }
-.mcp-card { padding: 16px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.mcp-card { padding: 16px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 #mcpDetails { overflow-wrap: anywhere; }
 #mcpLoginForm { display: grid; gap: 12px; max-width: 460px; }
+
+#mcpConnectionDialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto; }
+#mcpConnectionForm, #mcpAccess { display: grid; gap: 12px; }
+#mcpToolChoices, #mcpProjectChoices { display: grid; gap: 8px; overflow-wrap: anywhere; }
+#mcpToolChoices label, #mcpProjectChoices label { display: flex; gap: 8px; align-items: flex-start; }
+#mcpToolChoices input, #mcpProjectChoices input { width: auto; }
+#mcpSecretHeaders { -webkit-text-security: disc; }

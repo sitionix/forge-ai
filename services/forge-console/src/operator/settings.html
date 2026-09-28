@@ -17,5 +17,21 @@
     <section id="mcpDetailsPanel" class="panel" hidden><h2>Connection details</h2><div id="mcpDetails"></div><div class="mcp-actions"><button id="mcpEdit" class="button" type="button">Edit connection and access</button><button id="mcpTest" class="button secondary" type="button">Test connection</button><button id="mcpToggle" class="button secondary" type="button">Enable</button><button id="mcpRemove" class="button secondary" type="button">Remove</button></div></section>
   </section>
 </main>
+<dialog id="mcpConnectionDialog" class="modal-dialog" aria-labelledby="mcpFormTitle">
+  <div class="panel-head"><h2 id="mcpFormTitle">Custom MCP</h2><button id="mcpFormClose" class="button secondary" type="button">Close</button></div>
+  <p id="mcpFormNotice" role="status" aria-live="polite"></p><div id="mcpFormError" class="error-box" role="alert" hidden></div>
+  <form id="mcpConnectionForm" class="modal-form" autocomplete="off">
+    <label for="mcpName">Name</label><input id="mcpName" maxlength="255" required>
+    <label for="mcpEndpoint">HTTP MCP endpoint</label><input id="mcpEndpoint" type="url" required placeholder="https://example.org/mcp">
+    <label for="mcpAuthType">Authentication</label><select id="mcpAuthType"><option value="NONE">None</option><option value="BEARER">Bearer token</option><option value="SECRET_HEADERS">Secret headers</option></select>
+    <label for="mcpCredentialChange">Credential action</label><select id="mcpCredentialChange"><option value="KEEP">Keep existing credential</option><option value="REPLACE">Replace credential</option><option value="REMOVE">Remove credential</option></select>
+    <div id="mcpBearerFields" hidden><label for="mcpBearer">New bearer token</label><input id="mcpBearer" type="password" autocomplete="off"></div>
+    <div id="mcpHeaderFields" hidden><label for="mcpSecretHeaders">New secret headers (JSON object)</label><textarea id="mcpSecretHeaders" autocomplete="off" spellcheck="false" placeholder='{"X-Api-Key":"…"}'></textarea></div>
+    <p>Credentials are write-only. Changing endpoint or authentication requires an explicit credential decision and a new check.</p>
+    <div class="mcp-actions"><button id="mcpSaveTest" class="button" type="submit">Save and test</button><button id="mcpRetest" class="button secondary" type="button" disabled>Test saved connection</button></div>
+  </form>
+  <section id="mcpRecovery" hidden><h3>Check whether the save completed</h3><p>Do not replay the save. Refresh saved connections and choose the resource if it was created.</p><button id="mcpReconcile" class="button secondary" type="button">Find saved connection</button><div id="mcpRecoveredConnections"></div><button id="mcpStartAnother" class="button secondary" type="button">Start another connection…</button></section>
+  <section id="mcpAccess" hidden><h3>Allowed tools</h3><p>Only checked tools are approved. An empty selection denies all tools. New or changed tools need explicit approval.</p><div id="mcpToolChoices"></div><h3>Allowed projects</h3><label for="mcpProjectScope">Project access</label><select id="mcpProjectScope"><option value="SELECTED">Selected projects</option><option value="ALL">All projects</option></select><div id="mcpProjectChoices"></div><p>No selected projects means no project access. Saving permissions does not enable the connection.</p><button id="mcpSaveAccess" class="button" type="button">Save permissions</button></section>
+</dialog>
 <script src="./runtime-config.js"></script><script type="module" src="./operator-ui.js"></script>
 </body></html>

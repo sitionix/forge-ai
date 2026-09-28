@@ -1,4 +1,4 @@
-import {describe,it,expect,vi} from 'vitest';
+import {describe,it,expect,vi,beforeEach} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {SettingsPage} from '../src/operator/settings-page.js';
 import {bootstrapOperatorConsole} from '../src/operator/operator-bootstrap.js';
@@ -6,9 +6,10 @@ const html=()=>readFileSync('src/operator/settings.html','utf8');
 const connection={id:'one',displayName:'<img src=x onerror=alert(1)>',endpoint:'https://example.org/mcp',transport:'STREAMABLE_HTTP',authType:'BEARER',enabled:false,projectAccess:{scope:'SELECTED',projectIds:[]},allowedTools:[],credentialConfigured:false,createdAt:'2026-09-28',updatedAt:'2026-09-28',checkedAt:null,safeDiagnostic:null};
 const tick=async()=>{await new Promise(r=>setTimeout(r,0));await new Promise(r=>setTimeout(r,0));};
 function setup(list:unknown=[]) {
- document.documentElement.innerHTML=html();const fetcher=vi.fn(async(url:string)=>new Response(JSON.stringify(url.endsWith('/operator/session')?{csrfToken:'csrf',csrfHeader:'X-Forge-CSRF'}:url.endsWith('/connections')?list:url.endsWith('/tools')?[]:url.endsWith('/projects')?[]:connection)));
+ document.documentElement.innerHTML=html();const fetcher=vi.fn(async(url:string,_init?:RequestInit)=>new Response(JSON.stringify(url.endsWith('/operator/session')?{csrfToken:'csrf',csrfHeader:'X-Forge-CSRF'}:url.endsWith('/connections')?list:url.endsWith('/tools')?[]:url.endsWith('/projects')?[]:connection)));
  const page=new SettingsPage({document,window,fetcher});page.mount();return {page,fetcher};
 }
+beforeEach(()=>{HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};});
 describe('Settings integrations',()=>{
  it('is global bottom navigation and mounts the existing router',async()=>{
  document.documentElement.innerHTML=html();const fetcher=vi.fn(async()=>new Response('{"csrfToken":"csrf","csrfHeader":"X-Forge-CSRF"}'));
@@ -28,6 +29,18 @@ describe('Settings integrations',()=>{
  });
  it('discards late list after pagehide and clears rendered state',async()=>{
  document.documentElement.innerHTML=html();let resolve!:(r:Response)=>void;const fetcher=vi.fn().mockResolvedValueOnce(new Response('{"csrfToken":"csrf","csrfHeader":"X-Forge-CSRF"}')).mockImplementationOnce(()=>new Promise<Response>(r=>{resolve=r;}));const page=new SettingsPage({document,window,fetcher});page.mount();await tick();window.dispatchEvent(new Event('pagehide'));resolve(new Response(JSON.stringify([connection])));await tick();expect(document.querySelector('#mcpConnections')?.textContent).toBe('');
+ });
+ it('explicitly enables, tests, removes and never repeats a failed mutation',async()=>{
+ const {page,fetcher}=setup([connection]);await tick();(document.querySelector('#mcpConnections button') as HTMLButtonElement).click();await tick();
+ (document.querySelector('#mcpToggle') as HTMLButtonElement).click();(document.querySelector('#mcpToggle') as HTMLButtonElement).click();await tick();
+ expect(fetcher.mock.calls.filter(c=>c[0].endsWith('/enabled'))).toHaveLength(1);
+ (document.querySelector('#mcpTest') as HTMLButtonElement).click();await tick();expect(fetcher.mock.calls.filter(c=>c[0].endsWith('/test'))).toHaveLength(1);
+ vi.spyOn(window,'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);(document.querySelector('#mcpRemove') as HTMLButtonElement).click();expect(fetcher.mock.calls.some(c=>c[1]?.method==='DELETE')).toBe(false);
+ (document.querySelector('#mcpRemove') as HTMLButtonElement).click();await tick();expect(fetcher.mock.calls.filter(c=>c[1]?.method==='DELETE')).toHaveLength(1);page.dispose();vi.restoreAllMocks();
+ });
+ it('logout clears dialog credential state and late detail cannot return',async()=>{
+ const {page}=setup([connection]);await tick();(document.querySelector('#mcpAdd') as HTMLButtonElement).click();await tick();(document.querySelector('#mcpBearer') as HTMLInputElement).value='synthetic-canary';(document.querySelector('#mcpLogout') as HTMLButtonElement).click();await tick();
+ expect((document.querySelector('#mcpBearer') as HTMLInputElement).value).toBe('');expect((document.querySelector('#mcpConnectionDialog') as HTMLDialogElement).open).toBe(false);expect((document.querySelector('#mcpManagement') as HTMLElement).hidden).toBe(true);page.dispose();
  });
  it('shows feature unavailable with explicit read retry',async()=>{
  const {page,fetcher}=setup();await tick();fetcher.mockResolvedValue(new Response('{}',{status:503}));(document.querySelector('#mcpRefresh') as HTMLButtonElement).click();await tick();expect(document.querySelector('#mcpError')?.textContent).toContain('unavailable');expect((document.querySelector('#mcpRetry') as HTMLElement).hidden).toBe(false);page.dispose();
