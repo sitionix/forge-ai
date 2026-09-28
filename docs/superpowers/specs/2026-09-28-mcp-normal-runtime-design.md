@@ -1,6 +1,6 @@
 # MCP normal runtime and Settings product flow
 
-Status: proposed; implementation has not started.
+Status: approved by the user on 2026-09-28; implementation has not started.
 
 ## Requested outcome
 
