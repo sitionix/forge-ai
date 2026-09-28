@@ -81,6 +81,23 @@ class NexusCombinedOperatorSessionIT {
         var mcp=manager.wiremock().createMapping(ForgeAgentWireMockEndpoints.createMcpConnection()).header("Authorization",equalTo("Bearer "+encoded(SERVICE))).createDefault();
         manager.mockMvc().ping(NexusAgentMockMvcEndpoints.createValidMcpConnection()).header("Host",HOST).header("Origin",ORIGIN).header("X-CSRF-TOKEN",tokens.csrf()).assertDefault();mcp.verify();
     }
+    @Test void canonicalSessionUsesExistingRemoteLoginAndLogoutRevokesBothAudiences() {
+        var tokens=login();
+        var original=SESSION.get();
+        manager.mockMvc().ping(NexusOperatorMockMvcEndpoints.currentSession())
+            .header("Host",HOST).header("Sec-Fetch-Site","same-origin")
+            .andExpectPath(result -> {
+                var body=new ObjectMapper().readTree(result.getResponse().getContentAsString());
+                assertThat(body.path("csrfHeader").asText()).isEqualTo("X-CSRF-TOKEN");
+                assertThat(body.path("csrfToken").asText()).isEqualTo(tokens.csrf());
+                assertThat(result.getRequest().getSession(false)).isSameAs(original);
+            }).assertDefault();
+        manager.mockMvc().ping(NexusOperatorMockMvcEndpoints.logout())
+            .header("Host",HOST).header("Origin",ORIGIN).header("X-CSRF-TOKEN",tokens.csrf()).assertDefault();
+        clearInvocations(mcpAdapter);
+        manager.mockMvc().ping(NexusAgentMockMvcEndpoints.listMcpConnections(401)).header("Host",HOST).assertDefault();
+        verifyNoInteractions(mcpAdapter);
+    }
     @Test void denialBeforeUpstreamForMissingSessionWrongOriginCsrfAndExpiredSession() {
         clearInvocations(mcpAdapter);
         manager.mockMvc().ping(NexusAgentMockMvcEndpoints.listMcpConnections(401)).header("Host",HOST).assertDefault();

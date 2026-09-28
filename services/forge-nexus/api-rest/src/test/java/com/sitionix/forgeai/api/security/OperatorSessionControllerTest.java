@@ -48,6 +48,7 @@ class OperatorSessionControllerTest {
         var request=new MockHttpServletRequest(); request.setContextPath("/fgaisox");
         var login=controller.login(body,request);
         assertThat(login.getStatusCode().value()).isEqualTo(200);
+        assertThat(new ObjectMapper().valueToTree(login.getBody()).path("csrfHeader").asText()).isEqualTo("X-Forge-CSRF");
         assertThat(login.getHeaders().getFirst("Set-Cookie"))
                 .contains("FG_SESSION=","HttpOnly","Secure","SameSite=Strict","Path=/fgaisox")
                 .doesNotContain("Domain=");

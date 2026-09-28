@@ -41,7 +41,9 @@ final class RemoteAccessBrowserFilter implements Filter {
         if (authentication.expired(session)) { session.invalidate();SecurityContextHolder.clearContext(); }
         // CsrfFilter is once-per-request; nested dispatches must check the current target too.
         if (request.getDispatcherType()!=DispatcherType.REQUEST && unsafe
-                && !com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals("/api/v1/infrastructure/agents/remote-access/operator/login")) {
+                && !(request.getMethod().equals("POST")
+                    && (com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals("/api/v1/infrastructure/agents/remote-access/operator/login")
+                        || combined && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals("/api/v1/operator/session")))) {
             var token=new org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository().loadToken(request);
             var values=java.util.Collections.list(request.getHeaders("X-CSRF-TOKEN"));
             if (token==null || values.size()!=1 || !java.security.MessageDigest.isEqual(token.getToken().getBytes(java.nio.charset.StandardCharsets.UTF_8),values.getFirst().getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
