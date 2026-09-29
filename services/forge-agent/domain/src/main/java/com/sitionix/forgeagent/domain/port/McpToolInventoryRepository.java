@@ -10,7 +10,7 @@ public interface McpToolInventoryRepository {
     List<McpToolSummary> list(UUID installationId, UUID connectionId);
     /** Replace only if the probed endpoint and auth type are still current. */
     void replace(UUID installationId, UUID connectionId, URI endpoint, McpAuthType authType,
-                 McpEncryptedCredential credential, List<McpToolSummary> tools);
+                 McpEncryptedCredential credential, List<McpToolSummary> tools, UUID oauthAuthorizationId);
     /** Approvals must exactly match current discovered name and schema fingerprint. */
     McpConnection approve(UUID installationId, UUID connectionId, Set<McpAllowedTool> tools);
 }

@@ -134,7 +134,7 @@ class McpGatewayServiceTest {
         when(grants.resolve("synthetic-token", connectionId)).thenReturn(Optional.of(grant));
         when(connections.findById(installation, connectionId)).thenReturn(Optional.of(new McpConnection(
                 connectionId, installation, "test", grant.endpoint(), McpAuthType.BEARER, true,
-                McpProjectAccess.all(), Set.of(), true, now, now, null, null)));
+                McpProjectAccess.all(), Set.of(), true, now, now, null, null, null, null)));
         assertThatThrownBy(() -> service.call("synthetic-token", connectionId,
                 tool.name(), tool.schemaFingerprint(), "{}"))
                 .isInstanceOf(McpGatewayAccessException.class);
@@ -177,7 +177,7 @@ class McpGatewayServiceTest {
 
     private McpConnection connection(boolean enabled, McpProjectAccess access) {
         return new McpConnection(connectionId, installation, "test", URI.create("https://example.org/mcp"),
-                McpAuthType.BEARER, enabled, access, Set.of(tool), true, now, now, null, null);
+                McpAuthType.BEARER, enabled, access, Set.of(tool), true, now, now, null, null, null, null);
     }
 
     private AgentExecutionSession session(UUID activeNode, Instant leaseExpiry) {

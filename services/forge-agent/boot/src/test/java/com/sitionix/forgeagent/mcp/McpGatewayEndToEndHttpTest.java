@@ -146,7 +146,7 @@ class McpGatewayEndToEndHttpTest {
         var approval = new McpAllowedTool("read", report.tools().getFirst().schemaFingerprint());
         var connection = new McpConnection(connectionId, installation, "fixture", upstream.endpoint(),
                 McpAuthType.BEARER, true, McpProjectAccess.all(), Set.of(approval), true,
-                now, now, null, null);
+                now, now, null, null, null, null);
         when(connections.findById(installation, connectionId)).thenReturn(Optional.of(connection));
         var claim = new AgentSessionExecutionClaim(sessionId, turnId, nodeId, "owner", 7L,
                 now.plusSeconds(60), null, "codex");

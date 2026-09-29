@@ -34,25 +34,25 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
     @Autowired private ProjectRepository projects;
 
     @Test void inventoryIsStoredAndSchemaChangeRevokesOnlyChangedApproval() {
-        var connections = new PostgresMcpConnectionRepository(jdbc, transactions);
+        var connections = new PostgresMcpConnectionRepository(jdbc, transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var inventory = new PostgresMcpToolInventoryRepository(jdbc, connections, transactions);
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
         URI endpoint = URI.create("https://example.org/mcp");
         var connection = new McpConnection(id, installation, "inventory", endpoint, McpAuthType.NONE,
-                false, McpProjectAccess.all(), Set.of(), false, now, now, null, null);
+                false, McpProjectAccess.all(), Set.of(), false, now, now, null, null, null, null);
         connections.insert(new McpConnectionState(connection, null));
         inventory.replace(installation, id, endpoint, McpAuthType.NONE, null, List.of(
                 new McpToolSummary("read", "Read", FP_ONE),
-                new McpToolSummary("write", "Write", FP_TWO)));
+                new McpToolSummary("write", "Write", FP_TWO)), null);
         var approved = inventory.approve(installation, id, Set.of(
                 new McpAllowedTool("read", FP_ONE), new McpAllowedTool("write", FP_TWO)));
         assertThat(approved.allowedTools()).hasSize(2);
         assertThat(approved.checkedAt()).isNotNull();
         inventory.replace(installation, id, endpoint, McpAuthType.NONE, null, List.of(
                 new McpToolSummary("read", "Read", FP_ONE),
-                new McpToolSummary("write", "Changed", FP_THREE)));
+                new McpToolSummary("write", "Changed", FP_THREE)), null);
         assertThat(connections.findById(installation, id).orElseThrow().allowedTools())
                 .containsExactly(new McpAllowedTool("read", FP_ONE));
         assertThatThrownBy(() -> inventory.approve(installation, id, Set.of(new McpAllowedTool("write", FP_TWO))))
@@ -62,23 +62,23 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
             var c = state.connection();
             return new McpConnectionState(new McpConnection(c.id(), c.installationId(), c.displayName(),
                     changedEndpoint, c.authType(), c.enabled(), c.projectAccess(),
-                    Set.of(), c.credentialConfigured(), c.createdAt(), Instant.now(), null, null), null);
+                    Set.of(), c.credentialConfigured(), c.createdAt(), Instant.now(), null, null, null, null), null);
         });
         assertThat(inventory.list(installation, id)).isEmpty();
         inventory.replace(installation, id, changedEndpoint, McpAuthType.NONE, null,
-                List.of(new McpToolSummary("read", "Read", FP_ONE)));
+                List.of(new McpToolSummary("read", "Read", FP_ONE)), null);
         connections.change(installation, id, state -> {
             var c = state.connection();
             return new McpConnectionState(new McpConnection(c.id(), c.installationId(), c.displayName(),
                     c.endpoint(), c.authType(), c.enabled(), c.projectAccess(), Set.of(),
-                    c.credentialConfigured(), c.createdAt(), Instant.now(), null, null), state.credential());
+                    c.credentialConfigured(), c.createdAt(), Instant.now(), null, null, null, null), state.credential());
         });
         assertThat(inventory.list(installation, id)).isEmpty();
         connections.delete(installation, id);
     }
 
     @Test void completedProbeCannotPublishInventoryForReplacedCredential() {
-        var connections = new PostgresMcpConnectionRepository(jdbc, transactions);
+        var connections = new PostgresMcpConnectionRepository(jdbc, transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var inventory = new PostgresMcpToolInventoryRepository(jdbc, connections, transactions);
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
         UUID id = UUID.randomUUID();
@@ -86,12 +86,12 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
         Instant now = Instant.now();
         var oldCredential = new McpEncryptedCredential("test", new byte[]{1});
         var connection = new McpConnection(id, installation, "credential-race", endpoint, McpAuthType.BEARER,
-                false, McpProjectAccess.all(), Set.of(), true, now, now, null, null);
+                false, McpProjectAccess.all(), Set.of(), true, now, now, null, null, null, null);
         connections.insert(new McpConnectionState(connection, oldCredential));
         connections.change(installation, id, state ->
                 new McpConnectionState(state.connection(), new McpEncryptedCredential("test", new byte[]{2})));
         assertThatThrownBy(() -> inventory.replace(installation, id, endpoint, McpAuthType.BEARER,
-                oldCredential, List.of(new McpToolSummary("read", null, FP_ONE))))
+                oldCredential, List.of(new McpToolSummary("read", null, FP_ONE)), null))
                 .isInstanceOf(IllegalStateException.class).hasMessage("MCP connection changed during probe");
         assertThat(inventory.list(installation, id)).isEmpty();
         connections.delete(installation, id);
@@ -100,7 +100,7 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
     @Test void migrationAndRoundTripSeparateMetadataFromCiphertext() {
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema='public'",String.class))
                 .contains("mcp_connections","mcp_connection_credentials","mcp_connection_projects","mcp_allowed_tools");
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         forgeIt.postgresql().create().to(PROJECT.withJson("project_alpha.json")).build();
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(), id = UUID.randomUUID(), project = UUID.fromString("10000000-0000-4000-8000-000000000001");
         var connection = connection(id,installation,project);
@@ -119,7 +119,7 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
     }
 
     @Test void failedTransactionRollsBackMetadataAndCredentialTogether() {
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         forgeIt.postgresql().create().to(PROJECT.withJson("project_alpha.json")).build();
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(), id = UUID.randomUUID();
         var connection = connection(id,installation,UUID.fromString("10000000-0000-4000-8000-000000000001"));
@@ -132,7 +132,7 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
     }
 
     @Test void persistedAesCredentialRotatesToActiveKeyWithoutPlaintextStorage() {
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var identity = new PostgresForgeInstanceIdentityRepository(jdbc);
         byte[] oldKey = new byte[32], newKey = new byte[32];
         Arrays.fill(oldKey,(byte)7); Arrays.fill(newKey,(byte)8);
@@ -157,11 +157,11 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
     @Test void getAndListUseOneSnapshotForPolicyAndTools() {
         forgeIt.postgresql().create().to(PROJECT.withJson("project_alpha.json")).build();
         UUID project = UUID.fromString("10000000-0000-4000-8000-000000000001");
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(), id = UUID.randomUUID();
         Instant now = Instant.now();
         var all = new McpConnection(id,installation,"x",URI.create("https://example.org"),McpAuthType.NONE,true,
-                McpProjectAccess.all(),Set.of(new McpAllowedTool("old","h1")),false,now,now,null,null);
+                McpProjectAccess.all(),Set.of(new McpAllowedTool("old","h1")),false,now,now,null,null, null, null);
         repository.insert(new McpConnectionState(all,null));
         var switched = new java.util.concurrent.atomic.AtomicBoolean();
         JdbcTemplate hooked = hookedJdbc(() -> {
@@ -169,7 +169,7 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
                     new McpConnectionState(withPolicy(state.connection(),McpProjectAccess.selected(Set.of(project)),
                             Set.of(new McpAllowedTool("new","h2"))),null));
         });
-        var before = new PostgresMcpConnectionRepository(hooked,transactions).findById(installation,id).orElseThrow();
+        var before = new PostgresMcpConnectionRepository(hooked,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules()).findById(installation,id).orElseThrow();
         assertThat(before.projectAccess()).isEqualTo(McpProjectAccess.all());
         assertThat(before.allowedTools()).containsExactly(new McpAllowedTool("old","h1"));
         switched.set(false);
@@ -177,7 +177,7 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
             if (switched.compareAndSet(false,true)) repository.change(installation,id,state ->
                     new McpConnectionState(withPolicy(state.connection(),McpProjectAccess.all(),Set.of(new McpAllowedTool("old","h1"))),null));
         });
-        var listed = new PostgresMcpConnectionRepository(hooked,transactions).findAll(installation).stream()
+        var listed = new PostgresMcpConnectionRepository(hooked,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules()).findAll(installation).stream()
                 .filter(c -> c.id().equals(id)).findFirst().orElseThrow();
         assertThat(listed.projectAccess()).isEqualTo(McpProjectAccess.selected(Set.of(project)));
         assertThat(listed.allowedTools()).containsExactly(new McpAllowedTool("new","h2"));
@@ -187,7 +187,7 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
     @Test void concurrentEndpointReplacementAndEnableKeepOneCredentialIdentity() throws Exception {
         forgeIt.postgresql().create().to(PROJECT.withJson("project_alpha.json")).build();
         UUID project = UUID.fromString("10000000-0000-4000-8000-000000000001");
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var identity = new PostgresForgeInstanceIdentityRepository(jdbc);
         byte[] key = new byte[32]; Arrays.fill(key,(byte)9);
         var realCipher = new AesGcmMcpCredentialCipher(() -> new McpLocalKeys("active",Map.of("active",key)));
@@ -224,12 +224,12 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
     }
 
     @Test void concurrentDeleteCannotBeUndoneByStaleMutation() throws Exception {
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var identity = new PostgresForgeInstanceIdentityRepository(jdbc);
         UUID installation = identity.getOrCreate(), id = UUID.randomUUID();
         Instant now = Instant.now();
         var original = new McpConnection(id,installation,"x",URI.create("https://example.org/a"),McpAuthType.NONE,
-                false,McpProjectAccess.all(),Set.of(),false,now,now,null,null);
+                false,McpProjectAccess.all(),Set.of(),false,now,now,null,null, null, null);
         repository.insert(new McpConnectionState(original,null));
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
@@ -270,13 +270,13 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
 
     private static McpConnection withPolicy(McpConnection c,McpProjectAccess access,Set<McpAllowedTool> tools) {
         return new McpConnection(c.id(),c.installationId(),c.displayName(),c.endpoint(),c.authType(),c.enabled(),access,
-                tools,c.credentialConfigured(),c.createdAt(),Instant.now(),c.checkedAt(),c.safeDiagnostic());
+                tools,c.credentialConfigured(),c.createdAt(),Instant.now(),c.checkedAt(),c.safeDiagnostic(), null, null);
     }
 
     private static McpConnection connection(UUID id,UUID installation,UUID project) {
         Instant now = Instant.parse("2026-09-23T10:00:00Z");
         return new McpConnection(id,installation,"Same",URI.create("https://example.org/mcp"),McpAuthType.BEARER,
                 false,McpProjectAccess.selected(Set.of(project)),Set.of(new McpAllowedTool("tool","sha256:abcd")),true,
-                now,now,null,null);
+                now,now,null,null, null, null);
     }
 }

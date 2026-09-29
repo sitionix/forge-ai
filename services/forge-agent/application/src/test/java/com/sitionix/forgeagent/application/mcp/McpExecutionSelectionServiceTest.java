@@ -163,6 +163,6 @@ class McpExecutionSelectionServiceTest {
         return new McpConnection(id, installation, "fixture", URI.create("https://example.org/mcp"),
                 McpAuthType.NONE, enabled, access,
                 withTool ? Set.of(new McpAllowedTool("echo", "sha256:" + "a".repeat(64))) : Set.of(),
-                false, NOW, NOW, null, null);
+                false, NOW, NOW, null, null, null, null);
     }
 }

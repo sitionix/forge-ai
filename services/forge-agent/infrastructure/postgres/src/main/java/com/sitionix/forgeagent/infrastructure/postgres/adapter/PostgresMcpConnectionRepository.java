@@ -1,5 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.postgres.adapter;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.McpConnectionRepository;
 import java.net.URI;
@@ -24,9 +25,11 @@ public class PostgresMcpConnectionRepository implements McpConnectionRepository 
             + "FROM mcp_allowed_tools WHERE connection_id=m.id) t ON TRUE ";
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
-    public PostgresMcpConnectionRepository(JdbcTemplate jdbc, PlatformTransactionManager manager) {
+    private final ObjectMapper json;
+    public PostgresMcpConnectionRepository(JdbcTemplate jdbc, PlatformTransactionManager manager, ObjectMapper json) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
+        this.json = json;
     }
 
     public Optional<McpConnection> findById(UUID installationId, UUID id) {
@@ -43,9 +46,9 @@ public class PostgresMcpConnectionRepository implements McpConnectionRepository 
     public void insert(McpConnectionState state) {
         McpConnection c = state.connection();
         transactions.executeWithoutResult(status -> {
-            jdbc.update("INSERT INTO mcp_connections(id,installation_id,display_name,endpoint,auth_type,enabled,project_scope,credential_configured,created_at,updated_at,checked_at,safe_diagnostic) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            jdbc.update("INSERT INTO mcp_connections(id,installation_id,display_name,endpoint,auth_type,enabled,project_scope,credential_configured,created_at,updated_at,checked_at,safe_diagnostic,oauth_configuration,oauth_authorization_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?)",
                     c.id(),c.installationId(),c.displayName(),c.endpoint().toString(),c.authType().name(),c.enabled(),c.projectAccess().scope().name(),c.credentialConfigured(),
-                    Timestamp.from(c.createdAt()),Timestamp.from(c.updatedAt()),timestamp(c.checkedAt()),c.safeDiagnostic());
+                    Timestamp.from(c.createdAt()),Timestamp.from(c.updatedAt()),timestamp(c.checkedAt()),c.safeDiagnostic(), oauthJson(c.oauthConfiguration()), c.oauthAuthorizationId());
             writeChildren(state);
         });
     }
@@ -64,9 +67,9 @@ public class PostgresMcpConnectionRepository implements McpConnectionRepository 
             if (!current.connection().endpoint().equals(c.endpoint()) || current.connection().authType() != c.authType()
                     || (current.connection().checkedAt() != null && c.checkedAt() == null))
                 jdbc.update("DELETE FROM mcp_discovered_tools WHERE connection_id=?", id);
-            int affected = jdbc.update("UPDATE mcp_connections SET display_name=?,endpoint=?,auth_type=?,enabled=?,project_scope=?,credential_configured=?,updated_at=?,checked_at=?,safe_diagnostic=? WHERE installation_id=? AND id=?",
+            int affected = jdbc.update("UPDATE mcp_connections SET display_name=?,endpoint=?,auth_type=?,enabled=?,project_scope=?,credential_configured=?,updated_at=?,checked_at=?,safe_diagnostic=?,oauth_configuration=?::jsonb,oauth_authorization_id=? WHERE installation_id=? AND id=?",
                     c.displayName(),c.endpoint().toString(),c.authType().name(),c.enabled(),c.projectAccess().scope().name(),c.credentialConfigured(),
-                    Timestamp.from(c.updatedAt()),timestamp(c.checkedAt()),c.safeDiagnostic(),installationId,id);
+                    Timestamp.from(c.updatedAt()),timestamp(c.checkedAt()),c.safeDiagnostic(),oauthJson(c.oauthConfiguration()),c.oauthAuthorizationId(),installationId,id);
             if (affected != 1) throw new IllegalStateException("MCP connection changed");
             writeChildren(next);
             return Optional.of(next);
@@ -103,9 +106,19 @@ public class PostgresMcpConnectionRepository implements McpConnectionRepository 
                     McpAuthType.valueOf(rs.getString("auth_type")),rs.getBoolean("enabled"),
                     new McpProjectAccess(McpProjectAccess.Scope.valueOf(rs.getString("project_scope")),projects),tools,
                     rs.getBoolean("credential_configured"),rs.getTimestamp("created_at").toInstant(),rs.getTimestamp("updated_at").toInstant(),
-                    instant(rs,"checked_at"),rs.getString("safe_diagnostic"));
+                    instant(rs,"checked_at"),rs.getString("safe_diagnostic"), oauth(rs.getString("oauth_configuration")), rs.getObject("oauth_authorization_id", UUID.class));
         };
     }
     private static Timestamp timestamp(Instant value) { return value == null ? null : Timestamp.from(value); }
     private static Instant instant(ResultSet rs,String column) throws SQLException { Timestamp value = rs.getTimestamp(column); return value == null ? null : value.toInstant(); }
+    private String oauthJson(McpOAuthConfiguration configuration) {
+        if (configuration == null) return null;
+        try { return json.writeValueAsString(configuration); }
+        catch (com.fasterxml.jackson.core.JsonProcessingException exception) { throw new IllegalStateException("OAuth configuration persistence unavailable"); }
+    }
+    private McpOAuthConfiguration oauth(String value) {
+        if (value == null) return null;
+        try { return json.readValue(value, McpOAuthConfiguration.class); }
+        catch (com.fasterxml.jackson.core.JsonProcessingException exception) { throw new IllegalStateException("OAuth configuration persistence invalid"); }
+    }
 }

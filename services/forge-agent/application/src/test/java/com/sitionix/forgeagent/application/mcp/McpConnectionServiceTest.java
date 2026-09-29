@@ -112,7 +112,7 @@ class McpConnectionServiceTest {
         var c = service.create("x", URI.create("https://example.org/a"), McpAuthType.NONE,McpProjectAccess.all(),null);
         metadata.put(c.id(),new McpConnection(c.id(),c.installationId(),c.displayName(),c.endpoint(),c.authType(),
                 c.enabled(),c.projectAccess(),Set.of(new McpAllowedTool("old-tool","old-schema")),false,
-                c.createdAt(),c.updatedAt(),null,null));
+                c.createdAt(),c.updatedAt(),null,null, null, null));
         var updated = service.update(c.id(), "x", URI.create("https://example.org/b"), McpAuthType.NONE,
                 McpProjectAccess.all(),McpCredentialChange.KEEP,null);
         assertThat(updated.allowedTools()).isEmpty();
@@ -123,7 +123,7 @@ class McpConnectionServiceTest {
                 McpProjectAccess.all(), McpCredentialSecret.bearer("first-synthetic"));
         metadata.put(c.id(), new McpConnection(c.id(), c.installationId(), c.displayName(), c.endpoint(), c.authType(),
                 true, c.projectAccess(), Set.of(new McpAllowedTool("read", "sha256:old")), true,
-                c.createdAt(), c.updatedAt(), Instant.now(), null));
+                c.createdAt(), c.updatedAt(), Instant.now(), null, null, null));
         var replaced = service.update(c.id(), "x", c.endpoint(), McpAuthType.BEARER, McpProjectAccess.all(),
                 McpCredentialChange.REPLACE, McpCredentialSecret.bearer("second-synthetic"));
         assertThat(replaced.allowedTools()).isEmpty();
@@ -134,7 +134,7 @@ class McpConnectionServiceTest {
         var c = service.create("x",URI.create("https://example.org"),McpAuthType.BEARER,
                 McpProjectAccess.selected(Set.of(project)),McpCredentialSecret.bearer("synthetic"));
         metadata.put(c.id(),new McpConnection(c.id(),c.installationId(),c.displayName(),c.endpoint(),c.authType(),
-                true,c.projectAccess(),Set.of(new McpAllowedTool("read","sha256:one")),true,c.createdAt(),c.updatedAt(),null,null));
+                true,c.projectAccess(),Set.of(new McpAllowedTool("read","sha256:one")),true,c.createdAt(),c.updatedAt(),null,null, null, null));
         assertThat(service.allows(c.id(),project,"read","sha256:one")).isTrue();
         assertThat(service.allows(c.id(),project,"read","sha256:two")).isFalse();
         assertThat(service.allows(c.id(),project,"other","sha256:one")).isFalse();

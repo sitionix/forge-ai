@@ -54,7 +54,7 @@ public final class McpProbeService {
         }
         try {
             McpProbeReport report = remote.probe(connection.endpoint(), connection.authType(), credential);
-            inventory.replace(installation, id, connection.endpoint(), connection.authType(), encrypted, report.tools());
+            inventory.replace(installation, id, connection.endpoint(), connection.authType(), encrypted, report.tools(), connection.oauthAuthorizationId());
             if (gateway != null && !connections.findById(installation, id)
                     .map(after -> after.allowedTools().equals(connection.allowedTools())).orElse(false))
                 gateway.revokeConnection(id);

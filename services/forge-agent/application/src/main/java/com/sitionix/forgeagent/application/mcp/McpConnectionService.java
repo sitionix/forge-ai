@@ -40,7 +40,7 @@ public class McpConnectionService {
         UUID installation = identity.getOrCreate(), id = UUID.randomUUID();
         Instant now = Instant.now();
         var connection = new McpConnection(id, installation, displayName.strip(), endpoint, authType, false,
-                access, Set.of(), secret != null, now, now, null, null);
+                access, Set.of(), secret != null, now, now, null, null, null, null);
         repository.insert(new McpConnectionState(connection,
                 secret == null ? null : cipher.encrypt(installation,id,PURPOSE,secret.bytes())));
         return connection;
@@ -84,7 +84,7 @@ public class McpConnectionService {
             var updated = new McpConnection(id, installation, displayName.strip(), endpoint, authType,
                     current.enabled(), access, identityChanged ? Set.of() : current.allowedTools(), encrypted != null,
                     current.createdAt(), Instant.now(), identityChanged ? null : current.checkedAt(),
-                    identityChanged ? null : current.safeDiagnostic());
+                    identityChanged ? null : current.safeDiagnostic(), null, null);
             return new McpConnectionState(updated,encrypted);
         }).orElseThrow(() -> new NoSuchElementException("MCP connection not found")).connection();
         if (gateway != null) gateway.revokeConnection(id);
@@ -97,7 +97,7 @@ public class McpConnectionService {
             var current = state.connection();
             var updated = new McpConnection(current.id(),current.installationId(),current.displayName(),current.endpoint(),
                     current.authType(),enabled,current.projectAccess(),current.allowedTools(),current.credentialConfigured(),
-                    current.createdAt(),Instant.now(),current.checkedAt(),current.safeDiagnostic());
+                    current.createdAt(),Instant.now(),current.checkedAt(),current.safeDiagnostic(), current.oauthConfiguration(), current.oauthAuthorizationId());
             return new McpConnectionState(updated,state.credential());
         }).orElseThrow(() -> new NoSuchElementException("MCP connection not found")).connection();
         if (!enabled && gateway != null) gateway.revokeConnection(id);

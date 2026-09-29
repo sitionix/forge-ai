@@ -119,7 +119,7 @@ class McpSettingsAcceptanceHttpTest {
             assertThat(connection.enabled()).isTrue();assertThat(connection.allowedTools()).extracting(McpAllowedTool::name).containsExactly("echo");
             assertThat(connection.projectAccess().projectIds()).containsExactly(projectId);
             assertThat(toolCalls).isZero();
-            var reloaded=new PostgresMcpConnectionRepository(jdbc,transactions).findById(
+            var reloaded=new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules()).findById(
                     new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(),id).orElseThrow();
             assertThat(reloaded).isEqualTo(connection);
             var claim=trustedLease(projectId,now);
