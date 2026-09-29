@@ -59,6 +59,18 @@ public final class NexusAgentMockMvcEndpoints {
                 Void.class, InfrastructureErrorResponse.class,
                 (MockmvcDefault) context -> context.expectStatus(400));
     }
+    public static Endpoint<JsonNode, JsonNode> startMcpOAuth(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}/oauth/start",HttpMethod.POST,
+                JsonNode.class,JsonNode.class,(MockmvcDefault)c->c.withRequest("mcp-oauth-start-request.json").expectStatus(status));
+    }
+    public static Endpoint<JsonNode, Void> cancelMcpOAuth(int status) {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}/oauth/transactions/{transactionId}",HttpMethod.DELETE,
+                JsonNode.class,Void.class,(MockmvcDefault)c->c.withRequest("mcp-oauth-start-request.json").expectStatus(status));
+    }
+    public static Endpoint<Void, Void> mcpOAuthCallback() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/oauth/callback",HttpMethod.GET,
+                Void.class,Void.class,(MockmvcDefault)c->c.expectStatus(303));
+    }
     public static Endpoint<Void, com.sitionix.forgeai.api.mcp.McpConnectionResponse[]> listMcpConnections(int status) {
         return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections", HttpMethod.GET,
                 Void.class, com.sitionix.forgeai.api.mcp.McpConnectionResponse[].class,

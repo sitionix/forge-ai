@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.UUID;
 
 public interface ManageAgentMcpConnections {
+    McpOAuthStart startOAuth(UUID id,String browserBinding);
+    McpOAuthCompletion completeOAuth(McpOAuthCallback callback);
+    void cancelOAuth(UUID id,UUID transactionId,String browserBinding);
     List<McpConnection> list();
     McpConnection get(UUID id);
     McpProbeReport test(UUID id);

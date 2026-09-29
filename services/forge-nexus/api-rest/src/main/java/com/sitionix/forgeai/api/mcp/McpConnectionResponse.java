@@ -9,4 +9,6 @@ import java.util.UUID;
 public record McpConnectionResponse(UUID id,String displayName,URI endpoint,McpConnection.Transport transport,
         McpConnection.AuthType authType,boolean enabled,McpConnection.ProjectAccess projectAccess,
         Set<McpConnection.AllowedTool> allowedTools,boolean credentialConfigured,Instant createdAt,Instant updatedAt,
-        Instant checkedAt,String safeDiagnostic) {}
+        Instant checkedAt,String safeDiagnostic,
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        com.sitionix.forgeai.domain.model.mcp.McpOAuthConfiguration oauthConfiguration) {}

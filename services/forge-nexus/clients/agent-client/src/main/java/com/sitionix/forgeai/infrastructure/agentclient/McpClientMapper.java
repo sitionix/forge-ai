@@ -11,6 +11,17 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class McpClientMapper {
+    public com.sitionix.forgeai.domain.model.mcp.McpOAuthStart toDomain(com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthStartInbound r) {
+        if(r==null || r.transactionId()==null || r.connectionId()==null || r.authorizationUrl()==null
+                || r.authorizationUrl().getHost()==null || r.authorizationUrl().getUserInfo()!=null
+                || !("http".equalsIgnoreCase(r.authorizationUrl().getScheme()) || "https".equalsIgnoreCase(r.authorizationUrl().getScheme())))
+            throw new IllegalStateException("Invalid MCP upstream response");
+        return new com.sitionix.forgeai.domain.model.mcp.McpOAuthStart(r.transactionId(),r.connectionId(),r.authorizationUrl());
+    }
+    public com.sitionix.forgeai.domain.model.mcp.McpOAuthCompletion toDomain(com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCompletionInbound r) {
+        if(r==null || r.connectionId()==null)throw new IllegalStateException("Invalid MCP upstream response");
+        return new com.sitionix.forgeai.domain.model.mcp.McpOAuthCompletion(r.connectionId());
+    }
     public McpProbeReport toDomain(McpProbeInboundResponse response) {
         try {
             if (response == null || response.tools() == null) throw new IllegalArgumentException();
@@ -59,7 +70,7 @@ public class McpClientMapper {
                     new McpConnection.ProjectAccess(McpConnection.Scope.valueOf(r.projectAccess().scope()),r.projectAccess().projectIds()),
                     r.allowedTools().stream().map(t -> new McpConnection.AllowedTool(t.name(),t.schemaFingerprint()))
                             .collect(java.util.stream.Collectors.toUnmodifiableSet()),
-                    r.credentialConfigured(),r.createdAt(),r.updatedAt(),r.checkedAt(),r.safeDiagnostic());
+                    r.credentialConfigured(),r.createdAt(),r.updatedAt(),r.checkedAt(),r.safeDiagnostic(),r.oauthConfiguration());
         } catch (RuntimeException exception) {
             throw new IllegalStateException("Invalid MCP upstream response");
         }

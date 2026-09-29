@@ -13,6 +13,18 @@ public class ForgeAgentMcpClientAdapter implements ForgeAgentMcpClient {
     private final ForgeAgentClientCallExecutor executor;
     private final McpClientMapper mapper;
     public ForgeAgentMcpClientAdapter(ForgeAgentHttpClient http,ForgeAgentClientCallExecutor executor,McpClientMapper mapper){this.http=http;this.executor=executor;this.mapper=mapper;}
+    public McpOAuthStart startOAuth(UUID id,String binding){
+        var request=new com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound(binding);
+        return mapper.toDomain(executor.execute(()->http.startMcpOAuth(id,request)));
+    }
+    public McpOAuthCompletion completeOAuth(McpOAuthCallback callback){
+        var request=com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCallbackOutbound.from(callback);
+        return mapper.toDomain(executor.execute(()->http.completeMcpOAuth(request)));
+    }
+    public void cancelOAuth(UUID id,UUID transactionId,String binding){
+        var request=new com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound(binding);
+        executor.execute(()->{http.cancelMcpOAuth(id,transactionId,request);return null;});
+    }
     public List<McpConnection> list(){return executor.execute(http::listMcpConnections).stream().map(mapper::toDomain).toList();}
     public McpConnection get(UUID id){return mapper.toDomain(executor.execute(()->http.getMcpConnection(id)));}
     public McpProbeReport test(UUID id){return mapper.toDomain(executor.execute(()->http.testMcpConnection(id)));}

@@ -2,6 +2,9 @@ environment: localhost
 server:
   address: ${FORGE_NEXUS_HOST:}
   port: 9099
+  tomcat:
+    accesslog:
+      condition-unless: forgeSensitiveRequest
   servlet:
     context-path: /fgaisox
 spring:

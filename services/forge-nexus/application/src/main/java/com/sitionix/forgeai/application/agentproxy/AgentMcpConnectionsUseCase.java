@@ -12,6 +12,9 @@ public class AgentMcpConnectionsUseCase implements ManageAgentMcpConnections {
     private static final Set<String> FORBIDDEN=Set.of("host","cookie","authorization","connection","keep-alive","proxy-connection","proxy-authenticate","proxy-authorization","te","trailer","transfer-encoding","upgrade","forwarded","via","content-length");
     private final ForgeAgentMcpClient client;
     public AgentMcpConnectionsUseCase(ForgeAgentMcpClient client){this.client=client;}
+    public McpOAuthStart startOAuth(UUID id,String browserBinding){requireId(id);return client.startOAuth(id,browserBinding);}
+    public McpOAuthCompletion completeOAuth(McpOAuthCallback callback){return client.completeOAuth(callback);}
+    public void cancelOAuth(UUID id,UUID transactionId,String browserBinding){requireId(id);requireId(transactionId);client.cancelOAuth(id,transactionId,browserBinding);}
     public List<McpConnection> list(){return client.list();}
     public McpConnection get(UUID id){requireId(id);return client.get(id);}
     public McpProbeReport test(UUID id){requireId(id);return client.test(id);}
@@ -36,9 +39,11 @@ public class AgentMcpConnectionsUseCase implements ManageAgentMcpConnections {
         URI uri=c.endpoint();
         if(uri==null || uri.getScheme()==null || !(uri.getScheme().equalsIgnoreCase("http") || uri.getScheme().equalsIgnoreCase("https"))
                 || uri.getHost()==null || uri.getHost().isBlank() || uri.getRawUserInfo()!=null || uri.getRawFragment()!=null || uri.getRawQuery()!=null) invalid();
-        boolean hasBearer=c.bearer()!=null,hasHeaders=c.headers()!=null;
-        if(hasBearer && hasHeaders || (c.credentialChange()==McpConnection.CredentialChange.REPLACE)!=(hasBearer||hasHeaders)
+        boolean hasBearer=c.bearer()!=null,hasHeaders=c.headers()!=null,hasClientSecret=c.clientSecret()!=null;
+        if(hasBearer && hasHeaders || (c.credentialChange()==McpConnection.CredentialChange.REPLACE)!=(hasBearer||hasHeaders||hasClientSecret)
                 || (!update && c.credentialChange()!=null && c.credentialChange()!=McpConnection.CredentialChange.REPLACE)) invalid();
+        if(hasClientSecret && (c.authType()!=McpConnection.AuthType.OAUTH || hasBearer || hasHeaders || c.clientSecret().isBlank() || crlf(c.clientSecret())))invalid();
+        if(c.authType()!=McpConnection.AuthType.OAUTH && c.oauthConfiguration()!=null)invalid();
         if(hasBearer){if(c.authType()!=McpConnection.AuthType.BEARER || c.bearer().isBlank() || masked(c.bearer()) || crlf(c.bearer()))invalid();}
         if(hasHeaders){if(c.authType()!=McpConnection.AuthType.SECRET_HEADERS || c.headers().isEmpty())invalid();
             for(var e:c.headers().entrySet()){String n=e.getKey(),v=e.getValue();

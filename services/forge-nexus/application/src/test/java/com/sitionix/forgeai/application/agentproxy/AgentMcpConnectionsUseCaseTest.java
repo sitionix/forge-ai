@@ -25,7 +25,7 @@ class AgentMcpConnectionsUseCaseTest {
     }
     @Test void selectedEmptyIsExplicitAndAllowsDuplicateNames(){
         var c=new McpConnectionCommand("same",URI.create("https://mcp.example/path"),McpConnection.Transport.STREAMABLE_HTTP,
-                McpConnection.AuthType.NONE,new McpConnection.ProjectAccess(McpConnection.Scope.SELECTED,Set.of()),Set.of(),null,null,null);
+                McpConnection.AuthType.NONE,new McpConnection.ProjectAccess(McpConnection.Scope.SELECTED,Set.of()),Set.of(),null,null,null,null,null);
         useCase.create(c);useCase.create(c);
         verify(client,times(2)).create(c);
         assertTrue(c.projectAccess().projectIds().isEmpty());
@@ -34,6 +34,6 @@ class AgentMcpConnectionsUseCaseTest {
         return new McpConnectionCommand("name",uri,transport,bearer==null && headers==null?McpConnection.AuthType.NONE:
                 headers==null?McpConnection.AuthType.BEARER:McpConnection.AuthType.SECRET_HEADERS,
                 new McpConnection.ProjectAccess(McpConnection.Scope.ALL,Set.of()),Set.of(),
-                bearer==null && headers==null?null:McpConnection.CredentialChange.REPLACE,bearer,headers);
+                bearer==null && headers==null?null:McpConnection.CredentialChange.REPLACE,bearer,headers,null,null);
     }
 }

@@ -22,6 +22,15 @@ class ForgeAgentMcpClientAdapterTest {
     private final ForgeAgentClientCallExecutor executor=mock(ForgeAgentClientCallExecutor.class);
     private final ForgeAgentMcpClientAdapter adapter=new ForgeAgentMcpClientAdapter(http,executor,new McpClientMapper());
 
+    @Test void oauthStartUsesExistingExecutorAndMapper() {
+        var mapper=mock(McpClientMapper.class);var sut=new ForgeAgentMcpClientAdapter(http,executor,mapper);
+        var inbound=new com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthStartInbound(UUID.randomUUID(),UUID.randomUUID(),URI.create("https://provider.example/authorize"));
+        var mapped=new McpOAuthStart(inbound.transactionId(),inbound.connectionId(),inbound.authorizationUrl());
+        when(executor.execute(any())).thenReturn(inbound);when(mapper.toDomain(inbound)).thenReturn(mapped);
+        assertThat(sut.startOAuth(inbound.connectionId(),"binding-canary")).isSameAs(mapped);
+        verify(executor).execute(any());verify(mapper).toDomain(inbound);verifyNoInteractions(http);
+    }
+
     @Test void testConnectionUsesExecutorAndMapperWithoutLocalErrorRouting() {
         var mapper = mock(McpClientMapper.class);
         var tested = new ForgeAgentMcpClientAdapter(http, executor, mapper);
@@ -40,11 +49,11 @@ class ForgeAgentMcpClientAdapterTest {
         for (var input : List.of(new McpConnectionCommand("x",URI.create("https://mcp.example/path"),
                 McpConnection.Transport.STREAMABLE_HTTP,McpConnection.AuthType.BEARER,
                 new McpConnection.ProjectAccess(McpConnection.Scope.ALL,Set.of()),Set.of(),
-                McpConnection.CredentialChange.REPLACE,"bearer-canary",null),
+                McpConnection.CredentialChange.REPLACE,"bearer-canary",null,null,null),
                 new McpConnectionCommand("x",URI.create("https://mcp.example/path"),
                 McpConnection.Transport.STREAMABLE_HTTP,McpConnection.AuthType.SECRET_HEADERS,
                 new McpConnection.ProjectAccess(McpConnection.Scope.ALL,Set.of()),Set.of(),
-                McpConnection.CredentialChange.REPLACE,null,Map.of("X-Secret","header-canary")))) {
+                McpConnection.CredentialChange.REPLACE,null,Map.of("X-Secret","header-canary"),null,null))) {
             var request=McpConnectionOutboundRequest.from(input);
             assertThat(new ObjectMapper().writeValueAsString(request))
                     .contains(input.bearer()==null?"header-canary":"bearer-canary");
@@ -72,7 +81,7 @@ class ForgeAgentMcpClientAdapterTest {
         var command=new McpConnectionCommand("fixture",URI.create("https://mcp.example/path"),
                 McpConnection.Transport.STREAMABLE_HTTP,McpConnection.AuthType.BEARER,
                 new McpConnection.ProjectAccess(McpConnection.Scope.ALL,Set.of()),Set.of(),
-                McpConnection.CredentialChange.REPLACE,"bearer-canary",null);
+                McpConnection.CredentialChange.REPLACE,"bearer-canary",null,null,null);
 
         assertThat(tested.create(command)).isSameAs(domain);
 
