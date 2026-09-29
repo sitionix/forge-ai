@@ -167,7 +167,7 @@ No user connection/production secrets/configuration was mutated.
 | Agent local dependency analysis | PASS | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/infrastructure/local -am dependency:analyze`: BUILD SUCCESS; new direct-used OAuth2 core and test logback-core explicitly declared with unchanged BOM versions; existing transitive/starter warnings retained |
 | No Feign/global MCP enable switch in production | PASS | rg for OpenFeign/EnableFeignClients/FORGE_MCP_ENABLED/forge.mcp.enabled in production source returned no matches |
 | Diff whitespace | PASS | `git diff --check` |
-| Fresh CI | NOT_VERIFIED | No completed Stage 6 run yet; no PR created or changed |
+| Fresh CI | PASS | [Build 36559874882](https://github.com/sitionix/forge-ai/actions/runs/36559874882), workflow_dispatch on implementation `727af5bcf2a6ab7fe3c9027fc51473d3d31d773c`: Agent/Nexus/Console/Jarvis/Knowledge all SUCCESS. Evidence-only commit follows; no code change after tested SHA |
 | LIVE_PROVIDER | NOT_VERIFIED | Registered compatible GitHub client/callback/permissions not supplied; roadmap live acceptance remains unmet |
 | Real Agent/whole-Forge restart | NOT_VERIFIED | Nexus restart + independent repository reread only |
 | New OS-level secret/sandbox boundary probe | NOT_VERIFIED | Existing managed boundary preserved, not reprobed; joined fixture substitutions do not prove it |
@@ -241,3 +241,28 @@ Extra final rulings: overflow treated as required safe boundary (cost: narrow ex
 regression/catch); no closed polling (cost: abandoned attempt waits Cancel/TTL);
 revocation inside matching generation lock (cost if wrong: lock-order regression,
 full DB/gateway suites passed). Original decisions remain listed above.
+
+## Exhaustive execution rulings (why / cost if wrong)
+
+- Ruling: regular feature branch instead of worktree — user AGENTS.md requires ordinary checkout — no isolation directory beyond ignored ledger, preserve unrelated changes.
+- Task 1: Ruling: standard RestTemplate DEBUG leaks body — narrow redacted form representation added instead of disabling logging globally — if insufficient, canary leakage remains; TRACE and Boot/public canaries will cover joined boundary.
+- Task 2: Ruling: preserve configuration/authorizationId explicitly in existing copies, update all constructors rather than add compatibility overloads — keeps non-OAuth metadata unchanged — risk missed copy, full Agent suite checks it.
+- Task 3: Ruling: replace findClaimed with one owner-scoped find, and verify claimedAt in completion — Cancel must find attempts before consent too — any missing check could permit completion without claim, covered by lifecycle tests. Authorization URL remains entirely produced by Spring client; build outside row lock then compare snapshot under lock, no holder/custom PKCE reconstruction.
+- Task 4: Ruling: internal repository delete returns the last encrypted state under its existing row lock; management remove is not wrapped in an outer transaction — local removal commits before bounded best-effort provider revocation, including the newest refresh token — risk missed external transaction can delay commit, final review checks call sites. Existing blocked-delete test now awaits the SELECT FOR UPDATE, same lock boundary.
+- Task 5: Ruling: plan names Nexus ForgeIT under surefire test goal, but boot explicitly excludes ForgeIT there (NoClassDefFoundError observed). Use accepted failsafe IT selector + verify, not change dependencies/classpath — cost if wrong: missed IT selection, verify real summaries.
+- Task 5: Ruling: Spring ResponseBodyAdvice renders only the exact OAuth GET callback's already-mapped error into a fixed safe 303; existing scoped handler retains sole public mapping owner. Callback logging filter removes query/parameter-map from framework logging while controller reads individual values; Tomcat condition-unless excludes marked callback access logs — cost if wrong: missing browser result or logging leak, covered by actual TRACE/cookie ForgeIT and browser canaries.
+- Task 6: Ruling: detach popup.opener synchronously before provider navigation and use native same-origin BroadcastChannel keyed by unpredictable transaction UUID instead of retaining an external provider opener. Same-origin delivery +transaction/connection IDs +authoritative GET/Test replace postMessage origin/source checks — prevents reverse tabnabbing; cost if wrong: unsupported browser/provider COOP behavior, actual browser fixture and live-provider NOT_VERIFIED stay explicit. No tokens/state in channel/storage; original form retains uncertain-create reconciliation and owns persistence.
+- Final: Ruling: re-grade refresh expiry overflow Important — actual malformed upstream metadata escapes the agreed safe invalid-response boundary as generic500; same response-validation defect as malformed refresh/scope — cost if wrong: one extra narrow overflow regression/typed catch, no wider policy or framework.
+- Final: Ruling: remove closed-window polling entirely after provider navigation, expose explicit Reopen during waiting; Cancel/dialog Close/dispose and server TTL remain — WindowProxy.closed cannot distinguish COOP-isolated live provider from a physically closed window; terminal completion must also survive slow authoritative GET — cost if wrong: physical popup close no longer automatically cancels backend, operator can Cancel/Reopen; server TTL bounds orphan attempt. No false live-provider compatibility claim.
+- Final: Ruling: revoke in the matching-generation unusable transition while the existing connection lock is held — grant/view revoke operations are short local in-memory removal without network/DB callbacks; prevents old rejection and post-commit invalid-grant revoke from touching a later authorization — cost if wrong: lock-order regression, existing and fresh DB/gateway suites verify it. No new generation-scoped revoke API/framework.
+- Final: Ruling: run existing Build workflow_dispatch on the authorized feature branch instead of creating a PR for CI — explicit no-PR instruction takes precedence over plan phrase fresh PR CI; same Build jobs run without event-specific branch logic — cost if wrong: PR-trigger-only checks not proven; repository only other workflow is merged-branch cleanup. CI implementation SHA and later evidence-only commit will be distinguished.
+
+CI completed green on implementation727af5bc; the later evidence-only commit is not claimed as a separately tested CI SHA. Joined opt-in real-browser/native fixture ran locally, not in default CI; its CI execution is NOT_VERIFIED. LIVE_PROVIDER remains NOT_VERIFIED; fresh Build success does not close the roadmap live-provider acceptance. No PR created/modified or merged.
+
+
+CI log module summaries (not inferred from local reports): Agent1471 total,
+1460 executed,11 skips,0 failures/errors; Nexus361 total,0 skips/failures/errors.
+CI skips: CodexRecoveryLifecycleTest1, CodexMcpInventoryVerifierTest1,
+McpGatewayRuntimeFilterTest1, AgentMcpProtectedConfigurationTest1,
+ForgeAgentProjectAssetIT1, ForgeAgentPortAwareExecutionIT6. Local and CI skip classes
+are environment-dependent and explicitly distinguished; skipped checks are not PASS.
