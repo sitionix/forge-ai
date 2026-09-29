@@ -22,6 +22,24 @@ import org.springframework.web.client.RestClient;
 
 class McpRegistryCatalogAdapterTest {
     @Test
+    void registryIconMetadataSelectsFirstValidHttpsImageWithoutFetchingIt() throws Exception {
+        HttpServer server = stub("""
+                {"servers":[{"server":{"name":"io.example/search","version":"1.0",
+                  "icons":[{"src":"javascript:alert(1)"},{"src":"https://user@example.org/icon.png"},
+                    {"src":"https://images.example.org/search.png","mimeType":"image/png","sizes":["48x48"]}],
+                  "remotes":[{"type":"streamable-http","url":"https://example.org/mcp"}]}},
+                  {"server":{"name":"io.example/plain","remotes":[{"type":"streamable-http","url":"https://example.org/plain"}]}}]}
+                """, 200, new String[2]);
+        try {
+            var page = adapter(server).list(null, null, 20);
+            var json = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(page);
+            assertThat(json.at("/servers/0/iconUrl").asText()).isEqualTo("https://images.example.org/search.png");
+            assertThat(json.at("/servers/1/iconUrl").isNull()).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+    @Test
     void productionCaffeineCacheExpiresAtFiveMinutesAndKeysEveryRequestParameter() {
         long[] nanos = {0};
         Ticker ticker = () -> nanos[0];

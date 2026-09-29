@@ -48,7 +48,7 @@ public class McpClientMapper {
             throw new IllegalArgumentException();
         }
         return new McpAvailableServer(server.name(), server.title(), server.description(),
-                server.version(), server.endpoint());
+                server.version(), server.endpoint(), server.iconUrl());
     }
 
     public McpConnection toDomain(McpConnectionInboundResponse r){

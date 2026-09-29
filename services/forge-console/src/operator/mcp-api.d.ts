@@ -1,7 +1,7 @@
 export interface McpTool { name: string; description?: string | null; schemaFingerprint: string; }
 export interface McpApproval { name: string; schemaFingerprint: string; }
 export interface McpProject { id: string; name?: string; displayName?: string; }
-export interface McpAvailableServer { name:string;title?:string|null;description?:string|null;version:string;endpoint:string; }
+export interface McpAvailableServer { name:string;title?:string|null;description?:string|null;version:string;endpoint:string;iconUrl?:string|null; }
 export interface McpAvailablePage { servers:McpAvailableServer[];nextCursor?:string|null; }
 export interface McpProjectAccess { scope: 'ALL' | 'SELECTED'; projectIds: string[]; }
 export interface McpConnection {

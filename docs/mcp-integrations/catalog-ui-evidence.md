@@ -7,12 +7,12 @@ Scope: the Settings Catalog UI slice of roadmap Stages 8–9, using the previous
 - Settings keeps Connected for saved integrations. Add integration opens Catalog; Add custom MCP opens the existing blank connection form.
 - `mcp-api.js` reads the existing Nexus available endpoint with URL-encoded search, cursor and limit. Nexus → Agent → official Registry transport/cache architecture is unchanged.
 - `mcp-catalog.js` handles search, one-page loading, opaque cursor pagination, empty/error states and explicit read retry. Empty filtered pages retain Next page when upstream provides a cursor. No automatic pagination, provider handshake or tool call.
-- Metadata uses DOM `textContent`, without external links/images or executable markup. Selecting a descriptor reads projects and prefills the existing form. It does not create, test, approve or enable a connection.
+- Text metadata uses DOM `textContent`, without external links or executable markup. The icon follow-up below adds native images. Selecting a descriptor reads projects and prefills the existing form. It does not create, test, approve or enable a connection.
 - Endpoint templates are preserved in the form. The operator must replace variables with a full endpoint before saving; unresolved placeholders are rejected locally.
 - Existing request coordination cancels superseded reads, navigation-away reads and disposal reads. Registry failure does not remove Connected or Custom flows.
 - The existing Console design system supplies navigation, cards, input/buttons and heading contrast. Global sidebar/Projects remain visible. Existing permission editing and explicit Enable semantics are unchanged.
 
-## Verification
+## Original UI slice verification (implementation `65c1ac77`)
 
 | Check | Result | Evidence |
 | --- | --- | --- |
@@ -54,3 +54,28 @@ git diff --check
 ```
 
 No PR metadata/comments/reviews or merge changed. No backend security, saved connections, schema, credentials, HTTP/cache configuration, runtime grants or policy changes.
+
+## Registry icon follow-up
+
+Optional Registry `icons[].src` now maps to a nullable `iconUrl` through the existing Agent domain/API and Nexus inbound mapper/domain/API. Agent selects the first valid HTTPS URL with a host and without userInfo; absent/invalid icons do not discard a supported server. Backend services do not download the image.
+
+Console renders a decorative native image at 48×48, using lazy loading and `no-referrer`. It rejects non-HTTPS/credential-bearing image URLs, never embeds SVG markup, and keeps a compact initial-letter fallback for missing images or image errors. Registry search, cursor pagination, cache and connection actions are unchanged.
+
+| Follow-up check | Result | Evidence |
+| --- | --- | --- |
+| TDD | PASS | Production Registry HTTP regression failed because iconUrl was absent; six new Console cases failed on missing image/fallback before implementation, then passed. |
+| REGISTRY_MAPPING | PASS | Focused production HTTP fixture, optional/malformed icon URLs and existing Registry/cache regressions: 9 tests. No live MCP endpoint calls. |
+| NEXUS_TYPED_MAPPING | PASS | Existing mapper/adapter tests and new ForgeIT preserve optional iconUrl and cursor through the typed proxy. |
+| CONSOLE | PASS | 635 tests in 29 files; typecheck/build; built Chrome Catalog and Custom stub smoke passed. Independent reviewer repeated 12 catalog tests and found no findings. |
+| FULL_AGENT_VERIFY | PASS | Fresh local reactor verify: 1,408 declared tests, zero failures/errors, 10 skips. |
+| FULL_NEXUS_VERIFY | PASS | Fresh local reactor verify: 353 tests, zero failures/errors/skips, including 70 ForgeIT. |
+| REAL_ICON_BROWSER | NOT_VERIFIED | Normal runtime update and actual image-load assertion pending. |
+| CI | NOT_VERIFIED | The original slice CI above does not certify this follow-up. |
+
+Local Agent skips: CodexManagedRecoveryLifecycleTest (1), McpGatewaySdkHttpTest (1), McpGatewayRuntimeFilterTest (1), RemoteAccessManagementHttpIT (1), ForgeAgentPortAwareExecutionIT (6). Those native/opt-in scenarios are not certified by full verify.
+
+```sh
+mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify
+mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/boot -am verify
+FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=catalog-icons node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
+```

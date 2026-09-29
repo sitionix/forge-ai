@@ -16,6 +16,20 @@ beforeEach(()=>{
   HTMLDialogElement.prototype.close=function(){this.open=false;};
 });
 describe('Available MCP catalog',()=>{
+  it('shows the catalog icon without a referrer and falls back after an image failure',async()=>{
+    const {page}=setup(async()=>Response.json({servers:[{...server,iconUrl:'https://images.example.org/search.png'}]}));
+    click('mcpAdd');await wait();const image=element('mcpCatalogServers').querySelector('img')!;
+    expect(image).not.toBeNull();expect(image.src).toBe('https://images.example.org/search.png');
+    expect(image.referrerPolicy).toBe('no-referrer');expect(image.loading).toBe('lazy');expect(image.alt).toBe('');
+    image.dispatchEvent(new Event('error'));
+    expect(element('mcpCatalogServers').querySelector('img')).toBeNull();
+    expect((element('mcpCatalogServers').querySelector('.mcp-catalog-icon span') as HTMLElement).hidden).toBe(false);page.dispose();
+  });
+  it.each([undefined,'javascript:alert(1)','data:image/svg+xml,<svg/>','http://example.org/icon.png','https://user:token@example.org/icon.png'])('keeps an inert fallback for an absent or invalid icon %s',async iconUrl=>{
+    const {page}=setup(async()=>Response.json({servers:[{...server,iconUrl}]}));click('mcpAdd');await wait();
+    expect(element('mcpCatalogServers').querySelector('img')).toBeNull();
+    expect(element('mcpCatalogServers').querySelector('.mcp-catalog-icon')).not.toBeNull();page.dispose();
+  });
   it('opens one metadata page and prefills the existing form without connecting or probing',async()=>{
     const {page,fetcher}=setup();click('mcpAdd');await wait();
     expect(element('mcpCatalog').hidden).toBe(false);

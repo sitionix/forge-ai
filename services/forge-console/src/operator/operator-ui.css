@@ -6113,6 +6113,9 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .settings-shell nav.mcp-actions { margin: 20px 0; }
 .settings-shell nav.mcp-actions [aria-pressed="true"] { border-color: var(--accent); }
 .mcp-catalog-card { display: grid; gap: 12px; }
+.mcp-catalog-heading { display: flex; align-items: center; gap: 12px; }
+.mcp-catalog-icon { flex: 0 0 48px; width: 48px; height: 48px; display: grid; place-items: center; border-radius: 12px; background: var(--panel-strong); font-weight: 700; overflow: hidden; }
+.mcp-catalog-icon img { width: 48px; height: 48px; object-fit: contain; }
 .mcp-catalog-card h4, .mcp-catalog-card p { margin: 0; }
 .mcp-catalog-card code { overflow-wrap: anywhere; white-space: normal; }
 .mcp-catalog-card .button { justify-self: start; }

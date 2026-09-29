@@ -90,9 +90,15 @@ try {
     const result=await evaluate(`fetch(${JSON.stringify(catalog)},{credentials:'omit'}).then(async response=>({status:response.status,body:await response.json()}))`);
     assert.equal(result.status,200);assert.deepEqual(result.body,[]);
     console.log('NORMAL_SETTINGS_EMPTY_BROWSER_PASS');
-  } else if(action==='catalog') {
+  } else if(action==='catalog' || action==='catalog-icons') {
     const before=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
     await click('mcpAdd');await until(`document.querySelector('#mcpCatalogServers button') && !document.getElementById('mcpCatalogNotice').textContent.includes('Loading')`);
+    if(action==='catalog-icons') {
+      await fill('mcpCatalogSearch',process.env.FORGE_SETTINGS_CATALOG_SEARCH||'justidea');
+      await evaluate(`document.getElementById('mcpCatalogSearchForm').requestSubmit()`);
+      await until(`document.querySelector('#mcpCatalogServers img')?.complete && document.querySelector('#mcpCatalogServers img').naturalWidth>0`);
+      assert.equal(await evaluate(`document.querySelector('#mcpCatalogServers img').referrerPolicy`),'no-referrer');
+    }
     assert.equal(await evaluate(`document.getElementById('mcpCatalog').hidden`),false);
     assert.equal(await evaluate(`document.getElementById('mcpCatalogTab').getAttribute('aria-pressed')`),'true');
     assert.equal(await evaluate(`document.documentElement.scrollWidth<=innerWidth`),true);
@@ -108,7 +114,7 @@ try {
     const after=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
     assert.deepEqual(after,before,'Catalog selection must not mutate saved connections');
     if(external) assert.equal(await evaluate(`location.port`),'9099');
-    console.log(external?'NORMAL_SETTINGS_CATALOG_BROWSER_PASS':'SETTINGS_CATALOG_BROWSER_STUB_PASS');
+    console.log(external?(action==='catalog-icons'?'NORMAL_SETTINGS_CATALOG_ICONS_BROWSER_PASS':'NORMAL_SETTINGS_CATALOG_BROWSER_PASS'):'SETTINGS_CATALOG_BROWSER_STUB_PASS');
   } else if(action==='disable' || action==='enable') {
     await evaluate(`document.querySelector('[data-connection-id="${process.env.FORGE_SETTINGS_CONNECTION_ID}"]').click()`);
     const before=action==='disable'?'Disable':'Enable',after=action==='disable'?'Enable':'Disable';
@@ -164,7 +170,7 @@ try {
     assert.equal(await evaluate(`document.body.textContent.includes('canary') || location.href.includes('canary') || [...document.querySelectorAll('input,textarea')].some(el=>el.value.includes('canary'))`),false);
     console.log('SETTINGS_SAVED_ID '+id);
   }
-  if(process.env.SMOKE_SCREENSHOT && action!=='catalog') {const shot=await cdp('Page.captureScreenshot',{format:'png'});await writeFile(process.env.SMOKE_SCREENSHOT,Buffer.from(shot.data,'base64'));}
+  if(process.env.SMOKE_SCREENSHOT && action!=='catalog' && action!=='catalog-icons') {const shot=await cdp('Page.captureScreenshot',{format:'png'});await writeFile(process.env.SMOKE_SCREENSHOT,Buffer.from(shot.data,'base64'));}
   assert.equal(await evaluate(`document.getElementById('mcpBearer').value`),'');
   console.log(external?'SETTINGS_BROWSER_ACTUAL_NEXUS_PASS':'SETTINGS_BROWSER_PASS: real Chrome + built Console; explicit management stub, no Agent execution proof');
 } finally {

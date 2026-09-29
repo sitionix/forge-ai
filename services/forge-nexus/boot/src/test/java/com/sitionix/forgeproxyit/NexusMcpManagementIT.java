@@ -102,6 +102,20 @@ class NexusMcpManagementIT {
   }
 
   @Test
+  void availableCatalogPreservesOptionalIconThroughTypedProxy() throws Exception {
+    final var upstream = manager.wiremock()
+        .createMapping(ForgeAgentWireMockEndpoints.listAvailableMcp()).createDefault();
+    manager.mockMvc().ping(NexusAgentMockMvcEndpoints.listAvailableMcp(200))
+        .andExpectPath(result -> {
+          var page = new ObjectMapper().readTree(result.getResponse().getContentAsString());
+          assertThat(page.at("/servers/0/iconUrl").asText()).isEqualTo("https://images.example.org/search.png");
+          assertThat(page.at("/servers/1/iconUrl").isNull()).isTrue();
+          assertThat(page.at("/nextCursor").asText()).isEqualTo("next-page");
+        }).assertDefault();
+    upstream.verify();
+  }
+
+  @Test
   void authenticatedMcpCreateForwardsCredentialOnlyInAgentBody(CapturedOutput output) throws Exception {
 
     final var upstream=manager.wiremock()

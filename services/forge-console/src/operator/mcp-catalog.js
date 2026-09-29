@@ -38,14 +38,25 @@ export class McpCatalog {
     for(const server of page.servers) {
       const card=this.document.createElement('article');card.className='mcp-card mcp-catalog-card';
       const title=this.document.createElement('h4');title.textContent=server.title||server.name;
+      const heading=this.document.createElement('div');heading.className='mcp-catalog-heading';heading.append(this.icon(server),title);
       const name=this.document.createElement('p');name.className='mcp-description';name.textContent=`${server.name} · ${server.version}`;
       const description=this.document.createElement('p');description.textContent=server.description||'';
       const endpoint=this.document.createElement('code');endpoint.textContent=server.endpoint;
       const button=this.document.createElement('button');button.type='button';button.className='button secondary';button.textContent='Connect';
       button.setAttribute('aria-label',`Connect ${server.title||server.name}`);
       button.addEventListener('click',()=>this.onSelect(server),{signal:this.listeners.signal});
-      card.append(title,name,description,endpoint,button);container.append(card);
+      card.append(heading,name,description,endpoint,button);container.append(card);
     }
+  }
+  icon(server) {
+    const container=this.document.createElement('span');container.className='mcp-catalog-icon';container.setAttribute('aria-hidden','true');
+    const fallback=this.document.createElement('span');fallback.textContent=Array.from(server.title||server.name)[0]?.toUpperCase()||'M';container.append(fallback);
+    let url;try {url=new URL(server.iconUrl);} catch(_) {return container;}
+    if(url.protocol!=='https:' || url.username || url.password) return container;
+    const image=this.document.createElement('img');image.alt='';image.width=48;image.height=48;
+    image.loading='lazy';image.decoding='async';image.referrerPolicy='no-referrer';
+    image.addEventListener('error',()=>{image.remove();fallback.hidden=false;},{once:true,signal:this.listeners.signal});
+    fallback.hidden=true;image.src=url.href;container.append(image);return container;
   }
   cancel() {this.requests.abort('catalog');this.loading=false;this.element('mcpCatalogNotice').textContent='';}
   dispose() {this.requests.dispose();this.listeners.abort();this.element('mcpCatalogServers').replaceChildren();}

@@ -10,3 +10,7 @@ This is the Settings UI slice of roadmap Stages 8–9 over the accepted Flow 1 b
 6. Review the final diff and stop for review. No PR metadata/comments/reviews or merge.
 
 Existing typed HTTP clients, Registry filtering, Caffeine cache, persistence, provider credentials, runtime grants, and explicit permission/Enable semantics remain unchanged. No new framework, feature flag, authentication flow, scheduler, or catalog persistence.
+
+## Icon follow-up
+
+Use the first valid HTTPS Registry `icons[].src` as optional `iconUrl` metadata through the existing typed Agent/Nexus contracts. Console renders a native lazy image with no referrer and a decorative fallback for missing/failed images. Do not download images on the backend, execute SVG markup, or change connection flows. Verify the Registry mapping, typed Nexus ForgeIT, Console image/error behavior, full reactors and actual main browser rendering.
