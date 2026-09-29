@@ -146,7 +146,7 @@ A speculative configuration-test draft failed compilation because this module do
 
 The user reproduced the error again after the temporary recovery above. Further disposable probes used the same OpenJDK binary as the systemd Agent and the accepted Spring typed HTTP stack. Five requests per protocol with a 5s budget produced four failures each; HTTP/1.1 versus HTTP/2 is not the cause. With a longer probe budget, a valid bounded Registry page (18 entries) arrived in 24.577s; a second request returned in 0.984s. This demonstrates slow successful Registry responses exceeding Forge's 5s budget. [Registry issue #1252](https://github.com/modelcontextprotocol/registry/issues/1252) independently reports 20–25s reads; its server-side explanation remains a hypothesis, not a proven cause of our observation.
 
-The normal Agent Registry read-timeout default is now 25s, preserving a 5s margin to the existing 30s Nexus → Agent read budget. The existing environment override remains available. No HTTP version change, second HTTP stack, retry, new property, cache/pagination change or global Agent timeout increase. Upstream requests remain bounded and genuine timeout/unavailable failures still map to MCP_REGISTRY_UNAVAILABLE.
+The normal Agent Registry read-timeout default is now 28s, preserving a 2s margin to the existing 30s Nexus → Agent read budget. The initial 25s candidate still timed out on the first actual-main cold request and was increased before final acceptance; the external report also contains a successful 25.818s response. This is not an unlimited timeout or a guarantee of upstream availability. The existing environment override remains available. No HTTP version change, second HTTP stack, retry, new property, cache/pagination change or global Agent timeout increase. Upstream requests remain bounded and genuine timeout/unavailable failures still map to MCP_REGISTRY_UNAVAILABLE.
 
 `McpRegistryRuntimeConfigurationTest` loads the actual normal `application.yml` and production Registry configuration with only a disposable loopback base URL. It synchronizes request arrival, holds the valid response across the former deadline for six seconds, then releases it and verifies typed page/cursor mapping. RED: the former default completed exceptionally at five seconds. GREEN: the updated normal configuration kept the request in flight and returned the valid page. Existing nine Registry transport/filter/pagination/cache tests also passed. No live service is used by regression tests, no synthetic enable switch, and no new dependencies.
 
@@ -155,7 +155,7 @@ The browser harness now permits 30s specifically for bounded Catalog loading/sea
 | Follow-up | Result | Evidence |
 | --- | --- | --- |
 | FOCUSED_REGISTRY | PASS | Nine existing production Registry tests plus the new normal-runtime slow-page regression; Maven focused run BUILD SUCCESS. |
-| NORMAL_RUNTIME | NOT_VERIFIED | Updated standard startup awaits system sudo authentication. |
+| NORMAL_RUNTIME | NOT_VERIFIED | Initial standard startup with 25s succeeded, but actual cold request still returned 503 at 25.080s and browser Catalog failed. The 28s final configuration is pending a further standard restart. |
 | REAL_BROWSER | NOT_VERIFIED | Must be repeated against updated actual main runtime, rather than inferred from probes or previous acceptance. |
 | CI | NOT_VERIFIED | Fresh source verification pending. |
 | UPSTREAM_SERVER_CAUSE | NOT_VERIFIED | Successful slow responses prove the client budget mismatch; Registry internals causing latency are not established. |
