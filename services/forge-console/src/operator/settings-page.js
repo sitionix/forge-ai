@@ -30,7 +30,7 @@ export class SettingsPage {
     this.listen('mcpRemove','click',()=>void this.mutate('remove'));
     this.listen('mcpConnections','click',event=>{const id=event.target.closest('[data-connection-id]')?.dataset.connectionId;if(id) void this.details(id);});
     this.window.addEventListener('pagehide',()=>this.dispose(),{signal:this.listeners.signal});
-    void this.start();return this;
+    void this.start();void this.catalog.load();return this;
   }
   notice(message) { this.element(this.element('mcpDetailsPanel').open?'mcpDetailsNotice':'mcpNotice').textContent=message; }
   clearError() {

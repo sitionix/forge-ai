@@ -56,8 +56,8 @@ try {
   const targets=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   socket=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);
   await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true});});
-  let sequence=0;const pending=new Map();const networkFailures=[];
-  socket.addEventListener('message',event=>{const value=JSON.parse(event.data);if(value.method==='Network.loadingFailed' && /^net::ERR_[A-Z_]+$/.test(value.params.errorText))networkFailures.push(value.params.errorText);if(value.id){const callback=pending.get(value.id);pending.delete(value.id);value.error?callback?.reject(new Error('Chrome command failed')):callback?.resolve(value.result);}});
+  let sequence=0;const pending=new Map();const networkFailures=[];let catalogReads=0;
+  socket.addEventListener('message',event=>{const value=JSON.parse(event.data);if(value.method==='Network.requestWillBeSent' && new URL(value.params.request.url).pathname===available)catalogReads++;if(value.method==='Network.loadingFailed' && /^net::ERR_[A-Z_]+$/.test(value.params.errorText))networkFailures.push(value.params.errorText);if(value.id){const callback=pending.get(value.id);pending.delete(value.id);value.error?callback?.reject(new Error('Chrome command failed')):callback?.resolve(value.result);}});
   const cdp=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{const result=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.text);return result.result.value;};
   const until=async (expression,budgetMs=5000)=>{const deadline=Date.now()+budgetMs;while(Date.now()<deadline){if(await evaluate(expression))return;await delay(50);}throw new Error('Browser condition timed out: '+expression);};
@@ -92,11 +92,17 @@ try {
     console.log('NORMAL_SETTINGS_EMPTY_BROWSER_PASS');
   } else if(action==='catalog' || action==='catalog-icons') {
     const before=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
-    await click('mcpAdd');await until(`document.querySelector('#mcpCatalogServers button') && !document.getElementById('mcpCatalogNotice').textContent.includes('Loading')`,30000);
+    await until(`document.querySelector('#mcpCatalogServers button') && !/Loading|Updating/.test(document.getElementById('mcpCatalogNotice').textContent)`,30000);
+    assert.equal(await evaluate(`document.getElementById('mcpCatalog').open`),false,'Prefetch must not open the dialog');
+    assert.equal(catalogReads,1,'Settings must preload one catalog page');
+    await evaluate(`window.__catalogFirstRow=document.querySelector('#mcpCatalogServers button')`);
+    await click('mcpAdd');await click('mcpCatalogClose');await click('mcpAdd');
+    assert.equal(catalogReads,1,'Reopening must reuse the loaded page');
+    assert.equal(await evaluate(`window.__catalogFirstRow===document.querySelector('#mcpCatalogServers button')`),true,'Reopening must preserve rows');
     if(action==='catalog-icons') {
       await fill('mcpCatalogSearch',process.env.FORGE_SETTINGS_CATALOG_SEARCH||'justidea');
       await evaluate(`document.getElementById('mcpCatalogSearchForm').requestSubmit()`);
-      await until(`!document.getElementById('mcpCatalogNotice').textContent.includes('Loading')`,30000);
+      await until(`!/Loading|Updating/.test(document.getElementById('mcpCatalogNotice').textContent)`,30000);
       try {await until(`document.querySelector('#mcpCatalogServers img')?.complete && document.querySelector('#mcpCatalogServers img').naturalWidth>0`);}
       catch(error) {console.log('CATALOG_ICON_NETWORK_FAILURES '+JSON.stringify(networkFailures));throw error;}
       assert.equal(await evaluate(`document.querySelector('#mcpCatalogServers img').referrerPolicy`),'no-referrer');

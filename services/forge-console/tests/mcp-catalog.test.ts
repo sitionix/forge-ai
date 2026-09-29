@@ -5,7 +5,7 @@ import {SettingsPage} from '../src/operator/settings-page.js';
 const server={name:'example/search',title:'Search <img src=x onerror=alert(1)>',description:'Find things',version:'1.0',endpoint:'https://{tenant}.example.org/mcp'};
 const element=(id:string)=>document.getElementById(id)!;
 const click=(id:string)=>(element(id) as HTMLButtonElement).click();
-const wait=async()=>{await vi.waitFor(()=>expect(element('mcpCatalogNotice').textContent).not.toContain('Loading'));};
+const wait=async()=>{await vi.waitFor(()=>expect(element('mcpCatalogNotice').textContent).not.toMatch(/Loading|Updating/));};
 function setup(available:(url:string,init:RequestInit)=>Promise<Response>=async()=>Response.json({servers:[server],nextCursor:'next/+?&'})) {
   document.documentElement.innerHTML=readFileSync('src/operator/settings.html','utf8');
   const fetcher=vi.fn(async(url:string,init:RequestInit)=>url.includes('/available?')?available(url,init):Response.json([]));

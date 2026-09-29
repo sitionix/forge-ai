@@ -6,14 +6,15 @@ const html=()=>readFileSync('src/operator/settings.html','utf8');
 const connection={id:'one',displayName:'<img src=x onerror=alert(1)>',endpoint:'https://example.org/mcp',transport:'STREAMABLE_HTTP',authType:'BEARER',enabled:false,projectAccess:{scope:'SELECTED',projectIds:[]},allowedTools:[],credentialConfigured:false,createdAt:'2026-09-28',updatedAt:'2026-09-28',checkedAt:null,safeDiagnostic:null};
 const tick=async()=>{await new Promise(r=>setTimeout(r,0));await new Promise(r=>setTimeout(r,0));};
 function setup(list:unknown=[],status=200) {
- document.documentElement.innerHTML=html();const fetcher=vi.fn(async(url:string,_init?:RequestInit)=>new Response(JSON.stringify(url.endsWith('/connections')?list:url.endsWith('/tools')?[]:url.endsWith('/projects')?[]:connection),{status}));
+ document.documentElement.innerHTML=html();const fetcher=vi.fn(async(url:string,_init?:RequestInit)=>new Response(JSON.stringify(url.includes('/available?')?{servers:[],nextCursor:null}:url.endsWith('/connections')?list:url.endsWith('/tools')?[]:url.endsWith('/projects')?[]:connection),{status}));
  const page=new SettingsPage({document,window,fetcher});page.mount();return {page,fetcher};
 }
 beforeEach(()=>{HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};});
 describe('Settings integrations',()=>{
  it('loads connections immediately without login or an operator session request',async()=>{
  const {page,fetcher}=setup();await tick();
- expect(fetcher).toHaveBeenCalledTimes(1);
+ expect(fetcher.mock.calls.filter(([url])=>url.endsWith('/connections'))).toHaveLength(1);
+ expect(fetcher.mock.calls.filter(([url])=>url.includes('/available?'))).toHaveLength(1);
  expect(fetcher.mock.calls[0]?.[0]).toBe('/api/v1/infrastructure/agents/integrations/mcp/connections');
  expect(document.querySelector('#mcpLoginForm')).toBeNull();
  expect(document.querySelector('#mcpLogout')).toBeNull();
@@ -24,7 +25,8 @@ describe('Settings integrations',()=>{
  const {router}=bootstrapOperatorConsole({document,window,fetcher});expect(document.querySelector('.sidebar-settings')?.textContent).toContain('Settings');expect(document.querySelector('.sidebar-settings a')?.getAttribute('href')).toBe('./settings.html');router.dispose();await tick();
  });
  it('loads empty state with one direct request without probing',async()=>{
- const {page,fetcher}=setup();await tick();expect(document.querySelector('#mcpConnections')?.textContent).toContain('No integrations connected');expect(fetcher).toHaveBeenCalledTimes(1);page.dispose();
+ const {page,fetcher}=setup();await tick();expect(document.querySelector('#mcpConnections')?.textContent).toContain('No integrations connected');expect(fetcher.mock.calls.filter(([url])=>url.endsWith('/connections'))).toHaveLength(1);
+ expect(fetcher.mock.calls.filter(([url])=>url.includes('/available?'))).toHaveLength(1);page.dispose();
  });
  it('keeps the compact MCP section and primary Add action around scoped failures',async()=>{
  const {page,fetcher}=setup([],503);await tick();
@@ -67,6 +69,6 @@ describe('Settings integrations',()=>{
  finish(new Response('{}'));await tick();expect(document.querySelector('#mcpDetails')?.textContent).toContain(other.endpoint);expect(document.querySelector('#mcpConnections')?.textContent).toContain('Connection B');page.dispose();
  });
  it('shows feature unavailable with explicit read retry',async()=>{
- const {page,fetcher}=setup([],503);await tick();expect(document.querySelector('#mcpError')?.textContent).toContain('unavailable');expect((document.querySelector('#mcpRetry') as HTMLElement).hidden).toBe(false);(document.querySelector('#mcpRetry') as HTMLButtonElement).click();await tick();expect(fetcher).toHaveBeenCalledTimes(2);page.dispose();
+ const {page,fetcher}=setup([],503);await tick();expect(document.querySelector('#mcpError')?.textContent).toContain('unavailable');expect((document.querySelector('#mcpRetry') as HTMLElement).hidden).toBe(false);(document.querySelector('#mcpRetry') as HTMLButtonElement).click();await tick();expect(fetcher.mock.calls.filter(([url])=>url.endsWith('/connections'))).toHaveLength(2);expect(fetcher.mock.calls.filter(([url])=>url.includes('/available?'))).toHaveLength(1);page.dispose();
  });
 });
