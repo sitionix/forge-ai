@@ -1,4 +1,4 @@
-# MCP normal runtime — evidence, 2026-09-28
+# MCP normal runtime — evidence, updated 2026-09-29
 
 Current contract follows the user's explicit amendment: no Forge operator login,
 session or internal Nexus → Agent bearer. There is no local/remote mode or global
@@ -9,16 +9,16 @@ isolation, project/tool policy and explicit per-connection `enabled` remain.
 
 | Check | Result | Evidence |
 | --- | --- | --- |
-| NORMAL_JUST_START | NOT_VERIFIED | Post-amendment restart blocked by pending OS sudo password dialog; no new restart executed. Earlier authenticated-runtime run is historical. |
-| MAIN_NEXUS_HEALTH | NOT_VERIFIED | Post-amendment actual main runtime check pending. |
-| MAIN_AGENT_HEALTH | NOT_VERIFIED | Post-amendment actual main runtime check pending. |
-| SETTINGS_HTTP | NOT_VERIFIED | Actual main built asset check pending. |
-| MCP_SESSION_ROUTE | NOT_VERIFIED | Removed route must return 404; no session prerequisite. |
-| MCP_CONNECTION_LIST | NOT_VERIFIED | Actual direct HTTP 200 list without Authorization/Cookie pending. |
-| EMPTY_STATE | NOT_VERIFIED | Actual real-browser empty state pending. |
-| REAL_BROWSER | NOT_VERIFIED | Actual main :9099 acceptance pending. |
-| GLOBAL_SIDEBAR | NOT_VERIFIED | Actual real-browser check pending. |
-| PROJECTS_STILL_VISIBLE | NOT_VERIFIED | Actual real-browser check pending. |
+| NORMAL_JUST_START | PASS | Actual normal `just stop → just start`, followed by a second `just start`, exit 0 on 2026-09-29. Both main restart timestamps and effective generated configuration verified. |
+| MAIN_NEXUS_HEALTH | PASS | Actual `127.0.0.1:9099/fgaisox/actuator/health`: HTTP 200, status UP after both starts. |
+| MAIN_AGENT_HEALTH | PASS | Actual `127.0.0.1:7091/actuator/health`: HTTP 200, status UP after both starts. |
+| SETTINGS_HTTP | PASS | Actual built main `/fgaisox/operator/settings.html`: HTTP 200, MCP integrations section present. |
+| MCP_SESSION_ROUTE | PASS | Deleted Forge session route returns HTTP 404, as required by the no-auth amendment. MCP needs no session. |
+| MCP_CONNECTION_LIST | PASS | Actual typed main management route: HTTP 200 with `[]`, no Authorization, Cookie or CSRF headers, after both starts. |
+| EMPTY_STATE | PASS | Real Chrome on :9099 shows No integrations connected and Add integration. Existing inventory was empty; no records deleted. |
+| REAL_BROWSER | PASS | Real built Console against actual main Nexus, disposable browser profile, no HTTP stub or activation override; both runs passed. |
+| GLOBAL_SIDEBAR | PASS | Actual desktop browser: visible operator sidebar, active Settings and valid layout without horizontal overflow or unavailable-installation message. |
+| PROJECTS_STILL_VISIBLE | PASS | Actual browser Projects navigation exists; original project records/workspaces retained. |
 | NO_MCP_ENABLE_FLAG | PASS | Whole-repository audit: zero removed-switch matches; no replacement switch. |
 | FULL_AGENT_VERIFY | PASS | 1,407 declared tests, 0 failures/errors, 10 skips; full final reactor completed. |
 | FULL_NEXUS_VERIFY | PASS | 352 declared tests, 0 failures/errors/skips; 69 ForgeIT tests. |
@@ -53,6 +53,26 @@ isolation, project/tool policy and explicit per-connection `enabled` remain.
   removed. Compact MCP card, empty state, Add action, section errors and global
   navigation remain. Explicit connection Disable/Enable and disabled-only access
   editing are unchanged.
+
+## Fresh normal runtime acceptance, 2026-09-29
+
+Normal start and repeat start used the standard installer/configuration, without
+MCP activation variables, JVM properties, manually prepared credentials or a
+test-only runtime configuration. Knowledge, Jarvis, Agent and Nexus are healthy.
+The persistent AES-GCM key ring and database password compared byte-identical
+after the first and repeat start; no credential rotation occurred. Password
+authentication happened only in the OS sudo dialog, never in chat or storage.
+
+A separate read-only GET through the actual main Nexus
+`/fgaisox/api/v1/infrastructure/agents/integrations/mcp/available?limit=5`
+returned HTTP 200, five metadata entries and a nextCursor. This exercised
+Nexus → Agent → official Registry without browser/operator/service credentials.
+No advertised MCP endpoint, handshake or tool call was executed.
+
+The full test/CI results in the table were executed on 2026-09-28 against the
+unchanged implementation commit; they are not claimed as rerun on 2026-09-29.
+Only normal provisioning/build/start, repeat, HTTP/browser acceptance, read-only
+Registry smoke and diff check are fresh 2026-09-29 observations.
 
 ## Commands
 
@@ -94,7 +114,7 @@ McpGatewaySdkHttpTest (1), McpGatewayRuntimeFilterTest (1),
 RemoteAccessManagementHttpIT (1), ForgeAgentPortAwareExecutionIT (6). The separate
 opt-in joined/native acceptance is not exercised by default verify.
 
-LIVE_PROVIDER = NOT_VERIFIED. LIVE_REGISTRY = NOT_VERIFIED. Opt-in native and joined
+LIVE_PROVIDER = NOT_VERIFIED. LIVE_REGISTRY = PASS (read-only actual main proxy smoke on 2026-09-29). Opt-in native and joined
 Stage 4/5 tests, macOS isolation, model execution, production deployment and actual
 Remote Access pairing/revoke are NOT_VERIFIED unless separately reported. An
 existing-empty normal database is not a fresh-install database migration proof;
@@ -105,6 +125,30 @@ findings were fixed RED→GREEN. Earlier MCP/RA operator-owner findings were sup
 by the user's explicit deletion of MCP auth/provisioning. This does not certify CI
 or mergeability. PR metadata/comments/reviews and merge state remain untouched.
 
-The user-requested OS password dialog remains pending. No password was requested
-in chat or stored. `just stop/start` has not been executed after this amendment;
-old service health and earlier authenticated Chrome runs are not current PASS.
+The pending OS dialog was completed on 2026-09-29. Fresh results above supersede
+the prior NOT_VERIFIED runtime entries. Historical OS probes and packaged RA
+composition checks are still not claimed as rerun.
+
+## Archived implementation decisions
+
+These are chronological plan decisions preserved before private scratch cleanup.
+Earlier operator/bootstrap or combined-session decisions were superseded by the
+user's explicit no-auth amendment; they are not current operating instructions.
+No deferred minor findings remain.
+
+- Ruling: regular existing branch, no worktree — explicit repository/user instructions.
+- Task 1/2 Ruling: start RA periodic recovery on ApplicationReadyEvent rather than a removed downgrade guard dependency — all startup verification finishes first in the main app; dedicated roots do not acquire MCP dependencies.
+- Task 2/4 Ruling: configured workspace resolution is required to remove legacy workspace branches; implement this interface now while provisioning/adoption follows in Task 4. No personal-home permission changes.
+- Ruling: Tasks 1–4 are coupled composition/provisioning transitions; one atomic implementation commit avoids publishing an intermediate mandatory-auth runtime without provisioning. Tasks 5/6 join that commit for exact normal-start evidence. No requirement or security guard was deferred.
+- Task 4 complete: configured-root RED→GREEN, adoption tests preserve original/modified/untracked data; real four-project 6.8 GB adoption, sources retained. Ruling: preserve safe internal relative symlinks as metadata (actual old projects require them); never dereference copied links. Directory replacement RED→GREEN via no-follow descriptor traversal. Durable SQL had no old workspace-path references requiring migration.
+- Ruling: one clean Agent run exposed pre-existing 90ms recovery fixture timing failure. No proven root cause; focused11 and full serial pass are reported separately, not a claim of flake elimination.
+- Ruling: fresh whole-branch read-only reviewer is explicitly required by requesting-code-review skill. It reviews committed source while independent exact-commit CI runs; no implementation delegation, no PR operations.
+- Final: Ruling: interrupted invalid key remains fail-closed — never replace encryption material implicitly — cost if wrong: explicit operator repair required.
+- Final: Ruling: installed software from reviewed trusted checkout is authorized provisioning — root install is explicit and bounded — cost if wrong: compromised trusted source is privileged.
+- Final: Ruling: unchanged RA local sessions are preserved, main non-RA bootstrap guard mandatory — no auth redesign — cost if wrong: new route regression caught by matrix.
+- Final: Ruling: provider/Registry/macOS/production RA checks stay NOT_VERIFIED — no fabricated remote proof — cost if wrong: platform/provider issues remain possible.
+- Final: Ruling: existing-empty normal DB proves actual empty UI, not fresh-install SQL migration — no data deletion for acceptance — cost if wrong: fresh-install-only DB behavior not independently exercised.
+- Final: Ruling: historical downgrade names are explicitly obsolete docs, no production path — cost if wrong: operating instruction ambiguity.
+- Final: Ruling: review does not certify in-progress CI or mergeability — exact commit Build must finish separately, user retains review/merge decision — cost if wrong: unfinished CI cannot establish regressions.
+- Ruling: latest user instruction explicitly removes Forge operator sessions and internal Nexus→Agent bearer authentication, without any local/remote mode switch. This supersedes the approved earlier auth prerequisites and auth-matrix acceptance; remove these mechanisms and their provisioning, not merely disable guards. Existing Remote Access SSH/pairing transport and external MCP credential storage are independent, unchanged. Cost if wrong: unauthenticated management is the requested product contract and must not be presented as the earlier Stage 1 security model.
+- Ruling: earlier reviewer RA operator-owner findings are superseded by deletion of MCP operator provisioning. Adoption mode/marker fixes remain necessary and verified. No credential rotation or removal of pre-existing RA protected material.
