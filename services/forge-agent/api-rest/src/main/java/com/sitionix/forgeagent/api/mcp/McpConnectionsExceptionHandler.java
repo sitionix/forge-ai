@@ -8,7 +8,7 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 @Order(Ordered.HIGHEST_PRECEDENCE)
-@RestControllerAdvice(assignableTypes={McpConnectionsController.class,McpAvailableController.class,McpProbeController.class,McpOAuthController.class})
+@RestControllerAdvice(assignableTypes={McpConnectionsController.class,McpAvailableController.class,McpProbeController.class,McpOAuthController.class,McpConnectController.class})
 public class McpConnectionsExceptionHandler {
     @ExceptionHandler(com.sitionix.forgeagent.domain.exception.McpOAuthException.class)
     public ResponseEntity<ForgeAgentErrorResponse> oauthFailure(com.sitionix.forgeagent.domain.exception.McpOAuthException failure) {

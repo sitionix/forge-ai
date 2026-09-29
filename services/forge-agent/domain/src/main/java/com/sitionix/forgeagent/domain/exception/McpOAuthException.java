@@ -7,6 +7,8 @@ public final class McpOAuthException extends RuntimeException {
     private McpOAuthException(int status, String code, String message) { super(message); this.status = status; this.code = code; }
     public int status() { return status; }
     public String code() { return code; }
+    public static McpOAuthException customRequired() { return new McpOAuthException(409,"MCP_CUSTOM_REQUIRED","This integration requires a custom endpoint or credentials."); }
+    public static McpOAuthException setupRequired() { return new McpOAuthException(409,"MCP_OAUTH_SETUP_REQUIRED","This integration requires OAuth client setup on the Forge installation."); }
     public static McpOAuthException unavailable() { return new McpOAuthException(503, "MCP_OAUTH_UNAVAILABLE", "OAuth provider is unavailable."); }
     public static McpOAuthException invalidResponse() { return new McpOAuthException(502, "MCP_OAUTH_INVALID_RESPONSE", "OAuth provider returned an invalid response."); }
     public static McpOAuthException reconnect() { return new McpOAuthException(409, "MCP_OAUTH_RECONNECT_REQUIRED", "OAuth authorization requires reconnect."); }

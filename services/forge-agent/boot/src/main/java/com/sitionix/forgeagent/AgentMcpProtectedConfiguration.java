@@ -25,12 +25,17 @@ import org.springframework.context.annotation.DependsOn;
 public class AgentMcpProtectedConfiguration {
     @Bean Object mcpProtectedPrerequisites(McpManagementProperties settings,RuntimeBoundaryVerifier verifier,
             @org.springframework.beans.factory.annotation.Value("${forge.agent.remote-access.management-enabled:false}") boolean remoteAccess,
-            @org.springframework.beans.factory.annotation.Value("${forge.agent.remote-access.service-secret-file:#{null}}") Path remoteService) {
+            @org.springframework.beans.factory.annotation.Value("${forge.agent.remote-access.service-secret-file:#{null}}") Path remoteService,
+            com.sitionix.forgeagent.infrastructure.local.mcp.oauth.McpOAuthRegistrationProperties clients) {
         Path key = Objects.requireNonNull(settings.getKeyFile(),"MCP key file required");
         Path database = Objects.requireNonNull(settings.getDatabaseCredentialFile(),"MCP database file required");
         if (Set.of(key,database).size() != 2) throw new IllegalStateException("MCP protected files must be distinct");
         var protectedPaths=new ArrayList<>(List.of(key,database));
         if (remoteAccess) protectedPaths.add(Objects.requireNonNull(remoteService,"Remote Access service file required"));
+        for(var client:clients.clients())if(client.clientSecretFile()!=null) {
+            if(protectedPaths.contains(client.clientSecretFile()))throw new IllegalStateException("OAuth client credential must be distinct from Forge credentials");
+            protectedPaths.add(client.clientSecretFile());
+        }
         verifier.verifyProtectedPaths(protectedPaths);
         return new Object();
     }
@@ -64,6 +69,11 @@ public class AgentMcpProtectedConfiguration {
             ForgeInstanceIdentityRepository identity,McpCredentialCipher rawCipher,McpOAuthCredentialCipher cipher,McpOAuthClient client,
             McpRuntimeGrantRepository grants,McpRuntimeToolView views,java.time.Clock clock) {
         return new com.sitionix.forgeagent.application.mcp.McpCredentialService(connections,identity,rawCipher,cipher,client,grants,views,clock);
+    }
+    @Bean com.sitionix.forgeagent.application.mcp.McpConnectService mcpConnectService(McpAuthenticationDiscovery discovery,
+            McpOAuthClientRegistrationProvider registration,McpConnectionService connections,com.sitionix.forgeagent.application.mcp.McpOAuthService oauth,
+            com.sitionix.forgeagent.infrastructure.local.mcp.oauth.McpOAuthDiscoveryProperties properties) {
+        return new com.sitionix.forgeagent.application.mcp.McpConnectService(discovery,registration,connections,oauth,properties.discoveryTimeout());
     }
     @Bean McpAvailableService mcpAvailableService(McpRegistryCatalog catalog) {
         return new McpAvailableService(catalog);

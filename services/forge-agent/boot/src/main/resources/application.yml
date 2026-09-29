@@ -29,6 +29,8 @@ management:
         include: "health,info"
 forge:
   mcp:
+    oauth:
+      discovery-timeout: ${FORGE_MCP_OAUTH_DISCOVERY_TIMEOUT:20s}
     tool-call-timeout: ${FORGE_MCP_TOOL_CALL_TIMEOUT:30s}
     gateway:
       max-grants: ${FORGE_MCP_GATEWAY_MAX_GRANTS:1000}

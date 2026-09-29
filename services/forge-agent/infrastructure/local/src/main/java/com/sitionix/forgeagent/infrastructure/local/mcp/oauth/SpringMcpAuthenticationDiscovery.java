@@ -15,7 +15,8 @@ final class SpringMcpAuthenticationDiscovery implements McpAuthenticationDiscove
     private static final String TOKEN="[!#$%&'*+.^_`|~0-9A-Za-z-]+";
     private static final Pattern CHALLENGE_PART=Pattern.compile("\\G\\s*(?:,\\s*)?("+TOKEN+")(?:\\s*=\\s*(\"(?:[^\"\\\\]|\\\\.)*\"|"+TOKEN+"))?");
     private final McpOAuthMetadataHttpClient http;
-    SpringMcpAuthenticationDiscovery(McpOAuthMetadataHttpClient http){this.http=http;}
+    private final Set<URI> configuredIssuers;
+    SpringMcpAuthenticationDiscovery(McpOAuthMetadataHttpClient http,Set<URI> configuredIssuers){this.http=http;this.configuredIssuers=Set.copyOf(configuredIssuers);}
     @Override public McpAuthenticationMetadata discover(URI endpoint,long deadline) {
         try {
             var response=http.challenge(endpoint,deadline);
@@ -25,9 +26,13 @@ final class SpringMcpAuthenticationDiscovery implements McpAuthenticationDiscove
             ResourceMetadata resource;
             if(challenge.containsKey("resource_metadata"))resource=http.metadata(uri(challenge.get("resource_metadata")),deadline,ResourceMetadata.class);
             else resource=first(resourceUris(endpoint),deadline,ResourceMetadata.class);
-            if(resource==null || !endpoint.equals(resource.resource()) || resource.servers()==null || resource.servers().size()!=1)
+            if(resource==null && !challenge.containsKey("resource_metadata"))throw McpOAuthException.customRequired();
+            if(resource==null || !endpoint.equals(resource.resource()) || resource.servers()==null || resource.servers().isEmpty())
                 throw McpOAuthException.invalidResponse();
-            URI issuer=resource.servers().get(0);validateUri(issuer);
+            resource.servers().forEach(SpringMcpAuthenticationDiscovery::validateUri);
+            var candidates=resource.servers().size()==1?resource.servers():resource.servers().stream().filter(configuredIssuers::contains).toList();
+            if(candidates.size()!=1)throw McpOAuthException.invalidResponse();
+            URI issuer=candidates.get(0);
             var server=first(serverUris(issuer),deadline,ServerMetadata.class);
             if(server==null || !issuer.equals(server.issuer()) || server.authorization()==null || server.token()==null
                     || server.codeChallengeMethods()==null || !server.codeChallengeMethods().contains("S256")

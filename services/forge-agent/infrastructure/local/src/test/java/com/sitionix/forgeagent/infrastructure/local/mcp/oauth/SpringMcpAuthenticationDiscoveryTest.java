@@ -122,6 +122,12 @@ class SpringMcpAuthenticationDiscoveryTest {
             reply("/.well-known/oauth-authorization-server",200,body);invalid();
         }
     }
+    @Test void aSingleConfiguredIssuerCanSelectFromMultipleAuthorizationServers(){
+        protectedMetadata();challenge("Bearer resource_metadata=\""+base+"/resource\"");
+        reply("/resource",200,"{\"resource\":\""+endpoint+"\",\"authorization_servers\":[\""+base+"\",\"https://other.example\"]}");
+        discovery=new SpringMcpAuthenticationDiscovery(context.getBean(McpOAuthMetadataHttpClient.class),Set.of(base));
+        assertThat(discover().issuer()).isEqualTo(base);assertThat(paths).doesNotContain("https://other.example");
+    }
     @Test void expiredSharedDeadlineMakesZeroCalls(){
         assertThatThrownBy(()->discovery.discover(endpoint,System.nanoTime()-1)).isInstanceOf(McpOAuthException.class);assertThat(paths).isEmpty();
     }

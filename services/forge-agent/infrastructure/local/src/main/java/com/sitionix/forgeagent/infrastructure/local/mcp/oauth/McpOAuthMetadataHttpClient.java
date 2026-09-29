@@ -23,10 +23,11 @@ final class McpOAuthMetadataHttpClient {
     private final int maxBytes;
     private final ObjectMapper mapper;
     McpOAuthMetadataHttpClient(HttpClient http,McpEndpointPolicy policy,Duration readTimeout,int maxBytes,ObjectMapper mapper) {
-        if(maxBytes<1)throw new IllegalArgumentException("OAuth metadata response limit must be positive");
+        if(maxBytes<1 || maxBytes==Integer.MAX_VALUE)throw new IllegalArgumentException("OAuth metadata response limit must be positive");
         this.http=http;this.policy=policy;this.readTimeout=readTimeout;this.maxBytes=maxBytes;
         this.mapper=mapper.copy().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+                .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT);
+        this.mapper.coercionConfigFor(LogicalType.Integer).setCoercion(CoercionInputShape.String,CoercionAction.Fail);
         this.mapper.coercionConfigFor(LogicalType.Boolean).setCoercion(CoercionInputShape.String,CoercionAction.Fail);
         this.mapper.coercionConfigFor(LogicalType.Textual).setCoercion(CoercionInputShape.Integer,CoercionAction.Fail)
                 .setCoercion(CoercionInputShape.Float,CoercionAction.Fail).setCoercion(CoercionInputShape.Boolean,CoercionAction.Fail);
@@ -72,7 +73,7 @@ final class McpOAuthMetadataHttpClient {
     }
     private RestClient client(URI uri,long deadline) {
         long remaining=deadline-System.nanoTime();
-        if(remaining<=0)throw McpOAuthException.unavailable();
+        if(remaining<java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(1))throw McpOAuthException.unavailable();
         try {policy.validate(uri);}catch(McpProbeException denied){throw McpOAuthException.endpointDenied();}
         var factory=new SimpleClientHttpRequestFactory() {
             @Override protected void prepareConnection(java.net.HttpURLConnection connection,String method) throws IOException {

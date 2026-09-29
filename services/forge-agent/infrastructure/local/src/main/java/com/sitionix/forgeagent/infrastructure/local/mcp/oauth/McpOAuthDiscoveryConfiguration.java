@@ -10,7 +10,7 @@ import org.springframework.beans.factory.annotation.*;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.*;
 @Configuration(proxyBeanMethods=false)
-@EnableConfigurationProperties(McpOAuthDiscoveryProperties.class)
+@EnableConfigurationProperties({McpOAuthDiscoveryProperties.class,McpOAuthRegistrationProperties.class})
 public class McpOAuthDiscoveryConfiguration {
     @Bean McpOAuthMetadataHttpClient mcpOAuthMetadataHttpClient(@Qualifier("mcpOAuthHttpClient") HttpClient http,
             McpOAuthProperties properties,McpOAuthDiscoveryProperties discovery,ObjectMapper mapper,
@@ -21,7 +21,10 @@ public class McpOAuthDiscoveryConfiguration {
         var policy=new McpEndpointPolicy(Arrays.stream(allowed.split(",")).map(String::strip).filter(s->!s.isEmpty()).collect(Collectors.toUnmodifiableSet()));
         return new McpOAuthMetadataHttpClient(http,policy,properties.readTimeout(),maxBytes,mapper);
     }
-    @Bean McpAuthenticationDiscovery mcpAuthenticationDiscovery(McpOAuthMetadataHttpClient http) {
-        return new SpringMcpAuthenticationDiscovery(http);
+    @Bean com.sitionix.forgeagent.domain.port.McpOAuthClientRegistrationProvider mcpOAuthClientRegistrationProvider(McpOAuthMetadataHttpClient http,McpOAuthRegistrationProperties clients,McpOAuthProperties properties) {
+        return new SpringMcpOAuthClientRegistrationProvider(http,clients,properties.callbackUri());
+    }
+    @Bean McpAuthenticationDiscovery mcpAuthenticationDiscovery(McpOAuthMetadataHttpClient http,McpOAuthRegistrationProperties clients) {
+        return new SpringMcpAuthenticationDiscovery(http,clients.clients().stream().map(McpOAuthRegistrationProperties.Client::issuer).collect(Collectors.toUnmodifiableSet()));
     }
 }
