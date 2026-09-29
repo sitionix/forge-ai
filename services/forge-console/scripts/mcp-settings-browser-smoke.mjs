@@ -60,9 +60,9 @@ try {
   let sequence=0;const pending=new Map();const networkFailures=[];let catalogReads=0;
   socket.addEventListener('message',event=>{const value=JSON.parse(event.data);if(value.method==='Network.requestWillBeSent' && new URL(value.params.request.url).pathname===available)catalogReads++;if(value.method==='Network.loadingFailed' && /^net::ERR_[A-Z_]+$/.test(value.params.errorText))networkFailures.push(value.params.errorText);if(value.id){const callback=pending.get(value.id);pending.delete(value.id);value.error?callback?.reject(new Error('Chrome command failed')):callback?.resolve(value.result);}});
   const cdp=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});
-  const evaluate=async expression=>{const result=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.text);return result.result.value;};
+  const evaluate=async (expression,userGesture=false)=>{const result=await cdp('Runtime.evaluate',{expression,userGesture,awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.text);return result.result.value;};
   const until=async (expression,budgetMs=5000)=>{const deadline=Date.now()+budgetMs;while(Date.now()<deadline){if(await evaluate(expression))return;await delay(50);}throw new Error('Browser condition timed out: '+expression);};
-  const click=id=>evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);
+  const click=id=>evaluate(`document.getElementById(${JSON.stringify(id)}).click()`,true);
   const fill=(id,value)=>evaluate(`{const el=document.getElementById(${JSON.stringify(id)});el.value=${JSON.stringify(value)};el.dispatchEvent(new Event('input',{bubbles:true}));}`);
   const base=external||`http://127.0.0.1:${server.address().port}/fgaisox`;
   const url=base+'/operator/settings.html';
@@ -147,6 +147,59 @@ try {
     assert.deepEqual(after,before,'Catalog selection must not mutate saved connections');
     if(external) assert.equal(await evaluate(`location.port`),'9099');
     console.log(external?(action==='catalog-icons'?'NORMAL_SETTINGS_CATALOG_ICONS_BROWSER_PASS':'NORMAL_SETTINGS_CATALOG_BROWSER_PASS'):'SETTINGS_CATALOG_BROWSER_STUB_PASS');
+  } else if(action==='oauth') {
+    assert(external,'OAuth acceptance requires actual Nexus/Agent, not the management stub');
+    const issuer=process.env.FORGE_SETTINGS_OAUTH_ISSUER;
+    await click('mcpAdd');await click('mcpCustom');await until(`document.getElementById('mcpConnectionDialog').open`);
+    await fill('mcpName','Stage 6 OAuth');await fill('mcpEndpoint',process.env.FORGE_SETTINGS_MCP_ENDPOINT);
+    await fill('mcpAuthType','OAUTH');await evaluate(`document.getElementById('mcpAuthType').dispatchEvent(new Event('change'))`);
+    assert.equal(await evaluate(`document.getElementById('mcpSaveTest').textContent`),'Connect');
+    assert.equal(await evaluate(`document.getElementById('mcpBearerFields').hidden && document.getElementById('mcpCredentialActionFields').hidden`),true);
+    assert.equal(await evaluate(`document.getElementById('mcpOAuthAdvanced').open`),false);
+    await evaluate(`document.getElementById('mcpOAuthAdvanced').open=true`);
+    await fill('mcpOAuthClientId','forge-fixture');await fill('mcpOAuthIssuer',issuer);
+    await fill('mcpOAuthAuthorization',issuer+'/authorize');await fill('mcpOAuthToken',issuer+'/token');await fill('mcpOAuthRevocation',issuer+'/revoke');
+    await fill('mcpOAuthClientAuth','client_secret_post');await fill('mcpOAuthClientSecret','registered-client-secret-canary');await fill('mcpOAuthScopes','tools');
+    for(const decision of ['deny','approve']) {
+    await click('mcpSaveTest');
+    let target;for(let n=0;n<100;n++) {
+      const pages=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();target=pages.find(t=>t.type==='page' && t.url.startsWith(issuer+'/authorize'));
+      if(target)break;await delay(50);
+    }
+    assert(target,'Provider sign-in window did not open during '+decision+': '+await evaluate(`document.getElementById('mcpFormError').textContent`));
+    const provider=new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((resolve,reject)=>{provider.addEventListener('open',resolve,{once:true});provider.addEventListener('error',reject,{once:true});});
+    let next=0;const replies=new Map();
+    provider.addEventListener('message',event=>{const message=JSON.parse(event.data);if(message.id){const reply=replies.get(message.id);replies.delete(message.id);message.error?reply?.reject(new Error('Provider browser command failed')):reply?.resolve(message.result);}});
+    const providerEvaluate=expression=>new Promise((resolve,reject)=>{const id=++next;replies.set(id,{resolve:value=>resolve(value.result?.value),reject});provider.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,userGesture:true,returnByValue:true}}));});
+    try {
+      assert.equal(await providerEvaluate('window.opener===null'),true,'Provider must not be able to navigate Forge through an opener');
+      assert.equal(await providerEvaluate('!!document.getElementById("approve")'),true);
+      assert.equal(await evaluate(`document.getElementById('mcpFormClose').disabled || document.getElementById('mcpOAuthCancel').disabled`),false);
+      assert.equal(await evaluate(`document.querySelector('.operator-sidebar').getBoundingClientRect().width>0`),true);
+      await providerEvaluate(`document.getElementById(${JSON.stringify(decision)}).click()`);
+      if(decision==='deny') {
+        await until(`document.getElementById('mcpFormError').textContent.includes('Sign-in was not completed')`,15000);
+        assert.equal(await evaluate(`window.__forgeMountedOperatorPage.form.saved.enabled`),false);
+        assert.equal(await evaluate(`document.getElementById('mcpSaveTest').textContent`),'Reconnect');
+      } else await until(`document.getElementById('mcpFormNotice').textContent.startsWith('Check succeeded')`,15000);
+    } finally {provider.close();}
+    const cookies=await cdp('Network.getCookies',{urls:[base+'/api/v1/infrastructure/agents/integrations/mcp/oauth/callback']});
+    assert.equal(cookies.cookies.some(cookie=>cookie.name.startsWith('ForgeMcpOAuth-')),false,'Completed transaction cookie must be cleared');
+    }
+    const id=await evaluate(`window.__forgeMountedOperatorPage.form.saved.id`);
+    assert.equal(await evaluate(`window.__forgeMountedOperatorPage.form.saved.enabled`),false);
+    assert.equal(await evaluate(`localStorage.length+sessionStorage.length`),0);
+    assert.equal(await evaluate(`document.body.textContent.includes('oauth-access-canary') || document.body.textContent.includes('oauth-refresh-canary') || [...document.querySelectorAll('input,textarea')].some(el=>el.value.includes('canary'))`),false);
+    assert.equal(await evaluate(`document.cookie.includes('ForgeMcpOAuth')`),false,'Transaction binding is HttpOnly and cleared');
+    await evaluate(`document.querySelector('#mcpToolChoices input').checked=true;document.querySelectorAll('#mcpProjectChoices input').forEach(input=>input.checked=input.value===${JSON.stringify(process.env.FORGE_SETTINGS_PROJECT_ID)})`);
+    await click('mcpSaveAccess');await until(`document.getElementById('mcpFormNotice').textContent.startsWith('Permissions saved')`);
+    assert.equal(await evaluate(`window.__forgeMountedOperatorPage.form.saved.enabled`),false);
+    await cdp('Emulation.setDeviceMetricsOverride',{width:375,height:800,deviceScaleFactor:1,mobile:false});
+    assert.equal(await evaluate(`document.getElementById('mcpConnectionDialog').getBoundingClientRect().right<=innerWidth && document.getElementById('mcpConnectionDialog').getBoundingClientRect().left>=0`),true);
+    assert.equal(await evaluate(`document.getElementById('mcpConnectionDialog').scrollWidth<=document.getElementById('mcpConnectionDialog').clientWidth`),true);
+    await cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});
+    await click('mcpFormClose');console.log('SETTINGS_OAUTH_SAVED_ID '+id);console.log('OAUTH_BROWSER_ACTUAL_NEXUS_PASS');
   } else if(action==='disable' || action==='enable') {
     await evaluate(`document.querySelector('[data-connection-id="${process.env.FORGE_SETTINGS_CONNECTION_ID}"]').click()`);
     const before=action==='disable'?'Disable':'Enable',after=action==='disable'?'Enable':'Disable';

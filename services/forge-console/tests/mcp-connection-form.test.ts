@@ -17,6 +17,19 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.unstubAllGlobals());
 describe('Custom MCP form',()=>{
+ it('Reconnect keeps registered client credentials when metadata property order differs',async()=>{
+ const {form,api}=setup();
+ const cfg={issuer:'https://provider.example',authorizationEndpoint:'https://provider.example/authorize',tokenEndpoint:'https://provider.example/token',
+  revocationEndpoint:null,clientId:'registered',clientAuthenticationMethod:'client_secret_post' as const,scopes:['tools'],resource:base.endpoint};
+ const saved={...base,authType:'OAUTH' as const,oauthConfiguration:cfg,credentialConfigured:true};api.update.mockResolvedValue(saved);
+ const oauthApi=api as typeof api & {startOAuth:ReturnType<typeof vi.fn>;cancelOAuth:ReturnType<typeof vi.fn>};
+ oauthApi.startOAuth=vi.fn().mockResolvedValue({transactionId:'88888888-8888-4888-8888-888888888888',connectionId:base.id,authorizationUrl:'https://provider.example/authorize'});
+ oauthApi.cancelOAuth=vi.fn().mockResolvedValue(undefined);vi.stubGlobal('BroadcastChannel',class {close(){}});const open=vi.spyOn(window,'open').mockReturnValue(null);
+ form.openEdit(saved,[],[]);click('mcpSaveTest');await tick();
+ expect(api.update).toHaveBeenCalledWith(base.id,expect.objectContaining({credentialChange:'KEEP',oauthConfiguration:cfg}),expect.any(AbortSignal));
+ expect(oauthApi.startOAuth).toHaveBeenCalledTimes(1);expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();open.mockRestore();
+ });
+
  it('one OAuth Connect saves once, awaits consent, then reads and tests without enabling',async()=>{
  const {form,api}=setup();const tx='88888888-8888-4888-8888-888888888888';
  const saved={...base,authType:'OAUTH' as const};api.create.mockResolvedValue(saved);api.get.mockResolvedValue({...saved,credentialConfigured:true,checkedAt:'now'});

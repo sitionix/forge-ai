@@ -118,7 +118,9 @@ export class McpConnectionForm {
         this.element('mcpOAuthAdvanced').open=true;this.element('mcpOAuthClientId').focus();
         throw new Error('Configure this installation’s registered OAuth client under Advanced, then Connect.');
       }
-      const changed=!!this.saved && (this.saved.authType!=='OAUTH' || JSON.stringify(config)!==JSON.stringify(this.saved.oauthConfiguration));
+      const changed=!!this.saved && (this.saved.authType!=='OAUTH' || Object.entries(config).some(([key,value])=>key==='scopes'
+        ? [...value].sort().join(' ')!==[...(this.saved.oauthConfiguration?.scopes||[])].sort().join(' ')
+        : value!==this.saved.oauthConfiguration?.[key]));
       if(clientSecret) {command.credentialChange='REPLACE';command.credential={clientSecret};}
       else if(changed && config.clientAuthenticationMethod==='none')command.credentialChange='REMOVE';
       else if(config.clientAuthenticationMethod!=='none' && (!this.saved || changed)) {

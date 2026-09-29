@@ -126,4 +126,4 @@
 
 ## Self-review / approval boundary
 
-All Stage 6 roadmap bullets map to Tasks 1–7. Five Review Focus cases have explicit regression ownership. Standard primitives, secret/public separation, refresh identity, callback single use, row lock ordering and safe UX are spelled out; existing user connection is not a fixture. OAuth App registration/live acceptance remain prerequisites, not assumptions. Plan is ready for review; production implementation has not started.
+All Stage 6 roadmap bullets map to Tasks 1–7. Five Review Focus cases have explicit regression ownership. Standard primitives, secret/public separation, refresh identity, callback single use, row lock ordering and safe UX are spelled out; existing user connection is not a fixture. OAuth App registration/live acceptance remain prerequisites, not assumptions. Historical approval record: plan approved before implementation. Tasks 1–6 implemented; exact verification/acceptance boundaries are recorded in `docs/mcp-integrations/stage-6-evidence.md`. Live provider acceptance remains NOT_VERIFIED until registered-client prerequisites are supplied.

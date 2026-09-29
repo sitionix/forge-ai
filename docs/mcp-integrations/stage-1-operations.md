@@ -172,3 +172,8 @@ Provider credentials remain encrypted, and runtime grants/policy remain enforced
 Remote Access retains its own scoped existing login/service credentials and does
 not control MCP availability. Historical Stage 1 auth assumptions are obsolete;
 see [normal runtime evidence](normal-runtime-evidence.md).
+
+OAuth registered-client setup, Connect/Reconnect and refresh behavior are documented
+in [Stage 6 operations](stage-6-operations.md). The old Stage 1-only inventory
+restriction above is historical; current tools/policy continue through Test and
+explicit disabled-only approvals.
