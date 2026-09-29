@@ -30,6 +30,9 @@ management:
     readinessstate:
       enabled: true
 forge:
+  mcp:
+    catalog:
+      agent-read-timeout: ${FORGE_MCP_CATALOG_AGENT_READ_TIMEOUT:55s}
   ai:
     infrastructure:
       jarvis:

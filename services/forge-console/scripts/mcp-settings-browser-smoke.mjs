@@ -31,6 +31,7 @@ const server=createServer(async(req,res)=>{
     let body={};for await(const chunk of req) body.raw=(body.raw||'')+chunk;
     body=body.raw?JSON.parse(body.raw):{};
     if(path===api+'/infrastructure/agents/projects') {send([project]);return;}
+    if(path===available && process.env.FORGE_SETTINGS_ACTION==='catalog-pending' && !external) return;
     if(path===available) {send({servers:[{name:'fixture/echo',title:'Echo',description:'Read-only catalog fixture',version:'1.0',endpoint:'https://fixture.example/mcp'}],nextCursor:null});return;}
     if(path===catalog) {
       if(req.method==='GET') {send(connections);return;}
@@ -90,9 +91,19 @@ try {
     const result=await evaluate(`fetch(${JSON.stringify(catalog)},{credentials:'omit'}).then(async response=>({status:response.status,body:await response.json()}))`);
     assert.equal(result.status,200);assert.deepEqual(result.body,[]);
     console.log('NORMAL_SETTINGS_EMPTY_BROWSER_PASS');
+  } else if(action==='catalog-pending') {
+    await until(`document.getElementById('mcpCatalogNotice').textContent.includes('Loading')`);
+    assert.equal(await evaluate(`document.getElementById('mcpAdd').disabled`),false);
+    await click('mcpAdd');assert.equal(await evaluate(`document.getElementById('mcpCatalog').open`),true);
+    await click('mcpCatalogClose');assert.equal(await evaluate(`document.getElementById('mcpCatalog').open`),false);
+    await click('mcpAdd');await click('mcpCustom');await until(`document.getElementById('mcpConnectionDialog').open`);
+    assert.equal(await evaluate(`document.querySelector('.operator-sidebar').getBoundingClientRect().width>0`),true);
+    assert.equal(await evaluate(`!!document.querySelector('.sidebar-nav a[href="./agent-projects.html"]')`),true);
+    assert.equal(createCalls,0);assert.equal(testCalls,0);
+    console.log('SETTINGS_PENDING_CATALOG_BROWSER_STUB_PASS');
   } else if(action==='catalog' || action==='catalog-icons') {
     const before=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
-    await until(`document.querySelector('#mcpCatalogServers button') && !/Loading|Updating/.test(document.getElementById('mcpCatalogNotice').textContent)`,30000);
+    await until(`document.querySelector('#mcpCatalogServers button') && !/Loading|Updating/.test(document.getElementById('mcpCatalogNotice').textContent)`,60000);
     assert.equal(await evaluate(`document.getElementById('mcpCatalog').open`),false,'Prefetch must not open the dialog');
     assert.equal(catalogReads,1,'Settings must preload one catalog page');
     await evaluate(`window.__catalogFirstRow=document.querySelector('#mcpCatalogServers button')`);
@@ -102,7 +113,7 @@ try {
     if(action==='catalog-icons') {
       await fill('mcpCatalogSearch',process.env.FORGE_SETTINGS_CATALOG_SEARCH||'justidea');
       await evaluate(`document.getElementById('mcpCatalogSearchForm').requestSubmit()`);
-      await until(`!/Loading|Updating/.test(document.getElementById('mcpCatalogNotice').textContent)`,30000);
+      await until(`!/Loading|Updating/.test(document.getElementById('mcpCatalogNotice').textContent)`,60000);
       try {await until(`document.querySelector('#mcpCatalogServers img')?.complete && document.querySelector('#mcpCatalogServers img').naturalWidth>0`);}
       catch(error) {console.log('CATALOG_ICON_NETWORK_FAILURES '+JSON.stringify(networkFailures));throw error;}
       assert.equal(await evaluate(`document.querySelector('#mcpCatalogServers img').referrerPolicy`),'no-referrer');

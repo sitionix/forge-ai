@@ -41,7 +41,7 @@ class ForgeAgentServiceRestClientTest {
       properties.setReadTimeout(java.time.Duration.ofSeconds(2));
       final ForgeAgentHttpClient client = new ForgeAgentHttpClientConfiguration()
           .forgeAgentHttpClient(properties,
-              RestClient.builder());
+              RestClient.builder(), java.time.Duration.ofSeconds(55));
 
       assertThat(client.listProjects()).isEmpty();
       assertThat(authorization.get()).isNull();

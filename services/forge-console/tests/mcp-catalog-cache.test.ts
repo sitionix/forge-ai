@@ -33,6 +33,17 @@ describe('Catalog page reuse',()=>{
     await complete(pending[0]!);expect(element('mcpCatalogServers').textContent).toContain('Search');
     expect(fetcher.mock.calls.every(([,init])=>init.method==='GET')).toBe(true);
   });
+  it('keeps Settings and Custom MCP usable while the catalog response is pending',async()=>{
+    const {pending,fetcher}=setup();await vi.waitFor(()=>expect(pending).toHaveLength(1));
+    await vi.waitFor(()=>expect(element('mcpConnections').textContent).toContain('No integrations connected'));
+    expect((element('mcpAdd') as HTMLButtonElement).disabled).toBe(false);
+    click('mcpAdd');expect((element('mcpCatalog') as HTMLDialogElement).open).toBe(true);
+    click('mcpCatalogClose');expect(pending[0]!.signal.aborted).toBe(true);
+    click('mcpAdd');await vi.waitFor(()=>expect(pending).toHaveLength(2));click('mcpCustom');
+    await vi.waitFor(()=>expect((element('mcpConnectionDialog') as HTMLDialogElement).open).toBe(true));
+    expect(pending[1]!.signal.aborted).toBe(true);
+    expect(fetcher.mock.calls.every(([,init])=>init.method==='GET')).toBe(true);
+  });
   it('reuses the loaded page without extending its five-minute expiry',async()=>{
     const {pending}=setup();await vi.waitFor(()=>expect(pending).toHaveLength(1));await complete(pending[0]!);
     const row=element('mcpCatalogServers').firstChild;

@@ -58,6 +58,9 @@ class McpRegistryRuntimeConfigurationTest {
                     .withPropertyValues("forge.mcp.registry.base-url=http://127.0.0.1:" + server.getAddress().getPort())
                     .run(context -> {
                         assertThat(context).hasNotFailed();
+                        assertThat(ApplicationConversionService.getSharedInstance().convert(
+                                context.getEnvironment().getProperty("forge.mcp.registry.read-timeout"), java.time.Duration.class))
+                                .isEqualTo(java.time.Duration.ofSeconds(50));
                         var response = caller.submit(() -> context.getBean(McpRegistryHttpClient.class).list(null, null, 20, "latest"));
                         try {
                             assertThat(received.await(2, TimeUnit.SECONDS)).isTrue();
