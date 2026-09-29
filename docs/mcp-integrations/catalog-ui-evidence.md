@@ -2,7 +2,7 @@
 
 Scope: the Settings Catalog UI slice of roadmap Stages 8–9, using the previously accepted Flow 1 backend. This does not claim completion of Recommended presets, OAuth, or all Stage 8–9 acceptance. See [plan](catalog-ui-plan.md).
 
-## Implementation
+## Original implementation (superseded UI layout)
 
 - Settings keeps Connected for saved integrations. Add integration opens Catalog; Add custom MCP opens the existing blank connection form.
 - `mcp-api.js` reads the existing Nexus available endpoint with URL-encoded search, cursor and limit. Nexus → Agent → official Registry transport/cache architecture is unchanged.
@@ -83,3 +83,24 @@ mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify
 mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/boot -am verify
 FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=catalog-icons node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
 ```
+
+## Compact Settings follow-up — 2026-09-29
+
+This supersedes the original inline Connected/Catalog layout above. Settings now has one primary Add integration action and compact saved rows. A native Catalog dialog owns search, a bounded scrolling list, next-page control and the secondary Add custom MCP link. Catalog rows have 32px icons, title and at most two description lines; selecting a row opens the existing form. A separate native details dialog owns Edit, Test, explicit Enable/Disable and confirmed Remove. Backend APIs, Registry/cache, credentials and permissions are unchanged.
+
+Form close returns to the same catalog without another page request, or to authoritative saved details. The saved connection snapshot is carried through the existing form close callback, including when an authoritative read is still pending. Catalog dismissal aborts only the preparation read in RequestCoordinator's `add` slot; current mutations retain their separate `action` slot. No new coordination abstraction.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| TDD | PASS | Four initial layout regressions failed before implementation. A pending authoritative-save regression then reproduced incorrect catalog restoration. Final review reproduced delayed `/projects` reopening the form after catalog close; its new regression failed before the dedicated `add` cancellation fix, then passed. |
+| FOCUSED_CONSOLE | PASS | Compact Settings, Catalog, Settings and connection-form suites: 41 tests / 4 files. Fresh read-only reviewer independently repeated all 41. |
+| CONSOLE_TESTS | PASS | Final full Console run: 641 tests / 30 files, zero failures. |
+| TYPECHECK_BUILD | PASS | Console typecheck and production build exited 0. |
+| BUILT_BROWSER_STUB | PASS | Real Chrome/built assets: compact Catalog, selection/cancel, native Escape/focus, 375px fit, and existing Custom create/test/disabled permissions/explicit Enable/credential replacement passed. Management backend is an explicit stub, not a runtime or provider proof. |
+| FINAL_REVIEW | PASS | Fresh read-only review accepted after the demonstrated late-project-read fix; no remaining blockers reported. |
+| NORMAL_RUNTIME_FINAL | NOT_VERIFIED | Final standard startup and actual-main browser checks are pending; preceding actual-main empty/Catalog run used the initial compact build, before final read-cancellation/CSS changes. |
+| CI | NOT_VERIFIED | Prior green Catalog/icon builds do not verify this new UI change. |
+| LIVE_PROVIDER | NOT_VERIFIED | This follow-up does not initialize or call advertised MCP endpoints. |
+| JOINED_RUNTIME | NOT_VERIFIED | Stage 3/4 grant revocation and policy acceptance are not rerun for this frontend layout change. |
+
+No PR metadata/comments/reviews or merge operations. Full local backend reactors are not rerun for this frontend-only follow-up; previous evidence above remains historical rather than a fresh result.

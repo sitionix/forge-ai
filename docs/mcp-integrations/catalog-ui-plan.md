@@ -3,7 +3,7 @@
 This is the Settings UI slice of roadmap Stages 8–9 over the accepted Flow 1 backend. It does not complete OAuth, Recommended presets, or all Stage 8–9 acceptance.
 
 1. Add regression coverage for the existing Nexus available endpoint, catalog navigation/search/pagination, cancellation, inert metadata, and prefilled connection form.
-2. Add Connected / Catalog navigation using the existing Console design system. Add integration opens Catalog; Add custom MCP opens the existing blank form.
+2. Use a compact saved-connections section with one Add integration action. Add integration opens a native Catalog dialog; its secondary Add custom MCP action opens the existing blank form. This supersedes the original inline Connected / Catalog navigation.
 3. Fetch one page through Nexus → Agent → official Registry. Preserve opaque cursors, including empty filtered pages. Keep errors scoped to Catalog and existing connections usable during Registry failure.
 4. Reuse the existing form for a selected descriptor. Preserve the endpoint template as metadata; require the operator to enter a resolved endpoint before saving. No provider request or connection mutation occurs on selection.
 5. Run focused and full Console tests, typecheck and build. Extend the existing browser smoke; verify built assets against the normal main Nexus when available. Record actual verification boundaries.
@@ -14,3 +14,11 @@ Existing typed HTTP clients, Registry filtering, Caffeine cache, persistence, pr
 ## Icon follow-up
 
 Use the first valid HTTPS Registry `icons[].src` as optional `iconUrl` metadata through the existing typed Agent/Nexus contracts. Console renders a native lazy image with no referrer and a decorative fallback for missing/failed images. Do not download images on the backend, execute SVG markup, or change connection flows. Verify the Registry mapping, typed Nexus ForgeIT, Console image/error behavior, full reactors and actual main browser rendering.
+
+## Compact Settings follow-up
+
+Approved user design: keep a compact MCP section on Settings, move Catalog and integration management into separate native dialogs, and remove duplicate global Catalog/Connected/Refresh controls. Catalog uses 32px decorative icons, whole-row selection and descriptions capped at two lines. URL/version remain metadata for the existing form rather than visible list diagnostics. Search, one-page pagination and its cursor stay unchanged; the catalog alone scrolls within its bounded dialog.
+
+Keep explicit Enable/Disable and disabled-only permission editing unchanged. Form cancellation returns to the previous catalog or saved connection details; close/Escape cancels pending reads so late responses cannot reopen a dismissed dialog. Reuse the existing RequestCoordinator, native dialog focus behavior, Console styles and connection form. No new UI framework, transport, backend policy or dependency.
+
+Verification: focused regressions first, full Console/typecheck/build, built Chrome catalog and existing create/test/permissions/Enable smoke with its explicit management stub, then read-only actual main :9099 empty/catalog/image acceptance and narrow viewport/Escape checks. Run one final read-only review, record exact results, and stop for review without PR operations or merge.

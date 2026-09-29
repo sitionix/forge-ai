@@ -101,17 +101,30 @@ try {
       assert.equal(await evaluate(`document.querySelector('#mcpCatalogServers img').referrerPolicy`),'no-referrer');
     }
     assert.equal(await evaluate(`document.getElementById('mcpCatalog').hidden`),false);
-    assert.equal(await evaluate(`document.getElementById('mcpCatalogTab').getAttribute('aria-pressed')`),'true');
+    assert.equal(await evaluate(`document.getElementById('mcpCatalog').open`),true);
+    assert.equal(await evaluate(`document.querySelectorAll('dialog[open]').length`),1);
+    assert.equal(await evaluate(`document.getElementById('mcpCatalog').getBoundingClientRect().height<innerHeight`),true);
+    assert.equal(await evaluate(`document.getElementById('mcpCatalogServers').scrollHeight>document.getElementById('mcpCatalogServers').clientHeight || document.querySelectorAll('#mcpCatalogServers button').length<5`),true);
+    assert.equal(await evaluate(`document.querySelector('#mcpCatalogServers button').getBoundingClientRect().height<=100`),true);
     assert.equal(await evaluate(`document.documentElement.scrollWidth<=innerWidth`),true);
     assert.equal(await evaluate(`document.querySelector('.operator-sidebar').getBoundingClientRect().width>0`),true);
     assert.equal(await evaluate(`!!document.querySelector('.sidebar-nav a[href="./agent-projects.html"]')`),true);
     if(process.env.SMOKE_SCREENSHOT) {const shot=await cdp('Page.captureScreenshot',{format:'png'});await writeFile(process.env.SMOKE_SCREENSHOT,Buffer.from(shot.data,'base64'));}
-    const descriptor=await evaluate(`({title:document.querySelector('#mcpCatalogServers h4').textContent,endpoint:document.querySelector('#mcpCatalogServers code').textContent})`);
+    await cdp('Emulation.setDeviceMetricsOverride',{width:375,height:800,deviceScaleFactor:1,mobile:false});
+    assert.equal(await evaluate(`document.getElementById('mcpCatalog').getBoundingClientRect().right<=innerWidth && document.getElementById('mcpCatalog').getBoundingClientRect().left>=0`),true,'Catalog must fit a narrow viewport');
+    assert.equal(await evaluate(`document.getElementById('mcpCatalog').scrollWidth<=document.getElementById('mcpCatalog').clientWidth`),true,'Catalog must not overflow horizontally');
+    await cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});
+    const descriptor=await evaluate(`window.__forgeMountedOperatorPage.api.available({search:document.getElementById('mcpCatalogSearch').value}).then(page=>page.servers[0])`);
     await evaluate(`document.querySelector('#mcpCatalogServers button').click()`);
     await until(`document.getElementById('mcpConnectionDialog').open`);
-    assert.equal(await evaluate(`document.getElementById('mcpName').value`),descriptor.title);
+    assert.equal(await evaluate(`document.querySelectorAll('dialog[open]').length`),1);
+    assert.equal(await evaluate(`document.getElementById('mcpName').value`),descriptor.title||descriptor.name);
     assert.equal(await evaluate(`document.getElementById('mcpEndpoint').value`),descriptor.endpoint);
-    await click('mcpFormClose');await click('mcpConnectedTab');
+    await click('mcpFormClose');assert.equal(await evaluate(`document.getElementById('mcpCatalog').open`),true);
+    await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await until(`!document.getElementById('mcpCatalog').open`);
+    assert.equal(await evaluate(`document.activeElement.id`),'mcpAdd');
     const after=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
     assert.deepEqual(after,before,'Catalog selection must not mutate saved connections');
     if(external) assert.equal(await evaluate(`location.port`),'9099');
@@ -119,12 +132,12 @@ try {
   } else if(action==='disable' || action==='enable') {
     await evaluate(`document.querySelector('[data-connection-id="${process.env.FORGE_SETTINGS_CONNECTION_ID}"]').click()`);
     const before=action==='disable'?'Disable':'Enable',after=action==='disable'?'Enable':'Disable';
-    await until(`!document.getElementById('mcpDetailsPanel').hidden && document.getElementById('mcpToggle').textContent===${JSON.stringify(before)}`);
+    await until(`!document.getElementById('mcpDetailsPanel').hidden && !document.getElementById('mcpToggle').disabled && document.getElementById('mcpToggle').textContent===${JSON.stringify(before)}`);
     await click('mcpToggle');await until(`document.getElementById('mcpToggle').textContent===${JSON.stringify(after)} && !document.getElementById('mcpToggle').disabled`);
     console.log(action==='disable'?'SETTINGS_DISABLE_CONFIRMED':'SETTINGS_ENABLE_CONFIRMED');
   } else if(action==='permissions') {
     await evaluate(`document.querySelector('[data-connection-id="${process.env.FORGE_SETTINGS_CONNECTION_ID}"]').click()`);
-    await until(`!document.getElementById('mcpDetailsPanel').hidden && document.getElementById('mcpToggle').textContent==='Enable'`);
+    await until(`!document.getElementById('mcpDetailsPanel').hidden && !document.getElementById('mcpToggle').disabled && document.getElementById('mcpToggle').textContent==='Enable'`);
     await click('mcpEdit');await until(`document.getElementById('mcpConnectionDialog').open`);
     assert.equal(await evaluate(`document.getElementById('mcpSaveAccess').disabled`),false);
     await fill('mcpProjectScope','SELECTED');await evaluate(`document.getElementById('mcpProjectScope').dispatchEvent(new Event('change'))`);
@@ -134,10 +147,10 @@ try {
     await evaluate(`document.querySelectorAll('#mcpProjectChoices input').forEach(input=>input.checked=input.value===${JSON.stringify(process.env.FORGE_SETTINGS_PROJECT_ID)})`);
     assert.equal(await evaluate(`document.querySelectorAll('#mcpProjectChoices input:checked').length`),1);
     await click('mcpSaveAccess');await until(`document.getElementById('mcpFormNotice').textContent.startsWith('Permissions saved')`);
-    await click('mcpFormClose');await until(`!document.getElementById('mcpDetailsPanel').hidden && document.getElementById('mcpToggle').textContent==='Enable'`);
+    await click('mcpFormClose');await until(`!document.getElementById('mcpDetailsPanel').hidden && !document.getElementById('mcpToggle').disabled && document.getElementById('mcpToggle').textContent==='Enable'`);
     console.log('SETTINGS_PERMISSIONS_DISABLED_CONFIRMED');
   } else {
-    await click('mcpCustom');await until(`document.getElementById('mcpConnectionDialog').open`);
+    await click('mcpAdd');await click('mcpCustom');await until(`document.getElementById('mcpConnectionDialog').open`);
     assert.equal(await evaluate(`getComputedStyle(document.getElementById('mcpAccess')).display`),'none','Permissions must be hidden before saving');
     await fill('mcpName','Stage 5 Echo');await fill('mcpEndpoint',process.env.FORGE_SETTINGS_MCP_ENDPOINT||'https://fixture.example/mcp');
     if(!external) {
@@ -153,10 +166,10 @@ try {
     await evaluate(`document.querySelector('#mcpToolChoices input').click();document.querySelector('#mcpProjectChoices input').click()`);
     await click('mcpSaveAccess');await until(`document.getElementById('mcpFormNotice').textContent.startsWith('Permissions saved')`);
     const id=await evaluate(`window.__forgeMountedOperatorPage.form.saved.id`);
-    await click('mcpFormClose');await until(`!document.getElementById('mcpDetailsPanel').hidden && document.getElementById('mcpToggle').textContent==='Enable'`);
+    await click('mcpFormClose');await until(`!document.getElementById('mcpDetailsPanel').hidden && !document.getElementById('mcpToggle').disabled && document.getElementById('mcpToggle').textContent==='Enable'`);
     await click('mcpToggle');await until(`document.getElementById('mcpToggle').textContent==='Disable' && !document.getElementById('mcpToggle').disabled`);
     await cdp('Page.navigate',{url});await until(`document.getElementById('mcpConnections')?.textContent.includes('Enabled')`);
-    await evaluate(`document.querySelector('[data-connection-id="${id}"]').click()`);await until(`!document.getElementById('mcpDetailsPanel').hidden`);
+    await evaluate(`document.querySelector('[data-connection-id="${id}"]').click()`);await until(`!document.getElementById('mcpDetailsPanel').hidden && !document.getElementById('mcpEdit').disabled`);
     if(!external) {
       assert.equal(createCalls,1);assert.equal(testCalls,1);assert.equal(connections[0].allowedTools.length,1);assert.deepEqual(connections[0].projectAccess.projectIds,[project.id]);
       await click('mcpEdit');await until(`document.getElementById('mcpConnectionDialog').open`);
@@ -164,7 +177,7 @@ try {
       assert.equal(await evaluate(`!document.getElementById('mcpAccessGuard').hidden && document.getElementById('mcpAccessGuard').textContent`),'Disable this connection before changing tool or project access.');
       await fill('mcpCredentialChange','REPLACE');await evaluate(`document.getElementById('mcpCredentialChange').dispatchEvent(new Event('change'))`);await fill('mcpBearer','replacement-canary');await click('mcpSaveTest');
       await until(`document.getElementById('mcpFormNotice').textContent.startsWith('Check succeeded')`);await click('mcpFormClose');
-      await click('mcpCustom');await until(`document.getElementById('mcpConnectionDialog').open`);await fill('mcpBearer','cancel-canary');await click('mcpFormClose');
+      await click('mcpDetailsClose');await click('mcpAdd');await click('mcpCustom');await until(`document.getElementById('mcpConnectionDialog').open`);await fill('mcpBearer','cancel-canary');await click('mcpFormClose');
       assert.equal(createCalls,1);
     }
     assert.equal(await evaluate(`localStorage.length+sessionStorage.length`),0);

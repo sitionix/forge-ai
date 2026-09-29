@@ -6,29 +6,29 @@
   <header class="settings-header"><h1>Settings</h1></header>
   <h2>Integrations</h2>
   <section id="mcpIntegrations" class="panel" aria-labelledby="mcpSectionTitle">
-    <h3 id="mcpSectionTitle">MCP</h3>
-    <p class="mcp-description">Connect external MCP tools.</p>
+    <div class="mcp-section-head"><div><h3 id="mcpSectionTitle">MCP</h3><p class="mcp-description">Connect external MCP tools.</p></div><button id="mcpAdd" class="button" type="button">Add integration</button></div>
   <div id="mcpError" class="error-box" role="alert" hidden></div>
-  <button id="mcpRetry" class="button secondary" type="button" hidden>Refresh confirmed state</button>
+  <button id="mcpRetry" class="link-button" type="button" hidden>Retry</button>
   <p id="mcpNotice" role="status" aria-live="polite"></p>
   <section id="mcpManagement">
-    <div class="mcp-actions"><button id="mcpAdd" class="button" type="button">Add integration</button><button id="mcpCustom" class="button secondary" type="button">Add custom MCP</button><button id="mcpRefresh" class="button secondary" type="button">Refresh</button></div>
-    <nav class="mcp-actions" aria-label="MCP integrations"><button id="mcpConnectedTab" class="button secondary" type="button" aria-pressed="true" aria-controls="mcpConnected">Connected</button><button id="mcpCatalogTab" class="button secondary" type="button" aria-pressed="false" aria-controls="mcpCatalog">Catalog</button></nav>
-    <section id="mcpConnected" aria-label="Connected MCP integrations">
     <div id="mcpConnections" aria-live="polite"></div>
-    <section id="mcpDetailsPanel" class="mcp-details" hidden><h2>Connection details</h2><div id="mcpDetails"></div><div class="mcp-actions"><button id="mcpEdit" class="button" type="button">Edit connection and access</button><button id="mcpTest" class="button secondary" type="button">Test connection</button><button id="mcpToggle" class="button secondary" type="button">Enable</button><button id="mcpRemove" class="button secondary" type="button">Remove</button></div></section>
-    </section>
-    <section id="mcpCatalog" aria-labelledby="mcpCatalogTitle" hidden>
-      <h4 id="mcpCatalogTitle">Available integrations</h4>
-      <p class="mcp-description">From the official MCP Registry. Choose an integration to configure its endpoint and credentials. Availability is checked when you test the saved connection.</p>
-      <form id="mcpCatalogSearchForm" class="mcp-actions"><label for="mcpCatalogSearch">Search</label><input id="mcpCatalogSearch" class="text-input" type="search" maxlength="200" placeholder="Name or description"><button class="button secondary" type="submit">Search</button></form>
-      <p id="mcpCatalogNotice" role="status" aria-live="polite"></p>
-      <div id="mcpCatalogError" class="error-box" role="alert" hidden></div><button id="mcpCatalogRetry" class="button secondary" type="button" hidden>Retry catalog</button>
-      <div id="mcpCatalogServers"></div><button id="mcpCatalogNext" class="button secondary" type="button" disabled>Next page</button>
-    </section>
   </section>
   </section>
 </main>
+<dialog id="mcpCatalog" class="modal-dialog mcp-catalog-dialog" aria-labelledby="mcpCatalogTitle" hidden>
+  <div class="mcp-dialog-head"><div><h2 id="mcpCatalogTitle">Add integration</h2><p class="mcp-description">Choose an MCP from the official Registry.</p></div><button id="mcpCatalogClose" class="mcp-close" type="button" aria-label="Close catalog">×</button></div>
+  <form id="mcpCatalogSearchForm" class="mcp-search"><input id="mcpCatalogSearch" class="text-input" type="search" maxlength="200" placeholder="Search integrations…" aria-label="Search MCP integrations"><button class="mcp-search-submit" type="submit" aria-label="Search">⌕</button></form>
+  <p id="mcpCatalogNotice" role="status" aria-live="polite"></p>
+  <div id="mcpCatalogError" class="error-box" role="alert" hidden></div><button id="mcpCatalogRetry" class="link-button" type="button" hidden>Retry catalog</button>
+  <div id="mcpCatalogServers" class="mcp-catalog-list"></div>
+  <div class="mcp-dialog-footer"><button id="mcpCustom" class="link-button" type="button">Add custom MCP</button><button id="mcpCatalogNext" class="button secondary" type="button" disabled>Next page →</button></div>
+</dialog>
+<dialog id="mcpDetailsPanel" class="modal-dialog mcp-details-dialog" aria-labelledby="mcpDetailsTitle" hidden>
+  <div class="mcp-dialog-head"><h2 id="mcpDetailsTitle">Integration details</h2><button id="mcpDetailsClose" class="mcp-close" type="button" aria-label="Close integration details">×</button></div>
+  <p id="mcpDetailsNotice" role="status" aria-live="polite"></p><div id="mcpDetailsError" class="error-box" role="alert" hidden></div><button id="mcpDetailsRetry" class="link-button" type="button" hidden>Retry</button>
+  <div id="mcpDetails"></div>
+  <div class="mcp-dialog-footer"><div class="mcp-actions"><button id="mcpEdit" class="button" type="button">Edit</button><button id="mcpTest" class="button secondary" type="button">Test connection</button><button id="mcpToggle" class="button secondary" type="button">Enable</button></div><button id="mcpRemove" class="link-button mcp-remove" type="button">Remove</button></div>
+</dialog>
 <dialog id="mcpConnectionDialog" class="modal-dialog" aria-labelledby="mcpFormTitle">
   <div class="panel-head"><h2 id="mcpFormTitle">Custom MCP</h2><button id="mcpFormClose" class="button secondary" type="button">Close</button></div>
   <p id="mcpFormNotice" role="status" aria-live="polite"></p><div id="mcpFormError" class="error-box" role="alert" hidden></div>

@@ -15,10 +15,11 @@ export function renderMcpConnections(container,connections) {
   const document=container.ownerDocument;container.replaceChildren();
   if (!connections.length) { container.append(text(document,'p','No integrations connected'));return; }
   for (const connection of connections) {
-    const card=text(document,'article','', 'mcp-card');
-    const button=text(document,'button',connection.displayName,'button secondary');button.type='button';button.dataset.connectionId=connection.id;
-    card.append(button,text(document,'p',connection.endpoint),text(document,'p',connectionLabels(connection).join(' · ')));
-    container.append(card);
+    const button=text(document,'button','','mcp-connection-row');button.type='button';button.dataset.connectionId=connection.id;
+    const icon=text(document,'span',Array.from(connection.displayName)[0]?.toUpperCase()||'M','mcp-catalog-icon');icon.setAttribute('aria-hidden','true');
+    const name=text(document,'span',connection.displayName,'mcp-connection-name');
+    const status=text(document,'span',`${connection.enabled?'Enabled':'Disabled'}${connection.checkedAt?'':' · Not checked'}`,'mcp-connection-state');
+    const arrow=text(document,'span','›');arrow.setAttribute('aria-hidden','true');button.append(icon,name,status,arrow);container.append(button);
   }
 }
 export function renderMcpDetails(container,connection,tools,projects) {

@@ -1,6 +1,6 @@
 export class McpConnectionForm {
-  constructor({document,window,api,onConfirmed,onError=()=>{}}) {
-    this.document=document;this.window=window;this.api=api;this.onConfirmed=onConfirmed;this.onError=onError;
+  constructor({document,window,api,onConfirmed,onError=()=>{},onClose=()=>{}}) {
+    this.document=document;this.window=window;this.api=api;this.onConfirmed=onConfirmed;this.onError=onError;this.onClose=onClose;
     this.listeners=new window.AbortController();this.epoch=0;this.pending=false;this.saved=null;this.tools=[];this.projects=[];this.uncertainCreate=null;this.disposed=false;
     this.listen('mcpConnectionForm','submit',event=>{event.preventDefault();void this.saveAndTest();});
     this.listen('mcpFormClose','click',()=>this.close());
@@ -41,7 +41,7 @@ export class McpConnectionForm {
   }
   openEdit(connection,inventory,projects) { this.open(connection,inventory,projects); }
   open(connection,tools,projects) {
-    if(this.disposed) return;this.close();this.focusBefore=this.document.activeElement;this.active=true;this.saved=connection;this.tools=tools;this.projects=projects;
+    if(this.disposed) return;this.close(false);this.focusBefore=this.document.activeElement;this.active=true;this.saved=connection;this.tools=tools;this.projects=projects;
     this.element('mcpName').value=connection?.displayName||'';this.element('mcpEndpoint').value=connection?.endpoint||'';
     this.element('mcpAuthType').value=connection?.authType||'NONE';this.element('mcpCredentialChange').value='KEEP';
     this.element('mcpFormTitle').textContent=connection?'Edit Custom MCP':'Add Custom MCP';
@@ -51,14 +51,16 @@ export class McpConnectionForm {
     this.element('mcpAccess').hidden=!connection;this.renderAccess();this.credentials();this.controls();
     this.element('mcpConnectionDialog').showModal();this.element('mcpName').focus();
   }
-  close() {
+  close(notify=true) {
+    const wasActive=this.active;const saved=this.saved;
     this.active=false;this.epoch+=1;this.controller?.abort();this.pending=false;this.clearSecrets();
     this.element('mcpConnectionDialog').close();this.element('mcpConnectionForm').reset();
     this.element('mcpToolChoices').replaceChildren();this.element('mcpProjectChoices').replaceChildren();this.element('mcpRecoveredConnections').replaceChildren();
     this.saved=null;this.tools=[];this.projects=[];
     if(this.focusBefore?.isConnected) this.focusBefore.focus();
+    if(wasActive && notify) this.onClose(saved);
   }
-  dispose() { this.close();this.disposed=true;this.listeners.abort();this.uncertainCreate=null; }
+  dispose() { this.close(false);this.disposed=true;this.listeners.abort();this.uncertainCreate=null; }
   begin() {
     if(this.pending || !this.active || this.disposed) return null;
     this.pending=true;this.controller=new this.window.AbortController();this.element('mcpFormError').hidden=true;this.controls();
