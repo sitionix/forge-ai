@@ -56,8 +56,8 @@ try {
   const targets=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   socket=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);
   await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true});});
-  let sequence=0;const pending=new Map();
-  socket.addEventListener('message',event=>{const value=JSON.parse(event.data);if(value.id){const callback=pending.get(value.id);pending.delete(value.id);value.error?callback?.reject(new Error('Chrome command failed')):callback?.resolve(value.result);}});
+  let sequence=0;const pending=new Map();const networkFailures=[];
+  socket.addEventListener('message',event=>{const value=JSON.parse(event.data);if(value.method==='Network.loadingFailed' && /^net::ERR_[A-Z_]+$/.test(value.params.errorText))networkFailures.push(value.params.errorText);if(value.id){const callback=pending.get(value.id);pending.delete(value.id);value.error?callback?.reject(new Error('Chrome command failed')):callback?.resolve(value.result);}});
   const cdp=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{const result=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.text);return result.result.value;};
   const until=async expression=>{for(let n=0;n<100;n++){if(await evaluate(expression))return;await delay(50);}throw new Error('Browser condition timed out: '+expression);};
@@ -65,7 +65,7 @@ try {
   const fill=(id,value)=>evaluate(`{const el=document.getElementById(${JSON.stringify(id)});el.value=${JSON.stringify(value)};el.dispatchEvent(new Event('input',{bubbles:true}));}`);
   const base=external||`http://127.0.0.1:${server.address().port}/fgaisox`;
   const url=base+'/operator/settings.html';
-  await cdp('Page.enable');await cdp('Page.navigate',{url});
+  await cdp('Page.enable');await cdp('Network.enable');await cdp('Page.navigate',{url});
   await until(`document.getElementById('mcpManagement') && document.getElementById('mcpConnections').textContent.length>0 && document.getElementById('mcpNotice').textContent===''`);
   assert((await evaluate(`document.querySelector('.sidebar-settings').textContent`)).includes('Settings'));
   await cdp('Emulation.setDeviceMetricsOverride',{width:780,height:800,deviceScaleFactor:1,mobile:false});
@@ -96,7 +96,8 @@ try {
     if(action==='catalog-icons') {
       await fill('mcpCatalogSearch',process.env.FORGE_SETTINGS_CATALOG_SEARCH||'justidea');
       await evaluate(`document.getElementById('mcpCatalogSearchForm').requestSubmit()`);
-      await until(`document.querySelector('#mcpCatalogServers img')?.complete && document.querySelector('#mcpCatalogServers img').naturalWidth>0`);
+      try {await until(`document.querySelector('#mcpCatalogServers img')?.complete && document.querySelector('#mcpCatalogServers img').naturalWidth>0`);}
+      catch(error) {console.log('CATALOG_ICON_NETWORK_FAILURES '+JSON.stringify(networkFailures));throw error;}
       assert.equal(await evaluate(`document.querySelector('#mcpCatalogServers img').referrerPolicy`),'no-referrer');
     }
     assert.equal(await evaluate(`document.getElementById('mcpCatalog').hidden`),false);
