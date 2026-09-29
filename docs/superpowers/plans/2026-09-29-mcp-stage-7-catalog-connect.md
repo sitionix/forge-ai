@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Approved by user for inline implementation.
+
 **Goal:** Catalog row Connect starts provider sign-in without the Custom MCP form; Custom remains a separate flow.
 
 **Architecture:** Agent owns authentication discovery, issuer-bound client selection/registration and connection creation. Nexus uses its existing typed Agent client and scoped browser boundary. Console reuses the Stage 6 OAuth popup/result lifecycle without depending on the connection form.

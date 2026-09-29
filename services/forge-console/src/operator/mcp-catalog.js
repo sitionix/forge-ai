@@ -49,7 +49,7 @@ export class McpCatalog {
       const description=this.document.createElement('span');description.className='mcp-catalog-description';description.textContent=server.description||'';
       const status=this.document.createElement('span');status.className='mcp-catalog-status';status.setAttribute('role','status');
       const copy=this.document.createElement('span');copy.className='mcp-row-copy';copy.append(title,description,status);
-      const button=this.document.createElement('button');button.type='button';button.className='btn btn-secondary';button.textContent='Connect';button.setAttribute('aria-label',`Connect ${server.title||server.name}`);
+      const button=this.document.createElement('button');button.type='button';button.className='button secondary small';button.textContent='Connect';button.setAttribute('aria-label',`Connect ${server.title||server.name}`);
       button.addEventListener('click',()=>this.onSelect(server),{signal:this.listeners.signal});
       row.append(this.icon(server),copy,button);container.append(row);
     }

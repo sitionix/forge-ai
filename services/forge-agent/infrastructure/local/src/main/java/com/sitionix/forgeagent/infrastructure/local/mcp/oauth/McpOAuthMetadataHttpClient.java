@@ -36,19 +36,28 @@ final class McpOAuthMetadataHttpClient {
         return client(uri,deadline).get().uri(uri).accept(MediaType.APPLICATION_JSON,MediaType.TEXT_EVENT_STREAM)
                 .exchange((request,response)->{
                     try {return new Challenge(response.getStatusCode().value(),HttpHeaders.readOnlyHttpHeaders(response.getHeaders()));}
-                    finally {response.getBody().close();}
+                    finally {closeBody(response);}
                 });
     }
     <T> T metadata(URI uri,long deadline,Class<T> type) {
         return client(uri,deadline).get().uri(uri).accept(MediaType.APPLICATION_JSON)
                 .exchange((request,response)->{
                     try {if(response.getStatusCode().value()==404)return null;return decode(response,type,deadline);}
-                    finally{response.getBody().close();}
+                    finally{closeBody(response);}
                 });
     }
     <T> T register(URI uri,long deadline,Object body,Class<T> type) {
         return client(uri,deadline).post().uri(uri).contentType(MediaType.APPLICATION_JSON).accept(MediaType.APPLICATION_JSON)
-                .body(body).exchange((request,response)->{try{return decode(response,type,deadline);}finally{response.getBody().close();}});
+                .body(body).exchange((request,response)->{try{return decode(response,type,deadline);}finally{closeBody(response);}});
+    }
+    private static void closeBody(org.springframework.http.client.ClientHttpResponse response) throws IOException {
+        try {response.getBody().close();}
+        catch(IOException emptyErrorBody) {
+            // HttpURLConnection throws when these header-only responses have no error stream.
+            // Their status/headers are sufficient for discovery and standard 404 fallback.
+            int status=response.getStatusCode().value();
+            if(status!=401 && status!=404)throw emptyErrorBody;
+        }
     }
     private <T> T decode(org.springframework.http.client.ClientHttpResponse response,Class<T> type,long deadline) throws IOException {
         if(response.getStatusCode().is3xxRedirection())throw McpOAuthException.invalidResponse();

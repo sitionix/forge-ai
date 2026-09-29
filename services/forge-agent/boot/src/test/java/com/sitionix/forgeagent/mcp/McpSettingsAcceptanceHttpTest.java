@@ -66,7 +66,13 @@ class McpSettingsAcceptanceHttpTest {
         upstream=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         upstream.createContext("/mcp",exchange->{
             try {
-                if(!exchange.getRequestMethod().equals("POST")) {exchange.sendResponseHeaders(405,-1);return;}
+                if(!exchange.getRequestMethod().equals("POST")) {
+                    if(exchange.getRequestURI().getPath().equals("/mcp-oauth")) {
+                        provider.preparations.add("challenge");exchange.getResponseHeaders().set("WWW-Authenticate","Bearer resource_metadata=\"http://127.0.0.1:"+upstream.getAddress().getPort()+"/.well-known/oauth-protected-resource/mcp-oauth\", scope=\"tools\"");
+                        exchange.sendResponseHeaders(401,-1);
+                    } else exchange.sendResponseHeaders(200,-1);
+                    return;
+                }
                 if(exchange.getRequestURI().getPath().equals("/mcp-oauth") && !("Bearer "+McpOAuthProviderFixture.ACCESS).equals(exchange.getRequestHeaders().getFirst("Authorization")) && !("Bearer "+McpOAuthProviderFixture.ACCESS+"-rotated").equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
                     exchange.sendResponseHeaders(401,-1);return;
                 }
@@ -86,7 +92,9 @@ class McpSettingsAcceptanceHttpTest {
                 exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(200,response.length);exchange.getResponseBody().write(response);
             } finally {exchange.close();}
         });
-        upstream.createContext("/v0.1/servers",exchange->{byte[] body="{\"servers\":[]}".getBytes(StandardCharsets.UTF_8);
+        upstream.createContext("/v0.1/servers",exchange->{byte[] body=new ObjectMapper().writeValueAsBytes(Map.of("servers",List.of(Map.of("server",Map.of("name","fixture/oauth","title","Catalog OAuth","description","Disposable OAuth catalog fixture","version","1","remotes",List.of(Map.of("type","streamable-http","url",provider.resource)))))));
+            exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);exchange.close();});
+        upstream.createContext("/.well-known/oauth-protected-resource/mcp-oauth",exchange->{provider.preparations.add("resource-metadata");byte[] body=new ObjectMapper().writeValueAsBytes(Map.of("resource",provider.resource,"authorization_servers",List.of(provider.issuer())));
             exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);exchange.close();});
         upstream.start();
         try(var socket=new ServerSocket(0,1,InetAddress.getLoopbackAddress())){nexusPort=socket.getLocalPort();}
@@ -255,6 +263,20 @@ class McpSettingsAcceptanceHttpTest {
         for(String secret:provider.sensitive)assertThat(logs).doesNotContain(secret);
         assertThat(logs).doesNotContain(McpOAuthProviderFixture.ACCESS,McpOAuthProviderFixture.REFRESH,McpOAuthProviderFixture.SECRET);
         System.out.println("STAGE6_JOINED_OAUTH_GATEWAY_PASS");
+        try {assertThat(browser(root,origin,"catalog-oauth",null,projectId)).contains("CATALOG_OAUTH_ACTUAL_NEXUS_PASS");}
+        catch(AssertionError failed){throw new AssertionError("Catalog preparation phases: "+provider.preparations,failed);}
+        var catalogConnections=connections.list().stream().filter(c->c.displayName().equals("Catalog OAuth")).toList();
+        assertThat(catalogConnections).hasSize(2);
+        assertThat(catalogConnections.get(0).oauthAuthorizationId()).isNotEqualTo(catalogConnections.get(1).oauthAuthorizationId());
+        for(var saved:catalogConnections){
+            assertThat(saved.enabled()).isFalse();assertThat(saved.credentialConfigured()).isTrue();assertThat(saved.allowedTools()).isEmpty();assertThat(saved.projectAccess().projectIds()).isEmpty();
+            assertThatThrownBy(()->runtime.issue(claim,Instant.now().plusSeconds(180),saved.id())).isInstanceOf(McpGatewayAccessException.class);
+        }
+        assertThat(toolCalls).isEqualTo(before+2);
+        String catalogLogs=output.getAll()+Files.readString(directory.resolve("nexus.log"));
+        assertThat(catalogLogs).doesNotContain(McpOAuthProviderFixture.ACCESS,McpOAuthProviderFixture.REFRESH,McpOAuthProviderFixture.SECRET);
+        for(String secret:provider.sensitive)assertThat(catalogLogs).doesNotContain(secret);
+        System.out.println("STAGE7_JOINED_CATALOG_CONNECT_PASS");
         } finally {stop(restarted);}
     }
     private AgentSessionExecutionClaim trustedLease(UUID projectId,Instant now) {
@@ -296,8 +318,8 @@ class McpSettingsAcceptanceHttpTest {
     private String browser(Path root,String origin,String action,UUID id,UUID projectId) throws Exception {
         var builder=new ProcessBuilder("node",root.resolve("services/forge-console/scripts/mcp-settings-browser-smoke.mjs").toString());
         builder.environment().put("FORGE_SETTINGS_BASE_URL",origin+"/fgaisox");
-        builder.environment().put("FORGE_SETTINGS_MCP_ENDPOINT","http://127.0.0.1:"+upstream.getAddress().getPort()+(action.startsWith("oauth")?"/mcp-oauth":"/mcp"));
-        if(action.startsWith("oauth"))builder.environment().put("FORGE_SETTINGS_OAUTH_ISSUER",provider.issuer());
+        builder.environment().put("FORGE_SETTINGS_MCP_ENDPOINT","http://127.0.0.1:"+upstream.getAddress().getPort()+(action.contains("oauth")?"/mcp-oauth":"/mcp"));
+        if(action.contains("oauth"))builder.environment().put("FORGE_SETTINGS_OAUTH_ISSUER",provider.issuer());
         builder.environment().put("FORGE_SETTINGS_ACTION",action);if(id!=null)builder.environment().put("FORGE_SETTINGS_CONNECTION_ID",id.toString());
         if(projectId!=null) {
             builder.environment().put("FORGE_SETTINGS_PROJECT_ID",projectId.toString());

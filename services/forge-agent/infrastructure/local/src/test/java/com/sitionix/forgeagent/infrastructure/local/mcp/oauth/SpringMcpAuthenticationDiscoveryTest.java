@@ -35,8 +35,8 @@ class SpringMcpAuthenticationDiscoveryTest {
             reply.headers().forEach((key,value)->exchange.getResponseHeaders().set(key,value));
             byte[] bytes=reply.body().getBytes(StandardCharsets.UTF_8);
             try {
-                exchange.sendResponseHeaders(reply.status(),reply.headers().containsKey("X-Open")?0:bytes.length);
-                exchange.getResponseBody().write(bytes);exchange.getResponseBody().flush();
+                exchange.sendResponseHeaders(reply.status(),reply.headers().containsKey("X-Empty")?-1:reply.headers().containsKey("X-Open")?0:bytes.length);
+                if(!reply.headers().containsKey("X-Empty")){exchange.getResponseBody().write(bytes);exchange.getResponseBody().flush();}
                 if(reply.headers().containsKey("X-Open"))release.await(5,TimeUnit.SECONDS);
             } catch(InterruptedException failure){Thread.currentThread().interrupt();}finally{exchange.close();}
         });server.start();base=URI.create("http://127.0.0.1:"+server.getAddress().getPort());endpoint=base.resolve("/mcp");
@@ -56,6 +56,16 @@ class SpringMcpAuthenticationDiscoveryTest {
         assertThat(metadata.oauthRequired()).isTrue();assertThat(metadata.issuer()).isEqualTo(base);
         assertThat(metadata.scopes()).containsExactly("read");assertThat(metadata.codeChallengeMethods()).contains("S256");
         assertThat(paths).containsExactly("/mcp","/resource","/.well-known/oauth-authorization-server");assertThat(credentials).isEmpty();
+    }
+    @Test void empty401BodyPreservesBearerChallengeAndDiscoversMetadata(){
+        protectedMetadata();replies.put("/mcp",new Reply(401,"",Map.of("X-Empty","true","WWW-Authenticate","Bearer resource_metadata=\""+base+"/resource\"")));
+        assertThat(discover().oauthRequired()).isTrue();assertThat(paths).contains("/resource");
+    }
+    @Test void empty404MetadataResponseStillUsesTheStandardRootFallback(){
+        protectedMetadata();challenge("Bearer");
+        replies.put("/.well-known/oauth-protected-resource/mcp",new Reply(404,"",Map.of("X-Empty","true")));
+        replies.put("/.well-known/oauth-protected-resource",replies.get("/resource"));
+        assertThat(discover().oauthRequired()).isTrue();
     }
     @Test void standardPathAndRootFallbackUseOnlyNotFoundResponses(){
         protectedMetadata();challenge("Bearer");

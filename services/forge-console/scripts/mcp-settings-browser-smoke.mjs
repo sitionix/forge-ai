@@ -57,11 +57,11 @@ try {
   const targets=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   socket=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);
   await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true});});
-  let sequence=0;const pending=new Map();const networkFailures=[];let catalogReads=0;
-  socket.addEventListener('message',event=>{const value=JSON.parse(event.data);if(value.method==='Network.requestWillBeSent' && new URL(value.params.request.url).pathname===available)catalogReads++;if(value.method==='Network.loadingFailed' && /^net::ERR_[A-Z_]+$/.test(value.params.errorText))networkFailures.push(value.params.errorText);if(value.id){const callback=pending.get(value.id);pending.delete(value.id);value.error?callback?.reject(new Error('Chrome command failed')):callback?.resolve(value.result);}});
+  let sequence=0;const pending=new Map();const networkFailures=[];let catalogReads=0;const connectStatuses=[];
+  socket.addEventListener('message',event=>{const value=JSON.parse(event.data);if(value.method==='Network.responseReceived' && new URL(value.params.response.url).pathname===api+'/infrastructure/agents/integrations/mcp/connect')connectStatuses.push(value.params.response.status);if(value.method==='Network.requestWillBeSent' && new URL(value.params.request.url).pathname===available)catalogReads++;if(value.method==='Network.loadingFailed' && /^net::ERR_[A-Z_]+$/.test(value.params.errorText))networkFailures.push(value.params.errorText);if(value.id){const callback=pending.get(value.id);pending.delete(value.id);value.error?callback?.reject(new Error('Chrome command failed')):callback?.resolve(value.result);}});
   const cdp=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});
   const evaluate=async (expression,userGesture=false)=>{const result=await cdp('Runtime.evaluate',{expression,userGesture,awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.text);return result.result.value;};
-  const until=async (expression,budgetMs=5000)=>{const deadline=Date.now()+budgetMs;while(Date.now()<deadline){if(await evaluate(expression))return;await delay(50);}throw new Error('Browser condition timed out: '+expression);};
+  const until=async (expression,budgetMs=5000)=>{const deadline=Date.now()+budgetMs;while(Date.now()<deadline){if(await evaluate(expression))return;await delay(50);}throw new Error('Browser condition timed out: '+expression+'; safe UI errors: '+await evaluate(`['mcpError','mcpDetailsError','mcpFormError'].map(id=>document.getElementById(id)?.textContent||'').join('; ')`));};
   const click=id=>evaluate(`document.getElementById(${JSON.stringify(id)}).click()`,true);
   const fill=(id,value)=>evaluate(`{const el=document.getElementById(${JSON.stringify(id)});el.value=${JSON.stringify(value)};el.dispatchEvent(new Event('input',{bubbles:true}));}`);
   const base=external||`http://127.0.0.1:${server.address().port}/fgaisox`;
@@ -132,13 +132,8 @@ try {
     assert.equal(await evaluate(`document.getElementById('mcpCatalog').getBoundingClientRect().right<=innerWidth && document.getElementById('mcpCatalog').getBoundingClientRect().left>=0`),true,'Catalog must fit a narrow viewport');
     assert.equal(await evaluate(`document.getElementById('mcpCatalog').scrollWidth<=document.getElementById('mcpCatalog').clientWidth`),true,'Catalog must not overflow horizontally');
     await cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});
-    const descriptor=await evaluate(`window.__forgeMountedOperatorPage.api.available({search:document.getElementById('mcpCatalogSearch').value}).then(page=>page.servers[0])`);
-    await evaluate(`{const row=document.querySelector('#mcpCatalogServers button');row.focus();row.click();}`);
-    await until(`document.getElementById('mcpConnectionDialog').open`);
-    assert.equal(await evaluate(`document.querySelectorAll('dialog[open]').length`),1);
-    assert.equal(await evaluate(`document.getElementById('mcpName').value`),descriptor.title||descriptor.name);
-    assert.equal(await evaluate(`document.getElementById('mcpEndpoint').value`),descriptor.endpoint);
-    await click('mcpFormClose');assert.equal(await evaluate(`document.getElementById('mcpCatalog').open`),true);
+    assert.equal(await evaluate(`document.querySelector('#mcpCatalogServers button').textContent`),'Connect');
+    assert.equal(await evaluate(`document.getElementById('mcpConnectionDialog').open`),false,'Catalog does not open Custom setup');
     await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await until(`!document.getElementById('mcpCatalog').open`);
@@ -147,6 +142,37 @@ try {
     assert.deepEqual(after,before,'Catalog selection must not mutate saved connections');
     if(external) assert.equal(await evaluate(`location.port`),'9099');
     console.log(external?(action==='catalog-icons'?'NORMAL_SETTINGS_CATALOG_ICONS_BROWSER_PASS':'NORMAL_SETTINGS_CATALOG_BROWSER_PASS'):'SETTINGS_CATALOG_BROWSER_STUB_PASS');
+  } else if(action==='catalog-oauth') {
+    assert(external,'Catalog OAuth requires actual Nexus/Agent, not a stub');
+    const issuer=process.env.FORGE_SETTINGS_OAUTH_ISSUER;
+    const before=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
+    for(let attempt=0;attempt<2;attempt++) {
+      await click('mcpAdd');await until(`document.querySelector('#mcpCatalogServers button')`,15000);
+      await evaluate(`document.querySelector('#mcpCatalogServers button').click()`,true);
+      let target;for(let n=0;n<100;n++){const pages=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();target=pages.find(t=>t.type==='page' && t.url.startsWith(issuer+'/authorize'));if(target)break;await delay(50);}
+      assert(target,'Catalog Connect status '+JSON.stringify(connectStatuses)+'; provider did not open: '+await evaluate(`document.getElementById('mcpCatalogServers').textContent`));
+      assert.equal(await evaluate(`document.getElementById('mcpConnectionDialog').open`),false);
+      assert.equal(await evaluate(`document.querySelector('.operator-sidebar').getBoundingClientRect().width>0`),true);
+      const provider=new WebSocket(target.webSocketDebuggerUrl);
+      await new Promise((resolve,reject)=>{provider.addEventListener('open',resolve,{once:true});provider.addEventListener('error',reject,{once:true});});
+      let sequence=0;const pending=new Map();provider.addEventListener('message',event=>{const response=JSON.parse(event.data);if(response.id){const resolve=pending.get(response.id);pending.delete(response.id);resolve(response.result);}});
+      const consent=expression=>new Promise(resolve=>{const id=++sequence;pending.set(id,resolve);provider.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,userGesture:true,returnByValue:true}}));});
+      try {
+        const opener=await consent('window.opener===null');assert.equal(opener.result.value,true);
+        await consent(`document.getElementById('approve').click()`);
+        await until(`document.querySelector('.mcp-catalog-status').textContent.startsWith('Connected.')`,15000);
+      } finally {provider.close();}
+      assert.equal(await evaluate(`document.getElementById('mcpConnectionDialog').open`),false);
+      const saved=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
+      const created=saved.filter(connection=>!before.some(old=>old.id===connection.id));assert.equal(created.length,attempt+1);
+      for(const connection of created){assert.equal(connection.enabled,false);assert.equal(connection.credentialConfigured,true);assert.deepEqual(connection.allowedTools,[]);assert.deepEqual(connection.projectAccess,{scope:'SELECTED',projectIds:[]});}
+      assert.equal(await evaluate(`localStorage.length+sessionStorage.length`),0);
+      const cookies=await cdp('Network.getCookies',{urls:[base+'/api/v1/infrastructure/agents/integrations/mcp/oauth/callback']});assert.equal(cookies.cookies.some(cookie=>cookie.name.startsWith('ForgeMcpOAuth-')),false);
+      await click('mcpCatalogClose');
+      if(attempt===0) {await cdp('Page.reload');await until(`document.getElementById('mcpNotice').textContent==='' && !!document.querySelector('[data-connection-id]')`);}
+    }
+    assert.equal(await evaluate(`document.body.textContent.includes('oauth-access-canary') || document.body.textContent.includes('registered-client-secret-canary')`),false);
+    console.log('CATALOG_OAUTH_ACTUAL_NEXUS_PASS');
   } else if(action==='oauth' || action==='oauth-reconnect') {
     assert(external,'OAuth acceptance requires actual Nexus/Agent, not the management stub');
     const issuer=process.env.FORGE_SETTINGS_OAUTH_ISSUER;

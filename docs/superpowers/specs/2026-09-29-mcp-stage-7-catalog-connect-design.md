@@ -1,6 +1,6 @@
 # MCP Stage 7 — Connect із каталогу без Custom форми
 
-Статус: DRAFT для review. Production implementation ще не змінено.
+Статус: погоджено користувачем; inline implementation за погодженим планом. Фактичні перевірки — stage-7-evidence.md.
 
 ## Вимога користувача
 

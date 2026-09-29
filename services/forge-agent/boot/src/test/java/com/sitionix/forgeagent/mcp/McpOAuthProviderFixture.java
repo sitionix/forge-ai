@@ -7,25 +7,37 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
 
-/** Disposable pre-registered AS, never live provider compatibility evidence. */
+/** Disposable discoverable/DCR and pre-registered AS, never live provider compatibility evidence. */
 final class McpOAuthProviderFixture implements AutoCloseable {
     static final String CLIENT="forge-fixture",SECRET="registered-client-secret-canary",ACCESS="oauth-access-canary",REFRESH="oauth-refresh-canary";
     final HttpServer server;
     final String callback,resource;
+    final List<String> preparations=Collections.synchronizedList(new ArrayList<>());
     final List<String> operations=Collections.synchronizedList(new ArrayList<>());
     final List<String> sensitive=Collections.synchronizedList(new ArrayList<>());
+    private final Set<String> clients=new HashSet<>(Set.of(CLIENT));
     private final Map<String,String> challenges=new HashMap<>();
     private final ObjectMapper json=new ObjectMapper();
     McpOAuthProviderFixture(String callback,String resource) throws Exception {
         this.callback=callback;this.resource=resource;server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         server.createContext("/authorize",this::authorize);server.createContext("/consent",this::consent);
         server.createContext("/token",this::token);server.createContext("/revoke",exchange->{operations.add("revoke");exchange.sendResponseHeaders(200,-1);exchange.close();});
+        server.createContext("/.well-known/oauth-authorization-server",exchange->{preparations.add("authorization-metadata");reply(exchange,200,Map.of(
+                "issuer",issuer(),"authorization_endpoint",issuer()+"/authorize","token_endpoint",issuer()+"/token","revocation_endpoint",issuer()+"/revoke",
+                "registration_endpoint",issuer()+"/register","response_types_supported",List.of("code"),"code_challenge_methods_supported",List.of("S256"),"token_endpoint_auth_methods_supported",List.of("client_secret_post")));});
+        server.createContext("/register",exchange->{
+            preparations.add("registration-request");var request=json.readTree(exchange.getRequestBody());
+            if(!request.path("redirect_uris").get(0).asText().equals(callback) || !"native".equals(request.path("application_type").asText())
+                    || !"client_secret_post".equals(request.path("token_endpoint_auth_method").asText())) {reply(exchange,400,Map.of("error","invalid_client_metadata"));return;}
+            String client=CLIENT+"-"+UUID.randomUUID();clients.add(client);operations.add("register");preparations.add("registration-accepted");
+            reply(exchange,201,Map.of("client_id",client,"client_secret",SECRET,"token_endpoint_auth_method","client_secret_post","redirect_uris",List.of(callback),"client_secret_expires_at",0));
+        });
         server.start();
     }
     String issuer(){return "http://localhost:"+server.getAddress().getPort();}
     private void authorize(HttpExchange exchange) throws java.io.IOException {
         var p=parameters(exchange.getRequestURI().getRawQuery());
-        if(!CLIENT.equals(p.get("client_id")) || !callback.equals(p.get("redirect_uri")) || !resource.equals(p.get("resource"))
+        if(!clients.contains(p.get("client_id")) || !callback.equals(p.get("redirect_uri")) || !resource.equals(p.get("resource"))
                 || !"S256".equals(p.get("code_challenge_method"))) {reply(exchange,400,Map.of("error","invalid_request"));return;}
         sensitive.add(p.get("state"));
         String hidden=p.entrySet().stream().map(e->"<input type='hidden' name='"+e.getKey()+"' value='"+escape(e.getValue())+"'>").reduce("",String::concat);
@@ -44,7 +56,7 @@ final class McpOAuthProviderFixture implements AutoCloseable {
     }
     private void token(HttpExchange exchange) throws java.io.IOException {
         var p=parameters(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8));
-        if(!CLIENT.equals(p.get("client_id")) || !SECRET.equals(p.get("client_secret")) || !resource.equals(p.get("resource"))) {
+        if(!clients.contains(p.get("client_id")) || !SECRET.equals(p.get("client_secret")) || !resource.equals(p.get("resource"))) {
             reply(exchange,400,Map.of("error","invalid_client","error_description","provider-error-canary"));return;
         }
         boolean refresh="refresh_token".equals(p.get("grant_type"));
