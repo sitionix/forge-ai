@@ -95,12 +95,14 @@ Form close returns to the same catalog without another page request, or to autho
 | TDD | PASS | Four initial layout regressions failed before implementation. A pending authoritative-save regression then reproduced incorrect catalog restoration. Final review reproduced delayed `/projects` reopening the form after catalog close; its new regression failed before the dedicated `add` cancellation fix, then passed. |
 | FOCUSED_CONSOLE | PASS | Compact Settings, Catalog, Settings and connection-form suites: 41 tests / 4 files. Fresh read-only reviewer independently repeated all 41. |
 | CONSOLE_TESTS | PASS | Final full Console run: 641 tests / 30 files, zero failures. |
-| TYPECHECK_BUILD | PASS | Console typecheck and production build exited 0. |
+| TYPECHECK_BUILD | PASS | Standalone Console typecheck and production build exited 0 after fixing a new test reading undeclared private `pending`. The initial sequential local command masked that nonzero typecheck exit; fresh CI exposed it. Final full Console run was repeated: 641/641 passed. |
 | BUILT_BROWSER_STUB | PASS | Real Chrome/built assets: compact Catalog, selection/cancel, native Escape/focus, 375px fit, and existing Custom create/test/disabled permissions/explicit Enable/credential replacement passed. Management backend is an explicit stub, not a runtime or provider proof. |
 | FINAL_REVIEW | PASS | Fresh read-only review accepted after the demonstrated late-project-read fix; no remaining blockers reported. |
-| NORMAL_RUNTIME_FINAL | NOT_VERIFIED | Final standard startup and actual-main browser checks are pending; preceding actual-main empty/Catalog run used the initial compact build, before final read-cancellation/CSS changes. |
-| CI | NOT_VERIFIED | Prior green Catalog/icon builds do not verify this new UI change. |
+| NORMAL_RUNTIME_FINAL | PASS | Final `just start` exited 0. Actual served JS/CSS contain final cancellation/layout fixes. Main Agent :7091 and Nexus :9099 health are UP; knowledge/Jarvis/Postgres active, dedicated Remote Access inactive. Real Chrome empty state, Catalog, 375px fit and actual Registry PNG passed without saved connection changes. |
+| CI | FAIL | First follow-up build 36539656001 exposed the test-only typecheck issue above; corrected follow-up verification is pending. Prior green Catalog/icon builds do not verify this new UI change. |
 | LIVE_PROVIDER | NOT_VERIFIED | This follow-up does not initialize or call advertised MCP endpoints. |
 | JOINED_RUNTIME | NOT_VERIFIED | Stage 3/4 grant revocation and policy acceptance are not rerun for this frontend layout change. |
 
 No PR metadata/comments/reviews or merge operations. Full local backend reactors are not rerun for this frontend-only follow-up; previous evidence above remains historical rather than a fresh result.
+
+Browser harness correction: a programmatic catalog row click originally left focus in a nonempty search input. Native Escape cleared that input instead of dismissing the dialog. The harness now focuses the selected row, matching real keyboard/pointer selection; actual icon/search/cancel/Escape passed. One earlier initial page wait also timed out; exact cause is NOT_VERIFIED. These failed attempts are not counted as successful runs.

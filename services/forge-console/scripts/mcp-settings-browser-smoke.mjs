@@ -115,7 +115,7 @@ try {
     assert.equal(await evaluate(`document.getElementById('mcpCatalog').scrollWidth<=document.getElementById('mcpCatalog').clientWidth`),true,'Catalog must not overflow horizontally');
     await cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});
     const descriptor=await evaluate(`window.__forgeMountedOperatorPage.api.available({search:document.getElementById('mcpCatalogSearch').value}).then(page=>page.servers[0])`);
-    await evaluate(`document.querySelector('#mcpCatalogServers button').click()`);
+    await evaluate(`{const row=document.querySelector('#mcpCatalogServers button');row.focus();row.click();}`);
     await until(`document.getElementById('mcpConnectionDialog').open`);
     assert.equal(await evaluate(`document.querySelectorAll('dialog[open]').length`),1);
     assert.equal(await evaluate(`document.getElementById('mcpName').value`),descriptor.title||descriptor.name);

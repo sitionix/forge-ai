@@ -55,7 +55,8 @@ describe('Compact MCP Settings flow',()=>{
   let finish!:(response:Response)=>void;let signal!:AbortSignal;
   fetcher.mockImplementation(async(_url:string,init:RequestInit)=>{signal=init.signal!;return new Promise(resolve=>{finish=resolve;});});
   (element('mcpCatalogServers').querySelector('button') as HTMLButtonElement).click();await vi.waitFor(()=>expect(finish).toBeDefined());
-  click('mcpCatalogClose');finish(Response.json([]));await vi.waitFor(()=>expect(page.pending).toBe(false));
+  click('mcpCatalogClose');expect(signal.aborted).toBe(true);finish(Response.json([]));
+  await fetcher.mock.results.at(-1)!.value;await Promise.resolve();await Promise.resolve();
   expect(dialog('mcpConnectionDialog').open).toBe(false);expect(dialog('mcpCatalog').open).toBe(false);expect(signal.aborted).toBe(true);page.dispose();
  });
  it('returns a saved connection to details while authoritative reads are still pending',async()=>{
