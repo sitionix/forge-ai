@@ -70,9 +70,11 @@ Console renders a decorative native image at 48×48, using lazy loading and `no-
 | FULL_AGENT_VERIFY | PASS | Fresh local reactor verify: 1,408 declared tests, zero failures/errors, 10 skips. |
 | FULL_NEXUS_VERIFY | PASS | Fresh local reactor verify: 353 tests, zero failures/errors/skips, including 70 ForgeIT. |
 | REAL_ICON_BROWSER | PASS | Normal `just start` exit 0; all main services healthy. Two fresh Chrome runs against actual :9099 loaded a real Registry PNG (`complete` and `naturalWidth > 0`), retained no-referrer, sidebar/Projects and unchanged saved inventory. Actual empty-state browser regression also passed. |
-| CI | NOT_VERIFIED | The original slice CI above does not certify this follow-up. |
+| CI | PASS | [Fresh Build 36536485418](https://github.com/sitionix/forge-ai/actions/runs/36536485418) for implementation `21dbba3946c6e7f41757f75cc918cf1cd431f776`: all five jobs succeeded. Subsequent commits contain browser diagnostics/evidence only, with no production-code changes. |
 
 Local Agent skips: CodexManagedRecoveryLifecycleTest (1), McpGatewaySdkHttpTest (1), McpGatewayRuntimeFilterTest (1), RemoteAccessManagementHttpIT (1), ForgeAgentPortAwareExecutionIT (6). Those native/opt-in scenarios are not certified by full verify.
+
+Fresh follow-up Agent CI: 1,409 declared tests, zero failures/errors, 11 skips. CI skips were CodexRecoveryLifecycleTest (1), CodexMcpInventoryVerifierTest (1), McpGatewayRuntimeFilterTest (1), AgentMcpProtectedConfigurationTest (1), ForgeAgentProjectAssetIT (1), ForgeAgentPortAwareExecutionIT (6). These are fresh log observations, not inferred from the original slice CI.
 
 The first real image-load attempt exceeded the existing five-second browser condition bound. Added CDP diagnostics retain only safe `net::ERR_*` labels, no URLs/headers/body. Two subsequent fresh-profile runs passed without any production-code change or relaxed TLS/network policy. The exact cause of the first timeout is NOT_VERIFIED; it is not counted as a successful run. This acceptance fetched the advertised static icon, not the MCP endpoint, and did not execute a handshake/tool call or create a connection.
 
