@@ -99,10 +99,35 @@ Form close returns to the same catalog without another page request, or to autho
 | BUILT_BROWSER_STUB | PASS | Real Chrome/built assets: compact Catalog, selection/cancel, native Escape/focus, 375px fit, and existing Custom create/test/disabled permissions/explicit Enable/credential replacement passed. Management backend is an explicit stub, not a runtime or provider proof. |
 | FINAL_REVIEW | PASS | Fresh read-only review accepted after the demonstrated late-project-read fix; no remaining blockers reported. |
 | NORMAL_RUNTIME_FINAL | PASS | Final `just start` exited 0. Actual served JS/CSS contain final cancellation/layout fixes. Main Agent :7091 and Nexus :9099 health are UP; knowledge/Jarvis/Postgres active, dedicated Remote Access inactive. Real Chrome empty state, Catalog, 375px fit and actual Registry PNG passed without saved connection changes. |
-| CI | FAIL | First follow-up build 36539656001 exposed the test-only typecheck issue above; corrected follow-up verification is pending. Prior green Catalog/icon builds do not verify this new UI change. |
+| CI | PASS | [Build 36539832753](https://github.com/sitionix/forge-ai/actions/runs/36539832753) for `8187208f27f2cb2d22441b7f6e6fb6c40a14afd9`: all five service jobs succeeded. Console: 641 tests, typecheck/build. First follow-up Build 36539656001 failed Console on the test-only typecheck issue above; it remains a failed historical attempt. |
+| FULL_AGENT_VERIFY | PASS | Fresh CI reactor: 1,409 declared tests, zero failures/errors, 11 skips. |
+| FULL_NEXUS_VERIFY | PASS | Fresh CI reactor: 353 tests, zero failures/errors/skips, including 70 ForgeIT. |
 | LIVE_PROVIDER | NOT_VERIFIED | This follow-up does not initialize or call advertised MCP endpoints. |
 | JOINED_RUNTIME | NOT_VERIFIED | Stage 3/4 grant revocation and policy acceptance are not rerun for this frontend layout change. |
 
 No PR metadata/comments/reviews or merge operations. Full local backend reactors are not rerun for this frontend-only follow-up; previous evidence above remains historical rather than a fresh result.
 
 Browser harness correction: a programmatic catalog row click originally left focus in a nonempty search input. Native Escape cleared that input instead of dismissing the dialog. The harness now focuses the selected row, matching real keyboard/pointer selection; actual icon/search/cancel/Escape passed. One earlier initial page wait also timed out; exact cause is NOT_VERIFIED. These failed attempts are not counted as successful runs.
+
+Compact UI verification commands:
+
+```sh
+npm --prefix services/forge-console test -- tests/mcp-compact-settings.test.ts tests/mcp-catalog.test.ts tests/settings-page.test.ts tests/mcp-connection-form.test.ts
+npm --prefix services/forge-console run typecheck
+npm --prefix services/forge-console test
+npm --prefix services/forge-console run build
+FORGE_SETTINGS_ACTION=catalog node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
+node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
+just start
+just status
+curl -fsS http://127.0.0.1:7091/actuator/health
+curl -fsS http://127.0.0.1:9099/fgaisox/actuator/health
+FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=empty node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
+FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=catalog node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
+FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=catalog-icons node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
+git diff --check
+```
+
+Actual-main served `settings-page.js` and `operator-ui.css` SHA-256 matched the committed production source. Browser acceptance preserves saved inventory byte-equivalent as parsed JSON; Catalog selection reads metadata/projects only, and does not save, test, approve or enable.
+
+Compact follow-up Agent CI skips: CodexRecoveryLifecycleTest (1), CodexMcpInventoryVerifierTest (1), McpGatewayRuntimeFilterTest (1), AgentMcpProtectedConfigurationTest (1), ForgeAgentProjectAssetIT (1), ForgeAgentPortAwareExecutionIT (6). These skipped scenarios and LIVE_PROVIDER/JOINED_RUNTIME are not certified by the green CI. Subsequent evidence-only commit does not change verified production code.
