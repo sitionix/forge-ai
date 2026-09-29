@@ -60,7 +60,7 @@ try {
   socket.addEventListener('message',event=>{const value=JSON.parse(event.data);if(value.method==='Network.loadingFailed' && /^net::ERR_[A-Z_]+$/.test(value.params.errorText))networkFailures.push(value.params.errorText);if(value.id){const callback=pending.get(value.id);pending.delete(value.id);value.error?callback?.reject(new Error('Chrome command failed')):callback?.resolve(value.result);}});
   const cdp=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{const result=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.text);return result.result.value;};
-  const until=async expression=>{for(let n=0;n<100;n++){if(await evaluate(expression))return;await delay(50);}throw new Error('Browser condition timed out: '+expression);};
+  const until=async (expression,budgetMs=5000)=>{const deadline=Date.now()+budgetMs;while(Date.now()<deadline){if(await evaluate(expression))return;await delay(50);}throw new Error('Browser condition timed out: '+expression);};
   const click=id=>evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);
   const fill=(id,value)=>evaluate(`{const el=document.getElementById(${JSON.stringify(id)});el.value=${JSON.stringify(value)};el.dispatchEvent(new Event('input',{bubbles:true}));}`);
   const base=external||`http://127.0.0.1:${server.address().port}/fgaisox`;
@@ -92,10 +92,11 @@ try {
     console.log('NORMAL_SETTINGS_EMPTY_BROWSER_PASS');
   } else if(action==='catalog' || action==='catalog-icons') {
     const before=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
-    await click('mcpAdd');await until(`document.querySelector('#mcpCatalogServers button') && !document.getElementById('mcpCatalogNotice').textContent.includes('Loading')`);
+    await click('mcpAdd');await until(`document.querySelector('#mcpCatalogServers button') && !document.getElementById('mcpCatalogNotice').textContent.includes('Loading')`,30000);
     if(action==='catalog-icons') {
       await fill('mcpCatalogSearch',process.env.FORGE_SETTINGS_CATALOG_SEARCH||'justidea');
       await evaluate(`document.getElementById('mcpCatalogSearchForm').requestSubmit()`);
+      await until(`!document.getElementById('mcpCatalogNotice').textContent.includes('Loading')`,30000);
       try {await until(`document.querySelector('#mcpCatalogServers img')?.complete && document.querySelector('#mcpCatalogServers img').naturalWidth>0`);}
       catch(error) {console.log('CATALOG_ICON_NETWORK_FAILURES '+JSON.stringify(networkFailures));throw error;}
       assert.equal(await evaluate(`document.querySelector('#mcpCatalogServers img').referrerPolicy`),'no-referrer');
