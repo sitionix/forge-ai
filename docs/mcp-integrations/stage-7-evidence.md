@@ -134,12 +134,21 @@ No extra review cycle or unrelated refactoring was introduced.
 | Agent local/Nexus agent-client dependency analysis | PASS | Both BUILD SUCCESS; no new POM/dependency additions. Existing/transitive declaration warnings remain (below). |
 | `git diff --check` | PASS | Exit0. |
 | Pre-restart Settings asset on old running process | FAIL | Two read-only requests timed out after5s; health and connection list responded200 (list empty). This is not acceptance of the new build; restart is pending. |
-| Normal local `just start` | NOT_VERIFIED | Normal restart requires local interactive sudo. First terminal authentication exited1; a new terminal was opened. No test-only enable switch or unprivileged replacement startup. |
-| Normal :9099 Settings/catalog browser | NOT_VERIFIED | New-version read-only smoke depends on normal restart. User's existing saved GitHub connection is preserved. |
+| Normal local `just start` | PASS | Interactive terminal authenticated successfully; normal just start exit0. Main knowledge/jarvis/Agent/Nexus/Postgres active; dedicated Remote Access units inactive. No test-only switch or replacement startup. |
+| Normal :9099 Settings/catalog browser | PASS | Real Chrome, actual built assets and main Nexus: NORMAL_SETTINGS_EMPTY_BROWSER_PASS and NORMAL_SETTINGS_CATALOG_BROWSER_PASS. Global sidebar/Projects/active Settings, empty result, Add action, compact desktop/mobile catalog, one Connect, no Custom dialog. No HTTP stub or connection mutation. |
 | Fresh exact-SHA CI | NOT_VERIFIED | Pending post-commit feature-branch workflow at evidence write time; final report will state observed exact-SHA CI status. Earlier298f9bda run36569717386 succeeded but does not verify this fix. No PR mutation. |
 | LIVE_PROVIDER (GitHub OAuth) | NOT_VERIFIED | Registered Forge-owned App/callback/protected installation credentials were not supplied. |
 | Public CIMD deployment | NOT_VERIFIED | Controlled local TLS fixture verifies contract; no provider-accessible production HTTPS publication. |
 | Fresh privileged OS UID/systemd probes | NOT_VERIFIED | Joined fixture substitutes verifier/execution lease. Historical Stage 3/4/6 probes are not repeated claims. |
+
+Normal-runtime details: main Nexus health200, main Agent healthy in `just status`,
+Settings asset200, authenticated-free local MCP list200 with `[]`; saved list was
+empty before and after, unchanged. Invalid `{}` to the normal Connect route with
+correct Origin returns400, proving the new route exists without creating a
+connection. Chrome remains on9099; global sidebar and Projects are visible.
+The pre-restart asset timeout above resolved after the normal restart. No cause
+is claimed from that observation alone. Live provider authorization is still a
+separate NOT_VERIFIED check, despite real Registry/catalog reads succeeding.
 
 Commands executed (from repository root):
 
@@ -156,6 +165,10 @@ mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/infrastructure/local -am
 mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/clients/agent-client -am dependency:analyze
 python3 -m unittest discover -s scripts/runtime/tests -p 'test_*.py' -v
 git diff --check
+just start
+just status
+FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=empty node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
+FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=catalog node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
 ```
 
 Dependency analysis is not a zero-warning claim. Among unchanged declarations:
