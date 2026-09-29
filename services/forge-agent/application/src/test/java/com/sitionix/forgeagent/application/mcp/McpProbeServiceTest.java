@@ -20,7 +20,9 @@ class McpProbeServiceTest {
     private final McpCredentialCipher cipher = mock(McpCredentialCipher.class);
     private final McpRemoteProbe remote = mock(McpRemoteProbe.class);
     private final McpToolInventoryRepository inventory = mock(McpToolInventoryRepository.class);
-    private final McpProbeService service = new McpProbeService(repository, () -> installation, cipher, remote, inventory);
+    private final McpCredentialService credentials=new McpCredentialService(repository,()->installation,cipher,
+            mock(McpOAuthCredentialCipher.class),mock(McpOAuthClient.class),mock(McpRuntimeGrantRepository.class),mock(McpRuntimeToolView.class),java.time.Clock.systemUTC());
+    private final McpProbeService service = new McpProbeService(repository, () -> installation, credentials, remote, inventory,null);
 
     @Test void decryptsOnlyForProbeAndClearsPlaintext() {
         var encrypted = new McpEncryptedCredential("test", new byte[]{1});
@@ -61,7 +63,7 @@ class McpProbeServiceTest {
 
     @Test void changedInventoryRevokesButUnchangedTestRetainsGrant() {
         var gateway = mock(McpGatewayService.class);
-        var protectedService = new McpProbeService(repository, () -> installation, cipher, remote, inventory, gateway);
+        var protectedService = new McpProbeService(repository, () -> installation, credentials, remote, inventory, gateway);
         var encrypted = new McpEncryptedCredential("test", new byte[]{1});
         var report = new McpProbeReport("2025-06-18", List.of(new McpToolSummary("read", "Read", "sha256:abc")));
         var changed = new McpConnection(id, installation, "test", connection.endpoint(), connection.authType(),

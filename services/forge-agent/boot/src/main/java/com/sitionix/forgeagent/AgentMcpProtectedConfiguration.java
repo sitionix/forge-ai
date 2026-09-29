@@ -50,8 +50,8 @@ public class AgentMcpProtectedConfiguration {
     }
     @Bean McpCredentialCipher mcpCredentialCipher(McpLocalKeySource keys) { return new AesGcmMcpCredentialCipher(keys); }
     @Bean McpConnectionService mcpConnectionService(McpConnectionRepository repository,ProjectRepository projects,
-            ForgeInstanceIdentityRepository identity,McpCredentialCipher cipher,McpGatewayService gateway,McpOAuthCredentialCipher oauthCipher) {
-        return new McpConnectionService(repository,projects,identity,cipher,gateway,oauthCipher);
+            ForgeInstanceIdentityRepository identity,McpCredentialCipher cipher,McpGatewayService gateway,McpOAuthCredentialCipher oauthCipher,McpOAuthClient oauthClient) {
+        return new McpConnectionService(repository,projects,identity,cipher,gateway,oauthCipher,oauthClient);
     }
     @Bean com.sitionix.forgeagent.application.mcp.McpOAuthService mcpOAuthService(McpConnectionRepository connections,
             McpOAuthTransactionRepository transactions, ForgeInstanceIdentityRepository identity, McpOAuthClient client,
@@ -60,12 +60,17 @@ public class AgentMcpProtectedConfiguration {
         return new com.sitionix.forgeagent.application.mcp.McpOAuthService(connections,transactions,identity,client,cipher,
                 oauthCipher,gateway,settings.callbackUri(),settings.transactionTtl(),java.time.Clock.systemUTC());
     }
+    @Bean com.sitionix.forgeagent.application.mcp.McpCredentialService mcpCredentialService(McpConnectionRepository connections,
+            ForgeInstanceIdentityRepository identity,McpCredentialCipher rawCipher,McpOAuthCredentialCipher cipher,McpOAuthClient client,
+            McpRuntimeGrantRepository grants,McpRuntimeToolView views,java.time.Clock clock) {
+        return new com.sitionix.forgeagent.application.mcp.McpCredentialService(connections,identity,rawCipher,cipher,client,grants,views,clock);
+    }
     @Bean McpAvailableService mcpAvailableService(McpRegistryCatalog catalog) {
         return new McpAvailableService(catalog);
     }
     @Bean McpProbeService mcpProbeService(McpConnectionRepository repository,
-            ForgeInstanceIdentityRepository identity, McpCredentialCipher cipher, McpRemoteProbe remote,
+            ForgeInstanceIdentityRepository identity, com.sitionix.forgeagent.application.mcp.McpCredentialService credentials, McpRemoteProbe remote,
             McpToolInventoryRepository inventory, McpGatewayService gateway) {
-        return new McpProbeService(repository, identity, cipher, remote, inventory, gateway);
+        return new McpProbeService(repository, identity, credentials, remote, inventory, gateway);
     }
 }

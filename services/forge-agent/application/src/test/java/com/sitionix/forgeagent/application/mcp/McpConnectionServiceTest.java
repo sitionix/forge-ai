@@ -15,7 +15,7 @@ class McpConnectionServiceTest {
         var oauthCipher = mock(McpOAuthCredentialCipher.class);
         var encrypted = new McpEncryptedCredential("fixture", new byte[]{1});
         when(oauthCipher.encrypt(any(),any(),any())).thenReturn(encrypted);
-        var sut = new McpConnectionService(repository, projects, () -> installation, cipher, null, oauthCipher);
+        var sut = new McpConnectionService(repository, projects, () -> installation, cipher, null, oauthCipher,org.mockito.Mockito.mock(McpOAuthClient.class));
         var config = new McpOAuthConfiguration(URI.create("https://oauth.example"), URI.create("https://oauth.example/authorize"),
                 URI.create("https://oauth.example/token"), null, "fixture", "client_secret_post", Set.of("tools"), URI.create("https://mcp.example/mcp"));
         var saved = sut.create("OAuth", config.resource(), McpAuthType.OAUTH, McpProjectAccess.selected(Set.of()), null, config,
@@ -28,6 +28,23 @@ class McpConnectionServiceTest {
         assertThat(renamed.oauthConfiguration()).isEqualTo(config); assertThat(renamed.credentialConfigured()).isFalse();
         assertThat(repository.credential(installation,saved.id())).contains(encrypted);
     }
+    @Test void disconnectDeletesLocallyBeforeBestEffortProviderRevocation() {
+        var oauthCipher=mock(McpOAuthCredentialCipher.class);var provider=mock(McpOAuthClient.class);
+        var cfg=new McpOAuthConfiguration(URI.create("https://oauth.example"),URI.create("https://oauth.example/auth"),
+                URI.create("https://oauth.example/token"),URI.create("https://oauth.example/revoke"),"client","none",Set.of(),URI.create("https://mcp.example/mcp"));
+        UUID id=UUID.randomUUID();var now=Instant.now();
+        var c=new McpConnection(id,installation,"OAuth",cfg.resource(),McpAuthType.OAUTH,false,McpProjectAccess.all(),Set.of(),true,
+                now,now,null,null,cfg,UUID.randomUUID());
+        var encrypted=new McpEncryptedCredential("fixture",new byte[]{1});
+        var envelope=new McpOAuthCredentials(null,new McpOAuthTokens("access-canary","refresh-canary",null,null,null));
+        repository.insert(new McpConnectionState(c,encrypted));when(oauthCipher.decrypt(installation,id,encrypted)).thenReturn(envelope);
+        doAnswer(invocation->{assertThat(repository.findById(installation,id)).isEmpty();
+            throw com.sitionix.forgeagent.domain.exception.McpOAuthException.unavailable();}).when(provider).revoke(cfg,envelope);
+        var sut=new McpConnectionService(repository,projects,()->installation,cipher,null,oauthCipher,provider);
+        assertThatCode(()->sut.remove(id)).doesNotThrowAnyException();
+        verify(provider).revoke(cfg,envelope);assertThat(repository.credential(installation,id)).isEmpty();
+    }
+
     private final UUID installation = UUID.randomUUID();
     private final UUID project = UUID.randomUUID();
     private final Map<UUID, McpConnection> metadata = new HashMap<>();
@@ -50,7 +67,10 @@ class McpConnectionServiceTest {
             return Optional.of(next);
         }
         private void put(McpConnectionState state) { var c = state.connection(); metadata.put(c.id(),c); if(state.credential() == null) secrets.remove(c.id()); else secrets.put(c.id(),state.credential()); }
-        public void delete(UUID installationId, UUID id) { findById(installationId,id).ifPresent(c -> { metadata.remove(id); secrets.remove(id); }); }
+        public Optional<McpConnectionState> delete(UUID installationId, UUID id) {
+            var removed=findById(installationId,id).map(c -> new McpConnectionState(c,secrets.get(id)));
+            removed.ifPresent(c -> {metadata.remove(id);secrets.remove(id);});return removed;
+        }
     };
     private final McpCredentialCipher cipher = new McpCredentialCipher() {
         public McpEncryptedCredential encrypt(UUID i, UUID c, String p, byte[] b) { return new McpEncryptedCredential("test", b); }
@@ -63,11 +83,11 @@ class McpConnectionServiceTest {
         public Project save(Project p) { return p; }
         public void deleteById(UUID id) {}
     };
-    private final McpConnectionService service = new McpConnectionService(repository, projects, () -> installation, cipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class));
+    private final McpConnectionService service = new McpConnectionService(repository, projects, () -> installation, cipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class),org.mockito.Mockito.mock(McpOAuthClient.class));
 
     @Test void managementMutationRevokesRuntimeGrant() {
         var gateway = mock(McpGatewayService.class);
-        var protectedService = new McpConnectionService(repository, projects, () -> installation, cipher, gateway, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class));
+        var protectedService = new McpConnectionService(repository, projects, () -> installation, cipher, gateway, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class),org.mockito.Mockito.mock(McpOAuthClient.class));
         var created = protectedService.create("test", URI.create("https://example.org/mcp"),
                 McpAuthType.NONE, McpProjectAccess.all(), null, null, null);
         protectedService.setEnabled(created.id(), true);

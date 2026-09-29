@@ -12,5 +12,6 @@ public interface McpConnectionRepository {
     void insert(McpConnectionState state);
     /** Locks the owner-scoped row, reads one state, then writes it atomically. Null result deletes it. */
     Optional<McpConnectionState> change(UUID installationId, UUID id, UnaryOperator<McpConnectionState> mutation);
-    void delete(UUID installationId, UUID id);
+    /** Removes under row lock and returns the last encrypted state after commit. */
+    Optional<McpConnectionState> delete(UUID installationId, UUID id);
 }

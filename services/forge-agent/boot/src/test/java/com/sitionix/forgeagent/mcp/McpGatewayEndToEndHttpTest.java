@@ -82,7 +82,8 @@ class McpGatewayEndToEndHttpTest {
                 McpRuntimeGrantRepository grants, SdkMcpGatewayToolView views,
                 McpCredentialCipher cipher, SdkMcpRemoteClient remote, Clock clock) {
             return new McpGatewayService(sessions, nodes, workflows, projects, connections,
-                    identity, grants, views, cipher, remote, clock);
+                    identity, grants, views, new com.sitionix.forgeagent.application.mcp.McpCredentialService(connections,identity,cipher,
+                            mock(McpOAuthCredentialCipher.class),mock(McpOAuthClient.class),grants,views,clock), remote, clock);
         }
         @Bean McpGatewayProtocolAdapter protocol(McpGatewayService runtime,
                 SdkMcpGatewayToolView views, ObjectMapper json) {

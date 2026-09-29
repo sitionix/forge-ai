@@ -35,8 +35,10 @@ class McpGatewayServiceTest {
     private final McpRuntimeToolView views = mock(McpRuntimeToolView.class);
     private final McpCredentialCipher cipher = mock(McpCredentialCipher.class);
     private final McpRemoteToolClient remote = mock(McpRemoteToolClient.class);
+    private final McpCredentialService credentials=new McpCredentialService(connections,()->installation,cipher,
+            mock(McpOAuthCredentialCipher.class),mock(McpOAuthClient.class),grants,views,clock);
     private final McpGatewayService service = new McpGatewayService(sessions, nodes, workflows, projects,
-            connections, () -> installation, grants, views, cipher, remote, clock);
+            connections, () -> installation, grants, views, credentials, remote, clock);
     private final AgentExecutionTurn turn = new AgentExecutionTurn(turnId, sessionId, nodeId, null, 1,
             AgentExecutionTurnStatus.ACTIVE, null, null, null, null, null, now, null, now, now);
     private final McpEncryptedCredential encrypted = new McpEncryptedCredential("test", new byte[]{1, 2, 3});
@@ -56,6 +58,33 @@ class McpGatewayServiceTest {
         when(projects.findById(projectId)).thenReturn(Optional.of(new Project(projectId, "test", "test", now, now)));
         when(connections.findById(installation, connectionId)).thenReturn(Optional.of(connection(true, McpProjectAccess.all())));
         when(connections.credential(installation, connectionId)).thenReturn(Optional.of(encrypted));
+    }
+
+    @Test void oauthRotationKeepsGrantAndUsesOnlyBearerAtProtocolBoundary() {
+        var cfg=new McpOAuthConfiguration(URI.create("https://oauth.example"),URI.create("https://oauth.example/auth"),
+                URI.create("https://oauth.example/token"),null,"client","none",Set.of(),URI.create("https://example.org/mcp"));
+        var authorization=UUID.randomUUID();
+        var c=new McpConnection(connectionId,installation,"OAuth",cfg.resource(),McpAuthType.OAUTH,true,McpProjectAccess.all(),Set.of(tool),true,
+                now,now,null,null,cfg,authorization);
+        when(connections.findById(installation,connectionId)).thenReturn(Optional.of(c));
+        var resolver=mock(McpCredentialService.class);
+        when(resolver.resolve(c)).thenAnswer(i->"rotated-access-canary".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        var sut=new McpGatewayService(sessions,nodes,workflows,projects,connections,()->installation,grants,views,resolver,remote,clock);
+        when(grants.issue(any())).thenAnswer(i->new McpRuntimeGrantHandle(i.<McpRuntimeGrant>getArgument(0).id(),"oauth-grant"));
+        sut.issue(claim,now.plusSeconds(120),connectionId);
+        var capture=org.mockito.ArgumentCaptor.forClass(McpRuntimeGrant.class);verify(grants).issue(capture.capture());
+        var grant=capture.getValue();assertThat(grant.credentialIdentity()).isEqualTo(authorization.toString());
+        when(grants.resolve("oauth-grant",connectionId)).thenReturn(Optional.of(grant));
+        when(connections.credential(installation,connectionId)).thenReturn(Optional.of(new McpEncryptedCredential("rotated",new byte[]{7})));
+        when(remote.call(eq(c.endpoint()),eq(McpAuthType.BEARER),any(),eq(tool.name()),eq(tool.schemaFingerprint()),eq("{}"),any()))
+                .thenReturn(new McpToolCallResult(false,"[]",null));
+        assertThat(sut.call("oauth-grant",connectionId,tool.name(),tool.schemaFingerprint(),"{}").isError()).isFalse();
+        verify(remote).call(eq(c.endpoint()),eq(McpAuthType.BEARER),any(),any(),any(),any(),any());
+        when(connections.findById(installation,connectionId)).thenReturn(Optional.of(new McpConnection(connectionId,installation,c.displayName(),c.endpoint(),
+                McpAuthType.OAUTH,false,c.projectAccess(),c.allowedTools(),true,now,now,null,null,cfg,authorization)));
+        clearInvocations(resolver,remote);
+        assertThatThrownBy(()->sut.call("oauth-grant",connectionId,tool.name(),tool.schemaFingerprint(),"{}")).isInstanceOf(McpGatewayAccessException.class);
+        verifyNoInteractions(resolver,remote);
     }
 
     @Test void issueUsesTrustedProjectAndErasesTemporaryCredential() {

@@ -17,16 +17,18 @@ public class McpConnectionService {
     private final McpGatewayService gateway;
 
     private final McpOAuthCredentialCipher oauthCipher;
+    private final McpOAuthClient oauthClient;
 
     public McpConnectionService(McpConnectionRepository repository, ProjectRepository projects,
                                 ForgeInstanceIdentityRepository identity, McpCredentialCipher cipher,
-                                McpGatewayService gateway, McpOAuthCredentialCipher oauthCipher) {
+                                McpGatewayService gateway, McpOAuthCredentialCipher oauthCipher,McpOAuthClient oauthClient) {
         this.repository = Objects.requireNonNull(repository);
         this.projects = Objects.requireNonNull(projects);
         this.identity = Objects.requireNonNull(identity);
         this.cipher = Objects.requireNonNull(cipher);
         this.gateway = gateway;
         this.oauthCipher = Objects.requireNonNull(oauthCipher);
+        this.oauthClient=Objects.requireNonNull(oauthClient);
     }
 
     @Transactional
@@ -115,10 +117,16 @@ public class McpConnectionService {
         return result;
     }
 
-    @Transactional
     public void remove(UUID id) {
-        repository.delete(identity.getOrCreate(),id);
+        var removed=repository.delete(identity.getOrCreate(),id);
         if (gateway != null) gateway.revokeConnection(id);
+        removed.filter(state -> state.connection().authType()==McpAuthType.OAUTH && state.credential()!=null).ifPresent(state -> {
+            var c=state.connection();
+            try { oauthClient.revoke(c.oauthConfiguration(),oauthCipher.decrypt(c.installationId(),id,state.credential())); }
+            catch (com.sitionix.forgeagent.domain.exception.McpOAuthException failure) {
+                org.slf4j.LoggerFactory.getLogger(McpConnectionService.class).warn("OAuth provider revocation failed; local connection is removed.");
+            }
+        });
     }
 
     @Transactional

@@ -48,9 +48,9 @@ class AgentMcpGatewayConfiguration {
             NodeRunRepository nodes, WorkflowRunRepository workflows, ProjectRepository projects,
             McpConnectionRepository connections, ForgeInstanceIdentityRepository identity,
             McpRuntimeGrantRepository grants, SdkMcpGatewayToolView views,
-            McpCredentialCipher cipher, McpRemoteToolClient remote, Clock clock) {
+            com.sitionix.forgeagent.application.mcp.McpCredentialService credentials, McpRemoteToolClient remote, Clock clock) {
         return new McpGatewayService(sessions, nodes, workflows, projects, connections, identity,
-                grants, views, cipher, remote, clock);
+                grants, views, credentials, remote, clock);
     }
 
     @Bean McpExecutionSelectionService mcpExecutionSelectionService(WorkflowRunRepository workflows,

@@ -87,8 +87,14 @@ public class PostgresMcpConnectionRepository implements McpConnectionRepository 
             else jdbc.update("INSERT INTO mcp_connection_credentials(connection_id,key_id,ciphertext) VALUES(?,?,?) ON CONFLICT(connection_id) DO UPDATE SET key_id=EXCLUDED.key_id,ciphertext=EXCLUDED.ciphertext",
                     c.id(),state.credential().keyId(),state.credential().bytes());
     }
-    public void delete(UUID installationId, UUID id) {
-        jdbc.update("DELETE FROM mcp_connections WHERE installation_id=? AND id=?",installationId,id);
+    public Optional<McpConnectionState> delete(UUID installationId, UUID id) {
+        return transactions.execute(status -> {
+            var locked=jdbc.queryForList("SELECT id FROM mcp_connections WHERE installation_id=? AND id=? FOR UPDATE",UUID.class,installationId,id);
+            if (locked.isEmpty()) return Optional.empty();
+            var state=new McpConnectionState(findById(installationId,id).orElseThrow(),credential(installationId,id).orElse(null));
+            jdbc.update("DELETE FROM mcp_connections WHERE installation_id=? AND id=?",installationId,id);
+            return Optional.of(state);
+        });
     }
     private RowMapper<McpConnection> mapper() {
         return (rs,row) -> {

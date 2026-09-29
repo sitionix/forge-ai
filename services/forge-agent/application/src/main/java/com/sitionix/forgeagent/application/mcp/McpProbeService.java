@@ -17,28 +17,19 @@ import java.util.UUID;
 
 /** Management-only probe. Never invokes a discovered tool. */
 public final class McpProbeService {
-    private static final String CREDENTIAL_PURPOSE = "credential";
     private final McpConnectionRepository connections;
     private final ForgeInstanceIdentityRepository identity;
-    private final McpCredentialCipher cipher;
+    private final McpCredentialService credentials;
     private final McpRemoteProbe remote;
     private final McpToolInventoryRepository inventory;
     private final McpGatewayService gateway;
 
     public McpProbeService(McpConnectionRepository connections, ForgeInstanceIdentityRepository identity,
-                           McpCredentialCipher cipher, McpRemoteProbe remote, McpToolInventoryRepository inventory) {
-        this(connections, identity, cipher, remote, inventory, null);
-    }
-
-    public McpProbeService(McpConnectionRepository connections, ForgeInstanceIdentityRepository identity,
-                           McpCredentialCipher cipher, McpRemoteProbe remote, McpToolInventoryRepository inventory,
+                           McpCredentialService credentials, McpRemoteProbe remote, McpToolInventoryRepository inventory,
                            McpGatewayService gateway) {
-        this.connections = Objects.requireNonNull(connections);
-        this.identity = Objects.requireNonNull(identity);
-        this.cipher = Objects.requireNonNull(cipher);
-        this.remote = Objects.requireNonNull(remote);
-        this.inventory = Objects.requireNonNull(inventory);
-        this.gateway = gateway;
+        this.connections=Objects.requireNonNull(connections);this.identity=Objects.requireNonNull(identity);
+        this.credentials=Objects.requireNonNull(credentials);this.remote=Objects.requireNonNull(remote);
+        this.inventory=Objects.requireNonNull(inventory);this.gateway=gateway;
     }
 
     public McpProbeReport test(UUID id) {
@@ -50,15 +41,20 @@ public final class McpProbeService {
         if (connection.authType() != McpAuthType.NONE) {
             encrypted = connections.credential(installation, id)
                     .orElseThrow(() -> new McpProbeException(McpProbeException.Reason.AUTH_REQUIRED));
-            credential = cipher.decrypt(installation, id, CREDENTIAL_PURPOSE, encrypted);
+            credential = credentials.resolve(connection);
         }
         try {
-            McpProbeReport report = remote.probe(connection.endpoint(), connection.authType(), credential);
+            McpProbeReport report = remote.probe(connection.endpoint(), connection.authType().protocolType(), credential);
             inventory.replace(installation, id, connection.endpoint(), connection.authType(), encrypted, report.tools(), connection.oauthAuthorizationId());
             if (gateway != null && !connections.findById(installation, id)
                     .map(after -> after.allowedTools().equals(connection.allowedTools())).orElse(false))
                 gateway.revokeConnection(id);
             return report;
+        } catch (McpProbeException failure) {
+            if (connection.authType()==McpAuthType.OAUTH && (failure.reason()==McpProbeException.Reason.AUTH_REQUIRED || failure.reason()==McpProbeException.Reason.FORBIDDEN)) {
+                credentials.authorizationFailed(connection);throw com.sitionix.forgeagent.domain.exception.McpOAuthException.reconnect();
+            }
+            throw failure;
         } finally {
             if (credential != null) Arrays.fill(credential, (byte) 0);
         }

@@ -137,14 +137,14 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
         byte[] oldKey = new byte[32], newKey = new byte[32];
         Arrays.fill(oldKey,(byte)7); Arrays.fill(newKey,(byte)8);
         var oldCipher = new AesGcmMcpCredentialCipher(() -> new McpLocalKeys("old",Map.of("old",oldKey)));
-        var service = new McpConnectionService(repository,projects,identity,oldCipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class));
+        var service = new McpConnectionService(repository,projects,identity,oldCipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class),org.mockito.Mockito.mock(McpOAuthClient.class));
         var created = service.create("Bearer",URI.create("https://example.org/mcp"),McpAuthType.BEARER,
                 McpProjectAccess.all(),McpCredentialSecret.bearer("synthetic-credential"), null, null);
         var before = repository.credential(created.installationId(),created.id()).orElseThrow();
         assertThat(before.keyId()).isEqualTo("old");
         assertThat(new String(before.bytes(),StandardCharsets.UTF_8)).doesNotContain("synthetic-credential");
         var activeCipher = new AesGcmMcpCredentialCipher(() -> new McpLocalKeys("new",Map.of("old",oldKey,"new",newKey)));
-        new McpConnectionService(repository,projects,identity,activeCipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class)).reencrypt(created.id());
+        new McpConnectionService(repository,projects,identity,activeCipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class),org.mockito.Mockito.mock(McpOAuthClient.class)).reencrypt(created.id());
         var after = repository.credential(created.installationId(),created.id()).orElseThrow();
         assertThat(after.keyId()).isEqualTo("new");
         assertThat(new String(activeCipher.decrypt(created.installationId(),created.id(),"credential",after),StandardCharsets.UTF_8))
@@ -203,7 +203,7 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
             }
             public byte[] decrypt(UUID i,UUID c,String p,McpEncryptedCredential value) { return realCipher.decrypt(i,c,p,value); }
         };
-        var service = new McpConnectionService(repository,projects,identity,pausingCipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class));
+        var service = new McpConnectionService(repository,projects,identity,pausingCipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class),org.mockito.Mockito.mock(McpOAuthClient.class));
         var created = service.create("x",URI.create("https://example.org/a"),McpAuthType.BEARER,McpProjectAccess.all(),McpCredentialSecret.bearer("first"), null, null);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var update = executor.submit(() -> service.update(created.id(),"x",URI.create("https://example.org/b"),
@@ -241,7 +241,7 @@ class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentM
             }));
             assertThat(entered.await(5,TimeUnit.SECONDS)).isTrue();
             var deleting = executor.submit(() -> repository.delete(installation,id));
-            awaitBlockedStatement("DELETE FROM mcp_connections");
+            awaitBlockedStatement("SELECT id FROM mcp_connections");
             release.countDown();
             changing.get(5,TimeUnit.SECONDS); deleting.get(5,TimeUnit.SECONDS);
         } finally { release.countDown(); }
