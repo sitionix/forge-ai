@@ -29,11 +29,13 @@ Scope: the Settings Catalog UI slice of roadmap Stages 8–9, using the previous
 | REAL_EMPTY_BROWSER | PASS | Same actual main path: legitimate empty saved inventory, Add action, active Settings, global navigation and compact empty layout passed. |
 | FINAL_REVIEW | PASS | Fresh read-only reviewer found no critical, important or minor findings; no PR operations. Subsequent small heading fix was verified RED→GREEN with browser regression and final full Console suite. |
 | DIFF_CHECK | PASS | `git diff --check`. |
-| FULL_AGENT_VERIFY | NOT_VERIFIED | Not rerun for this frontend-only change. Runtime packaging is not full verification. Previous backend verification remains historical evidence in normal-runtime-evidence.md. |
-| FULL_NEXUS_VERIFY | NOT_VERIFIED | Not rerun for this frontend-only change. No backend/client/cache changes. |
+| FULL_AGENT_VERIFY | PASS | Fresh CI full reactor verify: 1,408 declared tests, zero failures/errors, 11 skips. Not rerun locally; normal runtime packaging is not verification. |
+| FULL_NEXUS_VERIFY | PASS | Fresh CI full reactor verify: 352 declared tests, zero failures/errors/skips; includes 69 ForgeIT tests. Not rerun locally. |
 | LIVE_PROVIDER | NOT_VERIFIED | Catalog reads/select/cancel did not initialize or call an external MCP provider. |
 | OAUTH_RECOMMENDED | NOT_VERIFIED | Outside this UI slice; no verified/Recommended badges or OAuth support inferred from Registry metadata. |
-| CI | NOT_VERIFIED | No fresh CI result is claimed for this branch. |
+| CI | PASS | [Build 36534870270](https://github.com/sitionix/forge-ai/actions/runs/36534870270), explicitly dispatched for implementation commit `65c1ac77d063bf781a5b159bbb2898a13adddd38`: all five service jobs succeeded. Subsequent evidence update changes documentation only. |
+
+Agent CI skips: CodexRecoveryLifecycleTest (1), CodexMcpInventoryVerifierTest (1), McpGatewayRuntimeFilterTest (1), AgentMcpProtectedConfigurationTest (1), ForgeAgentProjectAssetIT (1), ForgeAgentPortAwareExecutionIT (6). Skipped/native/provider scenarios are not certified by the green reactor. CI also passed 110 Remote Access Python tests with 2 skips and its offline Docker regression fixture. No new live-provider or joined native-runtime acceptance is claimed by this catalog UI change.
 
 Commands:
 
