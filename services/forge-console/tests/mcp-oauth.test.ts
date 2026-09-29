@@ -53,9 +53,20 @@ describe('MCP OAuth browser flow',()=>{
   const f=setup();await f.flow.connect({...connection,enabled:true},{} as never);
   expect(f.windowLike.open).not.toHaveBeenCalled();expect(f.persist).not.toHaveBeenCalled();expect(f.onError).toHaveBeenCalled();f.flow.dispose();
  });
- it('closed sign-in window cancels once and keeps retry possible',async()=>{
+ it('COOP-isolated window reference does not cancel consent and can reopen without mutation replay',async()=>{
   vi.useFakeTimers();const f=setup();await f.flow.connect(null,{} as never);f.popup.closed=true;
-  await vi.advanceTimersByTimeAsync(1000);expect(f.api.cancelOAuth).toHaveBeenCalledTimes(1);
-  expect(f.persist).toHaveBeenCalledTimes(1);expect(f.onConnected).not.toHaveBeenCalled();f.flow.dispose();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.api.cancelOAuth).not.toHaveBeenCalled();expect(f.flow.active).toBe(true);
+  f.flow.retryWindow();expect(f.persist).toHaveBeenCalledTimes(1);expect(f.api.startOAuth).toHaveBeenCalledTimes(1);
+  await Channel.instances[0]!.send({transactionId:tx,connectionId:id,result:'connected'});
+  expect(f.onConnected).toHaveBeenCalledTimes(1);f.flow.dispose();
+ });
+ it('terminal completion may await authoritative GET after provider closes',async()=>{
+  vi.useFakeTimers();const f=setup();await f.flow.connect(null,{} as never);
+  let confirm!:(value:McpConnection)=>void;f.api.get.mockReturnValue(new Promise(resolve=>{confirm=resolve;}));
+  const completion=Channel.instances[0]!.send({transactionId:tx,connectionId:id,result:'connected'});f.popup.closed=true;
+  await vi.advanceTimersByTimeAsync(1000);expect(f.api.cancelOAuth).not.toHaveBeenCalled();
+  confirm({...connection,credentialConfigured:true});await completion;
+  expect(f.onConnected).toHaveBeenCalledTimes(1);f.flow.dispose();
  });
 });

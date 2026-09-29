@@ -115,6 +115,18 @@ class SpringMcpOAuthClientTest {
         }
     }
 
+    @Test void malformedOptionalTokenMetadataFailsBeforeItCanReplaceUsableCredentials() {
+        for(String field:List.of("\"refresh_token\":{\"secret-canary\":1}","\"refresh_token\":123","\"refresh_token\":\"\"",
+                "\"scope\":[\"scope-canary\"]","\"scope\":123","\"scope\":null")) {
+            reply(200,"{\"access_token\":\"access-canary\",\"token_type\":\"bearer\","+field+"}");
+            assertThatThrownBy(()->client.refresh(configuration(),credentials())).isInstanceOf(McpOAuthException.class)
+                .hasMessageNotContaining("canary").hasNoCause();
+        }
+    }
+    @Test void overflowingRefreshExpiryFailsAtSafeOAuthBoundary() {
+        reply(200,"{\"access_token\":\"access-canary\",\"refresh_token\":\"refresh-canary\",\"token_type\":\"bearer\",\"refresh_token_expires_in\":9223372036854775807}");
+        assertThatThrownBy(this::exchange).isInstanceOf(McpOAuthException.class).hasNoCause().hasMessageNotContaining("canary");
+    }
     @Test void omittedRefreshDoesNotEraseExistingRefreshOnRotation() {
         reply(200, "{\"access_token\":\"new-token\",\"token_type\":\"bearer\"}");
         assertThat(client.refresh(configuration(), credentials()).refreshToken()).isEqualTo("old-refresh");

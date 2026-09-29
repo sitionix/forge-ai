@@ -76,6 +76,32 @@ class McpCredentialServiceTest {
         assertThatThrownBy(()->service.resolve(state.connection())).isInstanceOf(McpOAuthException.class);
         assertThat(state.connection().credentialConfigured()).isTrue(); verifyNoInteractions(grants,views);
     }
+    @Test void staleAuthorizationFailureDoesNotRevokeNewGenerationGrantsOrCredentials() {
+        var previous=state.connection();var c=state.connection();
+        state=new McpConnectionState(new McpConnection(id,owner,c.displayName(),c.endpoint(),c.authType(),c.enabled(),c.projectAccess(),c.allowedTools(),true,
+            c.createdAt(),c.updatedAt(),c.checkedAt(),c.safeDiagnostic(),config,UUID.randomUUID()),state.credential());
+        var current=state;
+        service.authorizationFailed(previous);
+        assertThat(state).isEqualTo(current);verifyNoInteractions(grants,views);
+    }
+    @Test void authFailureRevokesCurrentGenerationBeforeItsRowLockIsReleased() {
+        var observed=state.connection();
+        when(repository.change(eq(owner),eq(id),any())).thenAnswer(i->{
+            UnaryOperator<McpConnectionState> update=i.getArgument(2);state=update.apply(state);
+            verify(grants).revokeConnection(id);verify(views).revokeConnection(id);
+            return Optional.of(state);
+        });
+        service.authorizationFailed(observed);assertThat(state.connection().credentialConfigured()).isFalse();
+    }
+    @Test void expiredCredentialRevokesBeforeReconnectCanAcquireRowLock() {
+        tokens(new McpOAuthTokens("expired",null,now.minusSeconds(1),null,null));var observed=state.connection();
+        when(repository.change(eq(owner),eq(id),any())).thenAnswer(i->{
+            UnaryOperator<McpConnectionState> update=i.getArgument(2);state=update.apply(state);
+            verify(grants).revokeConnection(id);verify(views).revokeConnection(id);
+            return Optional.of(state);
+        });
+        assertThatThrownBy(()->service.resolve(observed)).isInstanceOf(McpOAuthException.class);
+    }
     private void tokens(McpOAuthTokens tokens) {
         var c=new McpConnection(id,owner,"OAuth",config.resource(),McpAuthType.OAUTH,true,McpProjectAccess.all(),Set.of(),true,
                 now,now,null,null,config,authorization);

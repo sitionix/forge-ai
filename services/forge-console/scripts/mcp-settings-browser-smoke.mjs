@@ -147,9 +147,10 @@ try {
     assert.deepEqual(after,before,'Catalog selection must not mutate saved connections');
     if(external) assert.equal(await evaluate(`location.port`),'9099');
     console.log(external?(action==='catalog-icons'?'NORMAL_SETTINGS_CATALOG_ICONS_BROWSER_PASS':'NORMAL_SETTINGS_CATALOG_BROWSER_PASS'):'SETTINGS_CATALOG_BROWSER_STUB_PASS');
-  } else if(action==='oauth') {
+  } else if(action==='oauth' || action==='oauth-reconnect') {
     assert(external,'OAuth acceptance requires actual Nexus/Agent, not the management stub');
     const issuer=process.env.FORGE_SETTINGS_OAUTH_ISSUER;
+    if(action==='oauth') {
     await click('mcpAdd');await click('mcpCustom');await until(`document.getElementById('mcpConnectionDialog').open`);
     await fill('mcpName','Stage 6 OAuth');await fill('mcpEndpoint',process.env.FORGE_SETTINGS_MCP_ENDPOINT);
     await fill('mcpAuthType','OAUTH');await evaluate(`document.getElementById('mcpAuthType').dispatchEvent(new Event('change'))`);
@@ -160,6 +161,13 @@ try {
     await fill('mcpOAuthClientId','forge-fixture');await fill('mcpOAuthIssuer',issuer);
     await fill('mcpOAuthAuthorization',issuer+'/authorize');await fill('mcpOAuthToken',issuer+'/token');await fill('mcpOAuthRevocation',issuer+'/revoke');
     await fill('mcpOAuthClientAuth','client_secret_post');await fill('mcpOAuthClientSecret','registered-client-secret-canary');await fill('mcpOAuthScopes','tools');
+    } else {
+      await evaluate(`document.querySelector('[data-connection-id="${process.env.FORGE_SETTINGS_CONNECTION_ID}"]').click()`);
+      await until(`!document.getElementById('mcpDetailsPanel').hidden && !document.getElementById('mcpEdit').disabled`);await click('mcpEdit');
+      await until(`document.getElementById('mcpConnectionDialog').open`);
+      assert.equal(await evaluate(`document.getElementById('mcpOAuthClientSecret').value`),'');
+      assert.equal(await evaluate(`document.getElementById('mcpSaveTest').textContent`),'Reconnect');
+    }
     for(const decision of ['deny','approve']) {
     await click('mcpSaveTest');
     let target;for(let n=0;n<100;n++) {
@@ -174,6 +182,9 @@ try {
     const providerEvaluate=expression=>new Promise((resolve,reject)=>{const id=++next;replies.set(id,{resolve:value=>resolve(value.result?.value),reject});provider.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,userGesture:true,returnByValue:true}}));});
     try {
       assert.equal(await providerEvaluate('window.opener===null'),true,'Provider must not be able to navigate Forge through an opener');
+      await until(`window.__forgeMountedOperatorPage.form.oauth.popup.closed===true`);
+      assert.equal(await evaluate(`window.__forgeMountedOperatorPage.form.oauth.active`),true,'COOP isolation must not cancel live consent');
+      assert.equal(await evaluate(`document.getElementById('mcpOAuthRetry').hidden`),false,'Isolated or closed window must have an explicit Reopen action');
       assert.equal(await providerEvaluate('!!document.getElementById("approve")'),true);
       assert.equal(await evaluate(`document.getElementById('mcpFormClose').disabled || document.getElementById('mcpOAuthCancel').disabled`),false);
       assert.equal(await evaluate(`document.querySelector('.operator-sidebar').getBoundingClientRect().width>0`),true);

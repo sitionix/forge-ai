@@ -116,6 +116,7 @@ class McpSettingsAcceptanceHttpTest {
     @Autowired PlatformTransactionManager transactions;
     @Autowired ObjectMapper json;
     @Autowired McpOAuthCredentialCipher oauthCipher;
+    @Autowired com.sitionix.forgeagent.application.mcp.McpCredentialService credentials;
     @Autowired McpConnectionRepository connectionRepository;
 
     @Test void browserPermissionsStayDisabledUntilExplicitEnableAndUseConfirmedPolicy(CapturedOutput output) throws Exception {
@@ -230,7 +231,19 @@ class McpSettingsAcceptanceHttpTest {
         var restored=new PostgresMcpConnectionRepository(jdbc,transactions,json).findById(connection.installationId(),id).orElseThrow();
         assertThat(restored.oauthConfiguration()).isEqualTo(connection.oauthConfiguration());assertThat(restored.oauthAuthorizationId()).isEqualTo(authorization);
         assertThat(grant.toString()).doesNotContain(McpOAuthProviderFixture.ACCESS,McpOAuthProviderFixture.REFRESH,McpOAuthProviderFixture.SECRET);
-        connections.remove(id);assertThat(provider.operations).containsExactly("exchange","refresh","revoke");
+        var previous=connections.get(id);
+        assertThat(browser(root,origin,"disable",id)).contains("SETTINGS_DISABLE_CONFIRMED");
+        assertThat(browser(root,origin,"oauth-reconnect",id,projectId)).contains("OAUTH_BROWSER_ACTUAL_NEXUS_PASS");
+        assertThat(connections.list().stream().filter(c->c.displayName().equals("Stage 6 OAuth"))).hasSize(1);
+        assertThat(connections.get(id).enabled()).isFalse();
+        assertThat(browser(root,origin,"enable",id)).contains("SETTINGS_ENABLE_CONFIRMED");
+        var fresh=runtime.issue(claim,Instant.now().plusSeconds(180),id);
+        var freshIdentity=runtime.authorize(fresh.token(),id).credentialIdentity();assertThat(freshIdentity).isNotEqualTo(authorization.toString());
+        credentials.authorizationFailed(previous);
+        assertThat(runtime.authorize(fresh.token(),id).credentialIdentity()).isEqualTo(freshIdentity);
+        assertThat(provider.operations).containsExactly("exchange","refresh","exchange");
+        connections.remove(id);assertThat(provider.operations).containsExactly("exchange","refresh","exchange","revoke");
+        assertThatThrownBy(()->runtime.authorize(fresh.token(),id)).isInstanceOf(McpGatewayAccessException.class);
         assertThatThrownBy(()->runtime.authorize(handle.token(),id)).isInstanceOf(McpGatewayAccessException.class);
         assertThat(toolCalls).isEqualTo(before+2);
         assertThat(output.getAll()+Files.readString(directory.resolve("nexus.log"))).doesNotContain(McpOAuthProviderFixture.ACCESS,McpOAuthProviderFixture.REFRESH,McpOAuthProviderFixture.SECRET,handle.token());
@@ -283,8 +296,8 @@ class McpSettingsAcceptanceHttpTest {
     private String browser(Path root,String origin,String action,UUID id,UUID projectId) throws Exception {
         var builder=new ProcessBuilder("node",root.resolve("services/forge-console/scripts/mcp-settings-browser-smoke.mjs").toString());
         builder.environment().put("FORGE_SETTINGS_BASE_URL",origin+"/fgaisox");
-        builder.environment().put("FORGE_SETTINGS_MCP_ENDPOINT","http://127.0.0.1:"+upstream.getAddress().getPort()+(action.equals("oauth")?"/mcp-oauth":"/mcp"));
-        if(action.equals("oauth"))builder.environment().put("FORGE_SETTINGS_OAUTH_ISSUER",provider.issuer());
+        builder.environment().put("FORGE_SETTINGS_MCP_ENDPOINT","http://127.0.0.1:"+upstream.getAddress().getPort()+(action.startsWith("oauth")?"/mcp-oauth":"/mcp"));
+        if(action.startsWith("oauth"))builder.environment().put("FORGE_SETTINGS_OAUTH_ISSUER",provider.issuer());
         builder.environment().put("FORGE_SETTINGS_ACTION",action);if(id!=null)builder.environment().put("FORGE_SETTINGS_CONNECTION_ID",id.toString());
         if(projectId!=null) {
             builder.environment().put("FORGE_SETTINGS_PROJECT_ID",projectId.toString());

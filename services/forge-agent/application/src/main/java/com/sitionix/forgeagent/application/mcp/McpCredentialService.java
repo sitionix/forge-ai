@@ -54,7 +54,7 @@ public class McpCredentialService {
             return new McpConnectionState(c,cipher.encrypt(owner,id,new McpOAuthCredentials(credentials.clientSecret(),refreshed)));
         }).orElseThrow(McpOAuthException::reconnect);
         if (!current.connection().credentialConfigured()) {
-            revoke(id);throw McpOAuthException.reconnect();
+            throw McpOAuthException.reconnect();
         }
         return cipher.decrypt(owner,id,current.credential()).tokens().accessToken().getBytes(StandardCharsets.UTF_8);
     }
@@ -63,14 +63,15 @@ public class McpCredentialService {
         if (observed.authType()!=McpAuthType.OAUTH) return;
         connections.change(observed.installationId(),observed.id(),state ->
                 Objects.equals(state.connection().oauthAuthorizationId(),observed.oauthAuthorizationId()) ? unusable(state) : state);
-        revoke(observed.id());
     }
     private McpConnectionState unusable(McpConnectionState state) {
         var c=state.connection();
         var invalid=new McpConnection(c.id(),c.installationId(),c.displayName(),c.endpoint(),c.authType(),c.enabled(),c.projectAccess(),
                 Set.of(),false,c.createdAt(),clock.instant(),null,"MCP_OAUTH_RECONNECT_REQUIRED",c.oauthConfiguration(),c.oauthAuthorizationId());
         var credentials=cipher.decrypt(c.installationId(),c.id(),state.credential());
-        return new McpConnectionState(invalid,cipher.encrypt(c.installationId(),c.id(),new McpOAuthCredentials(credentials.clientSecret(),null)));
+        var encrypted=cipher.encrypt(c.installationId(),c.id(),new McpOAuthCredentials(credentials.clientSecret(),null));
+        revoke(c.id());
+        return new McpConnectionState(invalid,encrypted);
     }
     private void revoke(UUID id) { grants.revokeConnection(id);views.revokeConnection(id); }
 }

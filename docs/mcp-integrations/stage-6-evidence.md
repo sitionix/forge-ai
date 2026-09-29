@@ -1,7 +1,7 @@
 # Stage 6 OAuth — фактичні передумови та evidence
 
 Дата: 2026-09-29. Branch: `feature/SITIONIX-156`, baseline `67069c56`.
-Implementation реалізовано Tasks 1–6; фактичні фінальні результати нижче. Production deployment та live OAuth **NOT_VERIFIED**.
+Implementation реалізовано Tasks 1–7; фактичні фінальні результати нижче. Production deployment та live OAuth **NOT_VERIFIED**.
 
 ## Historical pre-implementation code map (baseline 67069c56)
 
@@ -125,7 +125,7 @@ Paths below are relative to `services/forge-agent` (`A`),
   NoClassDefFoundError and was corrected without changing classpath/framework.
 - Task 6: 30 focused tests; full Console then 656/656. Task 7 added Reconnect test:
   identical metadata in backend field order first failed (zero update/start), then
-  passed after field-based comparison. Full Console now 657/657.
+  passed after field-based comparison. Full Console after final popup regressions is 658/658.
 
 ## Joined acceptance boundary
 
@@ -138,7 +138,9 @@ HTTP callback/SameSite=Lax; registered redirect/resource/PKCE verifier checked b
 Flow: fresh disabled create → Decline → Reconnect same resource/client setup → consent
 → authoritative Test/tools → disabled permissions → Nexus process restart → explicit
 Enable → existing native Codex gateway fixture with two independent grants → one refresh
-rotation → local delete/provider revoke → old grants denied, zero additional tool calls.
+rotation → explicit Disable/Reconnect/Test/permissions/Enable → new grant survives stale old
+authorization rejection → local delete/provider revoke → old/new grants denied, zero
+additional tool calls.
 Cookies are inspected through Chrome CDP for the callback path and cleared after both
 completed attempts. Provider opener is null; browser storage/input/rendered content has
 no provider tokens/client secret. Runtime process gets grants, not provider credentials.
@@ -154,10 +156,10 @@ No user connection/production secrets/configuration was mutated.
 | Check | Result | Actual evidence |
 |---|---|---|
 | Console typecheck | PASS | `npm --prefix services/forge-console run typecheck` |
-| Console full tests | PASS | `npm --prefix services/forge-console test`: 32 files, 657 tests, zero failures |
+| Console full tests | PASS | `npm --prefix services/forge-console test`: 32 files, 658 tests, zero failures |
 | Console build | PASS | `npm --prefix services/forge-console run build` |
 | Nexus full verify | PASS | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/boot -am verify`: BUILD SUCCESS, 361 tests, zero failures/errors/skips (actual Surefire + Failsafe module summaries) |
-| Agent full final verify | PASS | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: BUILD SUCCESS 02:28; 1465 total, 1455 executed, 10 skips; zero failures/errors |
+| Agent full final verify | PASS | `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`: BUILD SUCCESS 02:37; 1470 total, 1460 executed, 10 skips; zero failures/errors |
 | Joined browser/native OAuth | PASS | `mvn -B -ntp -Dapi.version=1.44 -Dforge.codex.stage5-e2e=true -pl services/forge-agent/boot -am -Dtest=McpSettingsAcceptanceHttpTest -Dsurefire.failIfNoSpecifiedTests=false test`: 1 test, zero skips; STAGE6_JOINED_OAUTH_GATEWAY_PASS |
 | Generated callback canaries | PASS | Actual state/code/verifier, client secret/access/refresh tokens absent captured Agent/Nexus TRACE and enabled Tomcat access logs; ordinary Settings access positively observed |
 | Runtime Python | PASS | `python3 -m unittest discover -s scripts/runtime/tests -p 'test_*.py' -v`: 47 tests |
@@ -195,7 +197,47 @@ cleanup failure are described above; green suites are fresh executions.
   postMessage. IDs/result are only signals; authoritative get/Test validates success.
   Live provider browsing-context/COOP compatibility remains NOT_VERIFIED.
 
-Whole-branch final read-only review and its findings will be recorded after the
-remaining local verification. Operational instructions: [stage-6-operations.md](stage-6-operations.md).
+Whole-branch fresh read-only review of `67069c56..c1424ca5` completed; final fix
+results are recorded below. Operational instructions: [stage-6-operations.md](stage-6-operations.md).
 
 Full Agent skips: CodexManagedRecoveryLifecycleTest (1), McpGatewaySdkHttpTest (1), McpGatewayRuntimeFilterTest (1), RemoteAccessManagementHttpIT (1), ForgeAgentPortAwareExecutionIT (6). Joined OAuth explicitly ran with zero skips; it is not inferred from the default suite.
+
+
+## Final whole-branch review / one fix pass
+
+Sole fresh read-only reviewer (gpt-6-astra): Critical 0, Important 4; one initially
+Minor refresh-expiry overflow regraded Important because malformed upstream response
+escaped the agreed safe invalid-response boundary. Declined to judge: empty. No
+second reviewer/implementation agents. No deferred minors after regrading.
+
+- COOP false closed-window reference and callback-close during slow authoritative GET:
+  two unit tests first failed with unexpected cancel; fixed by removing unreliable
+  polling entirely. Reopen remains explicit during waiting, Cancel/form Close/dispose
+  still cancel best effort, server TTL bounds abandoned attempts. Physical provider
+  window close alone is no longer automatic cancellation. Actual browser fake AS sends
+  COOP same-origin, WindowProxy.closed is true, consent/return still succeed.
+- Stale authorization failure/new-grant revoke: unit first observed revoke of new
+  generation; current-generation and expired-credential tests first found revoke
+  occurred after row lock release. Revocation now runs only inside matching-generation
+  unusable transition under the existing row lock. Grant/view revoke is short in-memory
+  removal without DB/network callbacks, no new API/framework. Actual joined browser
+  Disable/Reconnect/Enable plus new grant survives rejection from old generation.
+- Malformed refresh/scope metadata: object/number refresh token, array/number/null scope
+  first accepted by Spring coercion; now present fields are checked before standard
+  delegate, invalid response rejected without replacing usable credentials. Missing
+  metadata behavior preserved. Refresh-expiry overflow first escaped as ArithmeticException;
+  both expiry calculations now share typed safe arithmetic/date/validation boundary.
+
+Focused fix suite: Console24, credentials10, Spring OAuth15; all green after witnessed
+RED. Full Agent/Nexus/Console rerun after fixes is green with counts above. Final joined
+run `McpSettingsAcceptanceHttpTest`: 1 test, zero failures/errors/skips, BUILD SUCCESS
+29.611s, STAGE6_JOINED_OAUTH_GATEWAY_PASS; COOP AS and two completed consent transactions,
+one refresh, one provider revoke. Initial final-joined attempt used an old packaged
+Console jar and additionally clicked Edit before its load completed; it failed dialog
+readiness. Fresh Nexus verify packages actual fixed assets; test now waits the existing
+Edit readiness boundary. No fixture failure relabeled as proof of production success.
+
+Extra final rulings: overflow treated as required safe boundary (cost: narrow extra
+regression/catch); no closed polling (cost: abandoned attempt waits Cancel/TTL);
+revocation inside matching generation lock (cost if wrong: lock-order regression,
+full DB/gateway suites passed). Original decisions remain listed above.

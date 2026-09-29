@@ -111,6 +111,11 @@ public final class SpringMcpOAuthClient implements McpOAuthClient {
             Object token = parameters.get("access_token");
             if (!(type instanceof String s) || !"bearer".equalsIgnoreCase(s)
                     || !(token instanceof String value) || value.isBlank()) throw invalidToken();
+            if (parameters.containsKey("refresh_token")
+                    && (!(parameters.get("refresh_token") instanceof String refresh) || refresh.isBlank())) throw invalidToken();
+            if (parameters.containsKey("scope")
+                    && (!(parameters.get("scope") instanceof String scope)
+                    || !scope.matches("[\\x20\\x21\\x23-\\x5B\\x5D-\\x7E]*"))) throw invalidToken();
             var response = delegate.convert(parameters);
             var extras = new HashMap<String, Object>(response.getAdditionalParameters());
             extras.remove(RAW_EXPIRY); extras.remove(RAW_REFRESH_EXPIRY); extras.remove(SCOPE_OBSERVED);
@@ -123,20 +128,21 @@ public final class SpringMcpOAuthClient implements McpOAuthClient {
     }
 
     private static McpOAuthTokens tokens(OAuth2AccessTokenResponse response, McpOAuthTokens previous) {
-        var observed = response.getAdditionalParameters();
-        Instant received = Instant.now();
-        Instant expires = observed.containsKey(RAW_EXPIRY) ? received.plusSeconds((Long) observed.get(RAW_EXPIRY)) : null;
-        boolean rotated = response.getRefreshToken() != null && (previous == null
-                || !response.getRefreshToken().getTokenValue().equals(previous.refreshToken()));
-        String refresh = response.getRefreshToken() == null ? (previous == null ? null : previous.refreshToken())
-                : response.getRefreshToken().getTokenValue();
-        Instant refreshExpiry = observed.containsKey(RAW_REFRESH_EXPIRY)
-                ? received.plusSeconds((Long) observed.get(RAW_REFRESH_EXPIRY))
-                : (previous != null && !rotated ? previous.refreshExpiresAt() : null);
-        Set<String> scopes = Boolean.TRUE.equals(observed.get(SCOPE_OBSERVED)) ? response.getAccessToken().getScopes()
-                : (previous == null ? null : previous.grantedScopes());
-        try { return new McpOAuthTokens(response.getAccessToken().getTokenValue(), refresh, expires, refreshExpiry, scopes); }
-        catch (IllegalArgumentException exception) { throw McpOAuthException.invalidResponse(); }
+        try {
+            var observed = response.getAdditionalParameters();
+            Instant received = Instant.now();
+            Instant expires = observed.containsKey(RAW_EXPIRY) ? received.plusSeconds((Long) observed.get(RAW_EXPIRY)) : null;
+            boolean rotated = response.getRefreshToken() != null && (previous == null
+                    || !response.getRefreshToken().getTokenValue().equals(previous.refreshToken()));
+            String refresh = response.getRefreshToken() == null ? (previous == null ? null : previous.refreshToken())
+                    : response.getRefreshToken().getTokenValue();
+            Instant refreshExpiry = observed.containsKey(RAW_REFRESH_EXPIRY)
+                    ? received.plusSeconds((Long) observed.get(RAW_REFRESH_EXPIRY))
+                    : (previous != null && !rotated ? previous.refreshExpiresAt() : null);
+            Set<String> scopes = Boolean.TRUE.equals(observed.get(SCOPE_OBSERVED)) ? response.getAccessToken().getScopes()
+                    : (previous == null ? null : previous.grantedScopes());
+            return new McpOAuthTokens(response.getAccessToken().getTokenValue(), refresh, expires, refreshExpiry, scopes);
+        } catch (IllegalArgumentException | ArithmeticException | java.time.DateTimeException exception) { throw McpOAuthException.invalidResponse(); }
     }
 
     private ClientRegistration registration(McpOAuthConfiguration config, McpOAuthCredentials credentials) {

@@ -175,7 +175,7 @@ export class McpConnectionForm {
     finally {if(this.current(operation) && this.uncertainCreate && !this.saved)this.element('mcpRecovery').hidden=false;this.finish(operation);}
   }
   oauthStatus(status) {
-    this.element('mcpOAuthActions').hidden=status==='idle';this.element('mcpOAuthRetry').hidden=status!=='blocked';
+    this.element('mcpOAuthActions').hidden=status==='idle';this.element('mcpOAuthRetry').hidden=status!=='blocked' && status!=='waiting';
     if(status==='opening')this.element('mcpFormNotice').textContent='Preparing provider sign-in…';
     if(status==='waiting')this.element('mcpFormNotice').textContent='Continue in the sign-in window. This connection remains disabled.';
     if(status==='blocked')this.element('mcpFormNotice').textContent='Your browser blocked the sign-in window. Open it below to continue.';

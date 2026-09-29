@@ -28,10 +28,13 @@ Agent `forge.mcp.oauth.transaction-ttl` і Nexus `forge.mcp.oauth.transaction-tt
 
 ## Retry / reconnect / disconnect
 
-Popup blocked: Open sign-in window повторно відкриває поточний transaction,
+Popup blocked або ізольоване/закрите provider window: Open sign-in window повторно відкриває поточний transaction,
 без повторного create чи автоматичного replay mutations. Cancel/Close залишає
 saved connection disabled; cancellation на navigation — best effort, server TTL
-обмежує незавершену спробу. Після denied/expired consent можна Reconnect.
+обмежує незавершену спробу. Фізичне закриття provider popup не є автоматичним
+Cancel: COOP може робити window reference закритим при живому consent. Оператор
+може Reopen або Cancel; завершення також витримує повільний authoritative read.
+Після denied/expired consent можна Reconnect.
 
 Reconnect вимагає попереднього explicit Disable. Чинний registered client secret
 залишається encrypted при KEEP; зміна client/config identity потребує явного

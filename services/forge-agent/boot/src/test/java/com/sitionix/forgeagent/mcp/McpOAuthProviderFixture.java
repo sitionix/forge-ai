@@ -31,6 +31,7 @@ final class McpOAuthProviderFixture implements AutoCloseable {
         String hidden=p.entrySet().stream().map(e->"<input type='hidden' name='"+e.getKey()+"' value='"+escape(e.getValue())+"'>").reduce("",String::concat);
         byte[] html=("<!doctype html><meta name='referrer' content='no-referrer'><h1>Fixture provider consent</h1><form action='/consent'>"+hidden+
                 "<button id='approve' name='decision' value='approve'>Allow Forge</button><button id='deny' name='decision' value='deny'>Decline</button></form>").getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Cross-Origin-Opener-Policy","same-origin");
         exchange.getResponseHeaders().set("Content-Type","text/html; charset=utf-8");exchange.sendResponseHeaders(200,html.length);exchange.getResponseBody().write(html);exchange.close();
     }
     private void consent(HttpExchange exchange) throws java.io.IOException {

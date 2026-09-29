@@ -28,9 +28,6 @@ export class McpOAuthFlow {
       this.channel=new this.window.BroadcastChannel(`forge-mcp-oauth-${this.start.transactionId}`);
       this.channel.onmessage=event=>this.complete(event.data,epoch);
       this.navigate();
-      this.timer=this.window.setInterval(()=>{
-        if(this.popup?.closed) {this.cancel();this.onError(new Error('Sign-in window was closed. Connect again to continue.'));}
-      },500);
     } catch(error) {
       if(this.current(epoch)) {this.cancel();if(error?.name!=='AbortError')this.onError(error);}
     }
@@ -65,7 +62,7 @@ export class McpOAuthFlow {
     }
   }
   finish() {
-    this.active=false;this.window.clearInterval(this.timer);this.channel?.close();this.channel=null;
+    this.active=false;this.channel?.close();this.channel=null;
     try {this.popup?.close();} catch(_) { /* Provider window may have isolated its browsing context. */ }
     this.popup=null;this.start=null;this.onStatus('idle');
   }
