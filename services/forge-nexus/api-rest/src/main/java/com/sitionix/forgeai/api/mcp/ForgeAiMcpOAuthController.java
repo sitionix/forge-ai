@@ -13,7 +13,25 @@ public class ForgeAiMcpOAuthController {
     private static final String COOKIE_PATH="/fgaisox/api/v1/infrastructure/agents/integrations/mcp";
     private final ManageAgentMcpConnections service;
     private final McpOAuthBrowserProperties properties;
-    public ForgeAiMcpOAuthController(ManageAgentMcpConnections service,McpOAuthBrowserProperties properties){this.service=service;this.properties=properties;}
+    private final McpApiMapper mapper;
+    public ForgeAiMcpOAuthController(ManageAgentMcpConnections service,McpOAuthBrowserProperties properties,McpApiMapper mapper){this.service=service;this.properties=properties;this.mapper=mapper;}
+    @PostMapping("/connect")
+    public ConnectResponse connect(@RequestBody ConnectRequest body,HttpServletRequest request,HttpServletResponse response) {
+        requireBrowser(request);
+        if(body==null)throw new IllegalArgumentException("Invalid MCP Connect request");
+        String binding=UUID.randomUUID().toString()+UUID.randomUUID();
+        var result=service.connect(new McpConnectCommand(body.displayName(),body.endpoint()),binding);
+        if(result.authorization()!=null)response.addHeader(HttpHeaders.SET_COOKIE,cookie(result.authorization().transactionId(),binding,request,properties.transactionTtl()).toString());
+        response.setHeader(HttpHeaders.CACHE_CONTROL,"no-store");
+        return new ConnectResponse(mapper.toResponse(result.connection()),result.authorization());
+    }
+    public record ConnectResponse(McpConnectionResponse connection,McpOAuthStart authorization) {
+        @Override public String toString(){return "McpConnectResponse[redacted]";}
+    }
+    public record ConnectRequest(String displayName,java.net.URI endpoint) {
+        @com.fasterxml.jackson.annotation.JsonAnySetter public void unknown(String name,Object value){throw new IllegalArgumentException("Invalid MCP Connect request");}
+        @Override public String toString(){return "McpConnectRequest[redacted]";}
+    }
     @PostMapping("/connections/{id}/oauth/start")
     public McpOAuthStart start(@PathVariable UUID id,@RequestBody Map<String,Object> body,HttpServletRequest request,HttpServletResponse response){
         requireBrowser(body,request);
@@ -44,10 +62,13 @@ public class ForgeAiMcpOAuthController {
         } finally {clear(transaction,request,response);}
     }
     private void requireBrowser(Map<String,Object> body,HttpServletRequest request){
+        requireBrowser(request);
+        if(body==null || !body.isEmpty())throw new IllegalArgumentException("Invalid OAuth request");
+    }
+    private void requireBrowser(HttpServletRequest request){
         if(!properties.browserOrigin().toString().equals(request.getHeader(HttpHeaders.ORIGIN))
                 || request.getContentType()==null || !MediaType.APPLICATION_JSON.isCompatibleWith(MediaType.parseMediaType(request.getContentType())))
             throw new McpOAuthBrowserDeniedException();
-        if(body==null || !body.isEmpty())throw new IllegalArgumentException("Invalid OAuth request");
     }
     private static String parameter(HttpServletRequest request,String name){
         var values=request.getParameterValues(name);

@@ -11,6 +11,12 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class McpClientMapper {
+    public com.sitionix.forgeai.domain.model.mcp.McpConnectResult toDomain(com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectInbound response) {
+        try {
+            if(response==null)throw new IllegalArgumentException();
+            return new com.sitionix.forgeai.domain.model.mcp.McpConnectResult(toDomain(response.connection()),response.authorization()==null?null:toDomain(response.authorization()));
+        } catch(IllegalArgumentException invalid) {throw new IllegalStateException("Invalid MCP upstream response");}
+    }
     public com.sitionix.forgeai.domain.model.mcp.McpOAuthStart toDomain(com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthStartInbound r) {
         if(r==null || r.transactionId()==null || r.connectionId()==null || r.authorizationUrl()==null
                 || r.authorizationUrl().getHost()==null || r.authorizationUrl().getUserInfo()!=null

@@ -12,6 +12,14 @@ public class AgentMcpConnectionsUseCase implements ManageAgentMcpConnections {
     private static final Set<String> FORBIDDEN=Set.of("host","cookie","authorization","connection","keep-alive","proxy-connection","proxy-authenticate","proxy-authorization","te","trailer","transfer-encoding","upgrade","forwarded","via","content-length");
     private final ForgeAgentMcpClient client;
     public AgentMcpConnectionsUseCase(ForgeAgentMcpClient client){this.client=client;}
+    public McpConnectResult connect(McpConnectCommand command,String browserBinding) {
+        if(command==null || command.displayName()==null || command.displayName().isBlank() || command.displayName().length()>255
+                || command.endpoint()==null || command.endpoint().getHost()==null || command.endpoint().getRawUserInfo()!=null
+                || command.endpoint().getRawQuery()!=null || command.endpoint().getRawFragment()!=null
+                || !("http".equalsIgnoreCase(command.endpoint().getScheme()) || "https".equalsIgnoreCase(command.endpoint().getScheme())))
+            throw new IllegalArgumentException("Invalid MCP Connect request");
+        return client.connect(command,browserBinding);
+    }
     public McpOAuthStart startOAuth(UUID id,String browserBinding){requireId(id);return client.startOAuth(id,browserBinding);}
     public McpOAuthCompletion completeOAuth(McpOAuthCallback callback){return client.completeOAuth(callback);}
     public void cancelOAuth(UUID id,UUID transactionId,String browserBinding){requireId(id);requireId(transactionId);client.cancelOAuth(id,transactionId,browserBinding);}

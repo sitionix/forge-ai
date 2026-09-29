@@ -16,7 +16,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 class McpOAuthCallbackTest {
     private final ManageAgentMcpConnections service=mock(ManageAgentMcpConnections.class);
     private final ForgeAiMcpOAuthController controller=new ForgeAiMcpOAuthController(service,
-            new McpOAuthBrowserProperties(URI.create("http://127.0.0.1:9099"),Duration.ofMinutes(10)));
+            new McpOAuthBrowserProperties(URI.create("http://127.0.0.1:9099"),Duration.ofMinutes(10)),new McpApiMapper());
     @Test void startSetsScopedHttpOnlyCookieWithoutOperatorSession() {
         UUID id=UUID.randomUUID(),tx=UUID.randomUUID();
         when(service.startOAuth(eq(id),anyString())).thenReturn(new McpOAuthStart(tx,id,URI.create("https://provider.example/authorize")));

@@ -30,6 +30,13 @@ class AgentMcpConnectionsUseCaseTest {
         verify(client,times(2)).create(c);
         assertTrue(c.projectAccess().projectIds().isEmpty());
     }
+    @Test void catalogConnectDelegatesTypedInputAndRejectsUnsafeEndpointBeforeAgent(){
+        var command=new McpConnectCommand("Catalog",URI.create("https://mcp.example/mcp"));
+        useCase.connect(command,"binding");verify(client).connect(command,"binding");clearInvocations(client);
+        for(var endpoint:List.of("javascript:alert(1)","https://user:secret@mcp.example/mcp","https://mcp.example/mcp?token=secret"))
+            assertThrows(IllegalArgumentException.class,()->useCase.connect(new McpConnectCommand("Catalog",URI.create(endpoint)),"binding"));
+        verifyNoInteractions(client);
+    }
     private static McpConnectionCommand command(URI uri,McpConnection.Transport transport,String bearer,Map<String,String> headers){
         return new McpConnectionCommand("name",uri,transport,bearer==null && headers==null?McpConnection.AuthType.NONE:
                 headers==null?McpConnection.AuthType.BEARER:McpConnection.AuthType.SECRET_HEADERS,

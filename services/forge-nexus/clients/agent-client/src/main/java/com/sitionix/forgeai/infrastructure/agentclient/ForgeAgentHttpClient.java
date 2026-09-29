@@ -234,6 +234,9 @@ public interface ForgeAgentHttpClient {
     com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceProcessMetricsResponse getProjectSshConnectionServiceProcesses(
         @PathVariable UUID projectId, @PathVariable UUID connectionId, @PathVariable String unit,
         @org.springframework.web.bind.annotation.RequestParam String sort);
+    @PostExchange(value="/api/v1/integrations/mcp/connect",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectInbound connectMcp(
+            @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectOutbound request);
     @PostExchange(value="/api/v1/integrations/mcp/connections/{id}/oauth/start",contentType=MediaType.APPLICATION_JSON_VALUE)
     com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthStartInbound startMcpOAuth(@PathVariable UUID id,
             @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound request);

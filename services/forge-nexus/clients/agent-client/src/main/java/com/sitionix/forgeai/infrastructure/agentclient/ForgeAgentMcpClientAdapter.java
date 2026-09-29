@@ -13,6 +13,10 @@ public class ForgeAgentMcpClientAdapter implements ForgeAgentMcpClient {
     private final ForgeAgentClientCallExecutor executor;
     private final McpClientMapper mapper;
     public ForgeAgentMcpClientAdapter(ForgeAgentHttpClient http,ForgeAgentClientCallExecutor executor,McpClientMapper mapper){this.http=http;this.executor=executor;this.mapper=mapper;}
+    public McpConnectResult connect(McpConnectCommand command,String binding) {
+        var request=new com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectOutbound(command.displayName(),command.endpoint(),binding);
+        return mapper.toDomain(executor.execute(()->http.connectMcp(request)));
+    }
     public McpOAuthStart startOAuth(UUID id,String binding){
         var request=new com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound(binding);
         return mapper.toDomain(executor.execute(()->http.startMcpOAuth(id,request)));

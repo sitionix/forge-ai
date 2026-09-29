@@ -53,3 +53,9 @@ forge:
         base-url: ${FORGE_AGENT_BASE_URL:http://127.0.0.1:7091}
         connect-timeout: 2s
         read-timeout: 30s
+
+# Spring's resolved-exception DEBUG output includes raw transport messages.
+# Public scoped handlers log safe operational warnings instead.
+logging:
+  level:
+    org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver: WARN
