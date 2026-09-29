@@ -6163,3 +6163,14 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .mcp-description { color: var(--muted); margin: 8px 0 24px; }
 #mcpConnections:has(> p:only-child) { padding: 24px 0 8px; color: var(--muted); }
 #mcpIntegrations .error-box { margin: 16px 0; }
+
+/* Provider sign-in uses the existing compact connection dialog. */
+#mcpOAuthAdvanced { margin: 8px 0 16px; }
+#mcpOAuthAdvanced summary { cursor: pointer; color: var(--muted); margin-bottom: 12px; }
+#mcpConnectionForm input:not([type=checkbox]), #mcpConnectionForm select, #mcpConnectionForm textarea {
+  width: 100%; min-height: 40px; box-sizing: border-box; border: 1px solid rgba(27, 36, 31, 0.18);
+  border-radius: 8px; padding: 8px 12px; background: var(--panel-strong); color: inherit; font: inherit;
+}
+#mcpOAuthAdvanced input, #mcpOAuthAdvanced select { margin: 6px 0 12px; }
+#mcpOAuthCallbackUri { display: block; overflow-wrap: anywhere; font-size: 12px; margin-top: 8px; }
+.mcp-oauth-result { max-width: 560px; margin: 12vh auto; padding: 20px; }

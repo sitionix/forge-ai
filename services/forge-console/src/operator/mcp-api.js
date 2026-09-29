@@ -2,6 +2,12 @@ import { contextPathFromLocation } from './infrastructure-http-client.js';
 
 const messages = {
   MCP_REGISTRY_UNAVAILABLE: 'MCP catalog unavailable. Retry or add a custom integration.',
+  MCP_OAUTH_RECONNECT_REQUIRED: 'Sign in again to reconnect this integration.',
+  MCP_OAUTH_DENIED: 'Sign-in was declined. You can try Connect again.',
+  MCP_OAUTH_INVALID_TRANSACTION: 'Sign-in expired or was cancelled. Connect again.',
+  MCP_OAUTH_UNAVAILABLE: 'Sign-in provider is unavailable. Try Connect again.',
+  MCP_OAUTH_INVALID_RESPONSE: 'Sign-in provider returned an invalid response.',
+  MCP_OAUTH_BROWSER_DENIED: 'Sign-in browser request was rejected.',
   MCP_AUTH_REQUIRED: 'MCP credentials required. Update credentials and test again.',
   MCP_FORBIDDEN: 'MCP provider denied access. Check credentials and permissions.',
   MCP_ENDPOINT_DENIED: 'MCP endpoint is not allowed.',
@@ -28,14 +34,14 @@ export class McpApi {
     if (typeof correlationId === 'string' && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(correlationId)) error.correlationId = correlationId;
     return error;
   }
-  async request(method,path,body,signal) {
+  async request(method,path,body,signal,credentials='omit') {
     if (signal?.aborted) throw new DOMException('Request cancelled','AbortError');
     const headers = {Accept:'application/json'};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     let response;
     try {
       response = await this.fetcher(this.base + path,{method,headers,body:body === undefined ? undefined : JSON.stringify(body),signal,
-        credentials:'omit',cache:'no-store',redirect:'error',mode:'same-origin'});
+        credentials,cache:'no-store',redirect:'error',mode:'same-origin'});
     } catch (error) {
       if (error?.name === 'AbortError') throw new DOMException('Request cancelled','AbortError');
       throw this.failure(503,'UPSTREAM_UNAVAILABLE');
@@ -50,6 +56,8 @@ export class McpApi {
     try { return response.status === 204 ? undefined : await response.json(); }
     catch (_) { throw this.failure(502,'UPSTREAM_INVALID_RESPONSE'); }
   }
+  startOAuth(id,signal) {return this.request('POST',`${this.connections}/${encodeURIComponent(id)}/oauth/start`,{},signal,'same-origin');}
+  cancelOAuth(id,transactionId,signal) {return this.request('DELETE',`${this.connections}/${encodeURIComponent(id)}/oauth/transactions/${encodeURIComponent(transactionId)}`,{},signal,'same-origin');}
   list(signal) { return this.request('GET',this.connections,undefined,signal); }
   available({search='',cursor,limit=20}={},signal) {
     const query=new URLSearchParams({limit:String(limit)});

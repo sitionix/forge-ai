@@ -41,3 +41,12 @@ describe('MCP API',()=>{
     fetcher.mockRejectedValueOnce(new DOMException('secret-canary','AbortError'));await expect(api.list()).rejects.toMatchObject({name:'AbortError',message:'Request cancelled'});
   });
 });
+
+it('only OAuth browser mutations carry same-origin cookie credentials',async()=>{
+ const fetcher=vi.fn(async(_url:string,_init:RequestInit)=>new Response('{}',{status:200,headers:{'Content-Type':'application/json'}}));
+ const api=new McpApi({fetcher,location:{pathname:'/fgaisox/operator/settings.html'}});
+ await api.startOAuth('id');await api.cancelOAuth('id','tx');await api.list();
+ expect(fetcher.mock.calls[0]![1]).toMatchObject({method:'POST',credentials:'same-origin',body:'{}'});
+ expect(fetcher.mock.calls[1]![1]).toMatchObject({method:'DELETE',credentials:'same-origin',body:'{}'});
+ expect(fetcher.mock.calls[2]![1]).toMatchObject({method:'GET',credentials:'omit'});
+});

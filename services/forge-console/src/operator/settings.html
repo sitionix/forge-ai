@@ -35,11 +35,28 @@
   <form id="mcpConnectionForm" class="modal-form" autocomplete="off">
     <label for="mcpName">Name</label><input id="mcpName" maxlength="255" required>
     <label for="mcpEndpoint">HTTP MCP endpoint</label><input id="mcpEndpoint" type="url" required placeholder="https://example.org/mcp">
-    <label for="mcpAuthType">Authentication</label><select id="mcpAuthType"><option value="NONE">None</option><option value="BEARER">Bearer token</option><option value="SECRET_HEADERS">Secret headers</option></select>
-    <label for="mcpCredentialChange">Credential action</label><select id="mcpCredentialChange"><option value="KEEP">Keep existing credential</option><option value="REPLACE">Replace credential</option><option value="REMOVE">Remove credential</option></select>
+    <label for="mcpAuthType">Authentication</label><select id="mcpAuthType"><option value="NONE">None</option><option value="OAUTH">OAuth — sign in with provider</option><option value="BEARER">Bearer token</option><option value="SECRET_HEADERS">Secret headers</option></select>
+    <div id="mcpCredentialActionFields"><label for="mcpCredentialChange">Credential action</label><select id="mcpCredentialChange"><option value="KEEP">Keep existing credential</option><option value="REPLACE">Replace credential</option><option value="REMOVE">Remove credential</option></select></div>
     <div id="mcpBearerFields" hidden><label for="mcpBearer">New bearer token</label><input id="mcpBearer" type="password" autocomplete="off"></div>
     <div id="mcpHeaderFields" hidden><label for="mcpSecretHeaders">New secret headers (JSON object)</label><textarea id="mcpSecretHeaders" autocomplete="off" spellcheck="false" placeholder='{"X-Api-Key":"…"}'></textarea></div>
-    <p>Credentials are write-only. Changing endpoint or authentication requires an explicit credential decision and a new check.</p>
+    <section id="mcpOAuthFields" hidden>
+      <p class="muted">Sign in securely in a provider window. Your provider tokens stay in Forge.</p>
+      <p id="mcpOAuthEnabledGuard" hidden>Disable this connection before reconnecting.</p>
+      <details id="mcpOAuthAdvanced"><summary>Advanced · registered OAuth client</summary>
+        <p class="muted">Configure your installation’s registered client once. Copy its registered callback URL: <code id="mcpOAuthCallbackUri"></code></p>
+        <label for="mcpOAuthClientId">Client ID</label><input id="mcpOAuthClientId" autocomplete="off">
+        <label for="mcpOAuthIssuer">Issuer</label><input id="mcpOAuthIssuer" type="url" placeholder="https://provider.example">
+        <label for="mcpOAuthAuthorization">Authorization endpoint</label><input id="mcpOAuthAuthorization" type="url" placeholder="https://provider.example/authorize">
+        <label for="mcpOAuthToken">Token endpoint</label><input id="mcpOAuthToken" type="url" placeholder="https://provider.example/token">
+        <label for="mcpOAuthRevocation">Revocation endpoint (optional)</label><input id="mcpOAuthRevocation" type="url">
+        <label for="mcpOAuthClientAuth">Client authentication</label><select id="mcpOAuthClientAuth"><option value="none">Public client (PKCE)</option><option value="client_secret_post">Client secret (POST)</option><option value="client_secret_basic">Client secret (Basic)</option></select>
+        <label for="mcpOAuthClientSecret">Client secret (leave blank to keep)</label><input id="mcpOAuthClientSecret" type="password" autocomplete="off">
+        <label for="mcpOAuthScopes">Scopes (space separated)</label><input id="mcpOAuthScopes" autocomplete="off">
+        <label for="mcpOAuthResource">Resource</label><input id="mcpOAuthResource" type="url" placeholder="Same as MCP endpoint">
+      </details>
+      <div id="mcpOAuthActions" class="mcp-actions" hidden><button id="mcpOAuthRetry" class="button secondary" type="button" hidden>Open sign-in window</button><button id="mcpOAuthCancel" class="button secondary" type="button">Cancel sign-in</button></div>
+    </section>
+    <p id="mcpCredentialHelp">Credentials are write-only. Changing endpoint or authentication requires an explicit credential decision and a new check.</p>
     <div class="mcp-actions"><button id="mcpSaveTest" class="button" type="submit">Save and test</button><button id="mcpRetest" class="button secondary" type="button" disabled>Test saved connection</button></div>
   </form>
   <section id="mcpRecovery" hidden><h3>Check whether the save completed</h3><p>Do not replay the save. Refresh saved connections and choose the resource if it was created.</p><button id="mcpReconcile" class="button secondary" type="button">Find saved connection</button><div id="mcpRecoveredConnections"></div><button id="mcpStartAnother" class="button secondary" type="button">Start another connection…</button></section>
