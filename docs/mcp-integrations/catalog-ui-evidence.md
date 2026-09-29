@@ -170,3 +170,24 @@ FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=cata
 FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=catalog-icons node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
 git diff --check
 ```
+
+## Catalog page preload and reuse — 2026-09-29
+
+User approved this bounded UI improvement after observing slow Catalog reads. Settings now preloads one first page independently of the saved-connection list, without opening the dialog. `McpCatalog` retains only the current rendered page and its submitted search/cursor identity for five minutes after a successful read. Reopening neither extends TTL nor duplicates an in-flight read. Expired same-page refresh keeps rows visible; failure retains them with a safe “last loaded page” warning and an explicit Retry. Search and pagination clear unrelated rows and continue to fetch at most one page. Empty pages are reusable. Closing cancels active reads; disposal clears retained state. No browser storage, automatic retries, periodic refresh, or new caching abstraction.
+
+The Agent's existing Spring `@Cacheable("mcpRegistryPages")` and Caffeine five-minute / maximumSize=1000 cache remain unchanged, as do typed HTTP, request parameters, Registry timeout, connection persistence, provider credentials and explicit Enable/Disable semantics. This reduces repeated UI waiting; it does not make the external Registry faster or guarantee availability of a cold read.
+
+| Verification | Result | Evidence |
+| --- | --- | --- |
+| RED_REGRESSION | PASS | All five new `mcp-catalog-cache.test.ts` cases failed on the previous implementation because mounting Settings made zero available requests. |
+| FOCUSED_CONSOLE | PASS | Catalog reuse, existing Catalog and Settings tests: 26/26. Controlled `Date.now` checks expiry at exactly five minutes without a real wait, non-sliding reopen, retained refresh/failure rows, explicit Retry, empty pages, cursor reopen, changed search and cancellation. Compact dialog coverage passed in the initial combined focused run; that run also exposed three old total-request assertions, updated to distinguish the connection read from the approved metadata prefetch. |
+| FULL_CONSOLE | PASS | 646 tests in 31 files; typecheck and build passed separately. |
+| BUILT_CHROME_STUB | PASS | Existing create/test/permissions/explicit Enable flow and Catalog smoke passed using built assets and the explicitly local management stub. This is not Agent/runtime acceptance. |
+| NORMAL_START | PASS | Standard `just start` exited 0 after native sudo authentication. Final `just status`: knowledge/Jarvis/Agent/Nexus/Postgres active; dedicated Remote Access inactive. A status read during startup briefly reported knowledge unhealthy; final status was healthy. |
+| ACTUAL_MAIN_BROWSER | PASS | Real built assets served by normal Nexus :9099: empty Settings acceptance and Catalog acceptance passed. Catalog harness verifies preload while its dialog is closed, exactly one available request, repeated open/close/open with no additional request and the same row DOM identity. Desktop/narrow layout, sidebar/Projects, native selection/cancel/Escape and unchanged saved-connection inventory also passed. Separate actual-main catalog-icon/search acceptance passed. Served `mcp-catalog.js` matched the built asset byte-for-byte. No HTTP stub substitutes for this run. |
+| CI | PASS | [Build 36545805664](https://github.com/sitionix/forge-ai/actions/runs/36545805664) for source `213dbbb52f0cdcb919fec14e25c1cd36827c4916`: all five service jobs succeeded. Full Agent: 1,410 tests, zero failures/errors, 11 skips. Full Nexus: 353 tests, zero failures/errors/skips, including 70 ForgeIT. Console: 646 tests in 31 files, typecheck/build. Subsequent evidence-only commit does not change that verified source. Full local backend reactors were not repeated for this frontend-only change; these full verify results are from fresh CI. |
+| UPSTREAM_LATENCY_CAUSE | NOT_VERIFIED | Existing slow Registry observations remain historical evidence; provider internals were not re-probed. |
+
+Final read-only review found no critical or important defect. Deferred minor: the disposal regression uses one microtask wait before checking late-result DOM; a stronger completed-chain synchronization would improve that assertion. Existing RequestCoordinator superseded-result/cancellation coverage remains in the suite. No new live MCP-provider call, joined Stage 3/4 runtime probe or OS-isolation acceptance is claimed by this frontend-only follow-up.
+
+Agent CI skips remain CodexRecoveryLifecycleTest (1), CodexMcpInventoryVerifierTest (1), McpGatewayRuntimeFilterTest (1), AgentMcpProtectedConfigurationTest (1), ForgeAgentProjectAssetIT (1), ForgeAgentPortAwareExecutionIT (6). Skips are not runtime-probe PASS.

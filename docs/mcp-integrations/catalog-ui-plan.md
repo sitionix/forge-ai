@@ -22,3 +22,9 @@ Approved user design: keep a compact MCP section on Settings, move Catalog and i
 Keep explicit Enable/Disable and disabled-only permission editing unchanged. Form cancellation returns to the previous catalog or saved connection details; close/Escape cancels pending reads so late responses cannot reopen a dismissed dialog. Reuse the existing RequestCoordinator, native dialog focus behavior, Console styles and connection form. No new UI framework, transport, backend policy or dependency.
 
 Verification: focused regressions first, full Console/typecheck/build, built Chrome catalog and existing create/test/permissions/Enable smoke with its explicit management stub, then read-only actual main :9099 empty/catalog/image acceptance and narrow viewport/Escape checks. Run one final read-only review, record exact results, and stop for review without PR operations or merge.
+
+## Catalog latency follow-up
+
+Approved user scope: preload one initial metadata page when Settings mounts and retain only the current rendered page for five minutes. Reopening reuses that page and does not extend its expiry. Opening during its active read does not start another request. A same-query refresh keeps rows visible and retains them with a scoped warning on failure; another search/cursor clears unrelated results. Explicit search and Retry still request refresh, and pagination remains one page per request. Disposal cancels the read and clears the page. No storage, timer, crawler, scheduler, or new cache abstraction; the accepted Agent Spring `@Cacheable`/Caffeine configuration stays unchanged.
+
+Verify controlled-clock TTL, in-flight deduplication, empty-page reuse, current-cursor reopen, stale refresh failure, search separation and cancellation with Console tests. Extend the existing Chrome harness to prove preload while the dialog is closed and reopen without another available request, against built assets and actual main :9099.
