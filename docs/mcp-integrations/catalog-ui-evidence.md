@@ -155,7 +155,18 @@ The browser harness now permits 30s specifically for bounded Catalog loading/sea
 | Follow-up | Result | Evidence |
 | --- | --- | --- |
 | FOCUSED_REGISTRY | PASS | Nine existing production Registry tests plus the new normal-runtime slow-page regression; Maven focused run BUILD SUCCESS. |
-| NORMAL_RUNTIME | NOT_VERIFIED | Initial standard startup with 25s succeeded, but actual cold request still returned 503 at 25.080s and browser Catalog failed. The 28s final configuration is pending a further standard restart. |
-| REAL_BROWSER | NOT_VERIFIED | Must be repeated against updated actual main runtime, rather than inferred from probes or previous acceptance. |
-| CI | NOT_VERIFIED | Fresh source verification pending. |
+| NORMAL_RUNTIME | PASS | Final standard `just start` exited 0 with 28s. Main Agent/Nexus health UP, knowledge/Jarvis/Postgres active; dedicated Remote Access inactive. Fresh main Catalog page returned HTTP 200 in 0.848s after restart. The initial 25s candidate returned 503 at 25.080s and its browser run failed; those attempts are not counted as PASS. |
+| REAL_BROWSER | PASS | Actual main :9099 Chrome Catalog and icon/search acceptance passed after final restart; native selection/cancel/Escape, 375px fit, sidebar/Projects and unchanged saved connections preserved. The same `limit=20` page was read again after 319.942s (past the unchanged 5min expire-after-write TTL): HTTP 200 in 0.738s, 19 supported entries and a cursor. Explicit next-page request returned HTTP 200 in 17.230s, 17 supported entries and another cursor, demonstrating successful waiting beyond the former 5s budget. |
+| CI | PASS | [Build 36543137470](https://github.com/sitionix/forge-ai/actions/runs/36543137470) for final source `1ce9b016906da7fe8a0c0a53767299ca7d80fff8`: all five service jobs succeeded. Full Agent: 1,410 tests, zero failures/errors, 11 skips. Full Nexus: 353 tests, zero failures/errors/skips, including 70 ForgeIT. Console: 641 tests, typecheck/build. Earlier 25s source Build 36542712436 also passed but is not substituted for the final source run. |
 | UPSTREAM_SERVER_CAUSE | NOT_VERIFIED | Successful slow responses prove the client budget mismatch; Registry internals causing latency are not established. |
+
+Final correction review: ACCEPT after checking the 28s/30s budget relationship, unchanged HTTP/cache/pagination architecture and repeated focused tests. Fresh CI Agent skips remain CodexRecoveryLifecycleTest (1), CodexMcpInventoryVerifierTest (1), McpGatewayRuntimeFilterTest (1), AgentMcpProtectedConfigurationTest (1), ForgeAgentProjectAssetIT (1), ForgeAgentPortAwareExecutionIT (6); no new live MCP-provider or joined native-runtime acceptance is claimed. Full local backend reactors were not repeated: the focused local run and fresh full CI results are distinct. Subsequent evidence-only commit does not change the verified runtime/configuration. External Registry responses exceeding 28s still legitimately fail closed; this correction does not guarantee continuous upstream availability.
+
+```sh
+mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am -Dtest=McpRegistryRuntimeConfigurationTest,McpRegistryCatalogAdapterTest -Dsurefire.failIfNoSpecifiedTests=false test
+just start
+just status
+FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=catalog node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
+FORGE_SETTINGS_BASE_URL=http://127.0.0.1:9099/fgaisox FORGE_SETTINGS_ACTION=catalog-icons node services/forge-console/scripts/mcp-settings-browser-smoke.mjs
+git diff --check
+```
