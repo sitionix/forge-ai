@@ -2,6 +2,15 @@ import {describe,it,expect,vi} from 'vitest';
 import {McpApi} from '../src/operator/mcp-api.js';
 function setup() { const fetcher=vi.fn(async(_url:string,_options:RequestInit)=>new Response('{}')); return {fetcher,api:new McpApi({fetcher,location:{pathname:'/ctx/operator/settings.html'}})}; }
 describe('MCP API',()=>{
+  it('reads one available page through Nexus with encoded search and opaque cursor',async()=>{
+    const {api,fetcher}=setup();const controller=new AbortController();
+    await api.available({search:'a & b',cursor:'next/+?&',limit:7},controller.signal);
+    const [url,init]=fetcher.mock.lastCall!;const query=new URL(url,'http://forge');
+    expect(query.pathname).toBe('/ctx/api/v1/infrastructure/agents/integrations/mcp/available');
+    expect(Object.fromEntries(query.searchParams)).toEqual({search:'a & b',cursor:'next/+?&',limit:'7'});
+    expect(init).toMatchObject({method:'GET',credentials:'omit',signal:controller.signal,headers:{Accept:'application/json'}});
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it('mutates directly without a session, cookie or authorization header',async()=>{
     const {api,fetcher}=setup();await api.setEnabled('id',false);
     expect(fetcher).toHaveBeenCalledTimes(1);

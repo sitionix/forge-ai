@@ -1,6 +1,7 @@
 import { contextPathFromLocation } from './infrastructure-http-client.js';
 
 const messages = {
+  MCP_REGISTRY_UNAVAILABLE: 'MCP catalog unavailable. Retry or add a custom integration.',
   MCP_AUTH_REQUIRED: 'MCP credentials required. Update credentials and test again.',
   MCP_FORBIDDEN: 'MCP provider denied access. Check credentials and permissions.',
   MCP_ENDPOINT_DENIED: 'MCP endpoint is not allowed.',
@@ -50,6 +51,12 @@ export class McpApi {
     catch (_) { throw this.failure(502,'UPSTREAM_INVALID_RESPONSE'); }
   }
   list(signal) { return this.request('GET',this.connections,undefined,signal); }
+  available({search='',cursor,limit=20}={},signal) {
+    const query=new URLSearchParams({limit:String(limit)});
+    if(search) query.set('search',search);
+    if(cursor) query.set('cursor',cursor);
+    return this.request('GET',`/infrastructure/agents/integrations/mcp/available?${query}`,undefined,signal);
+  }
   get(id,signal) { return this.request('GET',`${this.connections}/${encodeURIComponent(id)}`,undefined,signal); }
   create(command,signal) { return this.request('POST',this.connections,command,signal); }
   update(id,command,signal) { return this.request('PUT',`${this.connections}/${encodeURIComponent(id)}`,command,signal); }

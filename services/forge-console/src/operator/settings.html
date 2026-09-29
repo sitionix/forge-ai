@@ -12,9 +12,20 @@
   <button id="mcpRetry" class="button secondary" type="button" hidden>Refresh confirmed state</button>
   <p id="mcpNotice" role="status" aria-live="polite"></p>
   <section id="mcpManagement">
-    <div class="mcp-actions"><button id="mcpAdd" class="button" type="button">Add integration</button><button id="mcpRefresh" class="button secondary" type="button">Refresh</button></div>
+    <div class="mcp-actions"><button id="mcpAdd" class="button" type="button">Add integration</button><button id="mcpCustom" class="button secondary" type="button">Add custom MCP</button><button id="mcpRefresh" class="button secondary" type="button">Refresh</button></div>
+    <nav class="mcp-actions" aria-label="MCP integrations"><button id="mcpConnectedTab" class="button secondary" type="button" aria-pressed="true" aria-controls="mcpConnected">Connected</button><button id="mcpCatalogTab" class="button secondary" type="button" aria-pressed="false" aria-controls="mcpCatalog">Catalog</button></nav>
+    <section id="mcpConnected" aria-label="Connected MCP integrations">
     <div id="mcpConnections" aria-live="polite"></div>
     <section id="mcpDetailsPanel" class="mcp-details" hidden><h2>Connection details</h2><div id="mcpDetails"></div><div class="mcp-actions"><button id="mcpEdit" class="button" type="button">Edit connection and access</button><button id="mcpTest" class="button secondary" type="button">Test connection</button><button id="mcpToggle" class="button secondary" type="button">Enable</button><button id="mcpRemove" class="button secondary" type="button">Remove</button></div></section>
+    </section>
+    <section id="mcpCatalog" aria-labelledby="mcpCatalogTitle" hidden>
+      <h4 id="mcpCatalogTitle">Available integrations</h4>
+      <p class="mcp-description">From the official MCP Registry. Choose an integration to configure its endpoint and credentials. Availability is checked when you test the saved connection.</p>
+      <form id="mcpCatalogSearchForm" class="mcp-actions"><label for="mcpCatalogSearch">Search</label><input id="mcpCatalogSearch" class="text-input" type="search" maxlength="200" placeholder="Name or description"><button class="button secondary" type="submit">Search</button></form>
+      <p id="mcpCatalogNotice" role="status" aria-live="polite"></p>
+      <div id="mcpCatalogError" class="error-box" role="alert" hidden></div><button id="mcpCatalogRetry" class="button secondary" type="button" hidden>Retry catalog</button>
+      <div id="mcpCatalogServers"></div><button id="mcpCatalogNext" class="button secondary" type="button" disabled>Next page</button>
+    </section>
   </section>
   </section>
 </main>

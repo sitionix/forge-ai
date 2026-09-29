@@ -32,7 +32,13 @@ export class McpConnectionForm {
     this.element('mcpSaveAccess').disabled=this.pending || this.saved?.enabled!==false;
     this.element('mcpAccessGuard').hidden=!this.saved || this.saved.enabled===false;
   }
-  openCreate(projects) { this.open(null,[],projects); }
+  openCreate(projects,server) {
+    this.open(null,[],projects);
+    if(!server || this.disposed) return;
+    this.element('mcpFormTitle').textContent='Connect MCP';
+    this.element('mcpName').value=server.title||server.name;this.element('mcpEndpoint').value=server.endpoint;
+    if(/[{}]/.test(server.endpoint)) this.element('mcpFormNotice').textContent='This endpoint is a template. Replace its variables with your full HTTP endpoint before saving. New connections remain disabled until explicitly enabled.';
+  }
   openEdit(connection,inventory,projects) { this.open(connection,inventory,projects); }
   open(connection,tools,projects) {
     if(this.disposed) return;this.close();this.focusBefore=this.document.activeElement;this.active=true;this.saved=connection;this.tools=tools;this.projects=projects;
@@ -72,6 +78,7 @@ export class McpConnectionForm {
       projectAccess:this.saved?.projectAccess||{scope:'SELECTED',projectIds:[]},allowedTools:[],credentialChange};
     const bearer=this.element('mcpBearer').value;const headers=this.element('mcpSecretHeaders').value;this.clearSecrets();
     if(!command.displayName || !command.endpoint) throw new Error('Name and HTTP endpoint are required.');
+    if(/[{}]/.test(command.endpoint)) throw new Error('Replace the endpoint template variables with your full HTTP endpoint before saving.');
     if(this.saved?.credentialConfigured && credentialChange==='KEEP' && (command.endpoint!==this.saved.endpoint || authType!==this.saved.authType)) throw new Error('Replace or remove the credential when changing its endpoint or authentication.');
     if(credentialChange==='REPLACE') {
       if(authType==='BEARER' && bearer) command.credential={bearer};

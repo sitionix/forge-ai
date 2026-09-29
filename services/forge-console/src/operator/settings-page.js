@@ -1,5 +1,6 @@
 import {McpConnectionForm} from './mcp-connection-form.js';
 import {McpApi} from './mcp-api.js';
+import {McpCatalog} from './mcp-catalog.js';
 import {RequestCoordinator} from './request-coordinator.js';
 import {renderMcpConnections,renderMcpDetails} from './mcp-connections-view.js';
 
@@ -10,13 +11,17 @@ export class SettingsPage {
     this.requests=new RequestCoordinator();this.listeners=new window.AbortController();
     this.disposed=false;this.selection=0;this.selected=null;this.pending=false;
     this.form=new McpConnectionForm({document,window,api:this.api,onConfirmed:id=>void this.confirmed(id),onError:error=>this.error(error)});
+    this.catalog=new McpCatalog({document,window,api:this.api,onSelect:server=>void this.add(server)});this.view='connected';
   }
   element(id) { return this.document.getElementById(id); }
   listen(id,event,callback) { this.element(id)?.addEventListener(event,callback,{signal:this.listeners.signal}); }
   mount() {
-    this.listen('mcpRefresh','click',()=>void this.refresh());
+    this.listen('mcpRefresh','click',()=>void (this.view==='catalog'?this.catalog.load():this.refresh()));
     this.listen('mcpRetry','click',()=>void this.start());
-    this.listen('mcpAdd','click',()=>void this.add());
+    this.listen('mcpAdd','click',()=>this.showView('catalog'));
+    this.listen('mcpCatalogTab','click',()=>this.showView('catalog'));
+    this.listen('mcpConnectedTab','click',()=>this.showView('connected'));
+    this.listen('mcpCustom','click',()=>void this.add());
     this.listen('mcpEdit','click',()=>{if(this.selected && !this.pending) this.form.openEdit(this.selected.connection,this.selected.tools,this.selected.projects);});
     this.listen('mcpTest','click',()=>void this.mutate('test'));
     this.listen('mcpToggle','click',()=>void this.mutate('toggle'));
@@ -36,6 +41,13 @@ export class SettingsPage {
     this.element('mcpError').hidden=false;this.element('mcpRetry').hidden=false;this.notice('');
   }
   async start() { return this.refresh(); }
+  showView(view) {
+    if(this.disposed) return;this.view=view;
+    this.element('mcpConnected').hidden=view!=='connected';this.element('mcpCatalog').hidden=view!=='catalog';
+    this.element('mcpConnectedTab').setAttribute('aria-pressed',String(view==='connected'));
+    this.element('mcpCatalogTab').setAttribute('aria-pressed',String(view==='catalog'));
+    if(view==='catalog') void this.catalog.load();else this.catalog.cancel();
+  }
   async refresh(resetDetails=true) {
     if(this.disposed) return;this.clearError();this.notice('Loading connections…');
     if(resetDetails) {this.selection+=1;this.requests.abort('details');this.selected=null;this.element('mcpDetailsPanel').hidden=true;}
@@ -59,13 +71,14 @@ export class SettingsPage {
     } catch(error) { this.error(error); }
   }
   async confirmed(id,selection=this.selection) {
+    if(this.view==='catalog') this.showView('connected');
     if(await this.refresh(false) && !this.disposed && this.selection===selection) await this.details(id);
   }
-  async add() {
+  async add(server) {
     if(this.pending || this.disposed) return;this.pending=true;
     try {
       const result=await this.requests.run('action',({signal})=>this.api.projects(signal));
-      if(result.applied) this.form.openCreate(result.value);
+      if(result.applied) this.form.openCreate(result.value,server);
     } catch(error) {this.error(error);} finally {this.pending=false;}
   }
   async mutate(action) {
@@ -73,7 +86,7 @@ export class SettingsPage {
     const connection=this.selected.connection;const selection=this.selection;
     if(action==='remove' && !this.window.confirm('Remove this connection and revoke its runtime access? This cannot be undone.')) return;
     this.pending=true;this.clearError();
-    for(const id of ['mcpTest','mcpToggle','mcpRemove','mcpEdit','mcpAdd']) this.element(id).disabled=true;
+    for(const id of ['mcpTest','mcpToggle','mcpRemove','mcpEdit','mcpAdd','mcpCustom']) this.element(id).disabled=true;
     try {
       const result=await this.requests.run('action',({signal})=> action==='test'?this.api.test(connection.id,signal)
         :action==='remove'?this.api.remove(connection.id,signal):this.api.setEnabled(connection.id,!connection.enabled,signal));
@@ -86,10 +99,10 @@ export class SettingsPage {
       this.error(error);
     } finally {
       this.pending=false;
-      if(!this.disposed) for(const id of ['mcpTest','mcpToggle','mcpRemove','mcpEdit','mcpAdd']) this.element(id).disabled=false;
+      if(!this.disposed) for(const id of ['mcpTest','mcpToggle','mcpRemove','mcpEdit','mcpAdd','mcpCustom']) this.element(id).disabled=false;
     }
   }
   dispose() {
-    if(this.disposed) return;this.disposed=true;this.form.dispose();this.requests.dispose();this.listeners.abort();this.resetView();this.notice('');
+    if(this.disposed) return;this.disposed=true;this.form.dispose();this.catalog.dispose();this.requests.dispose();this.listeners.abort();this.resetView();this.notice('');
   }
 }
