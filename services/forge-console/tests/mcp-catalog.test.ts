@@ -30,21 +30,14 @@ describe('Available MCP catalog',()=>{
     expect(element('mcpCatalogServers').querySelector('img')).toBeNull();
     expect(element('mcpCatalogServers').querySelector('.mcp-catalog-icon')).not.toBeNull();page.dispose();
   });
-  it('opens one metadata page and prefills the existing form without connecting or probing',async()=>{
+  it('preserves template metadata and gives Custom guidance without opening its form',async()=>{
     const {page,fetcher}=setup();click('mcpAdd');await wait();
-    expect(element('mcpCatalog').hidden).toBe(false);
     expect(element('mcpCatalogServers').textContent).toContain(server.title);
-    expect(element('mcpCatalogServers').querySelector('img')).toBeNull();
     expect(fetcher.mock.calls.filter(([url])=>url.includes('/available?'))).toHaveLength(1);
     (element('mcpCatalogServers').querySelector('button') as HTMLButtonElement).click();
-    await vi.waitFor(()=>expect((element('mcpConnectionDialog') as HTMLDialogElement).open).toBe(true));
-    expect((element('mcpName') as HTMLInputElement).value).toBe(server.title);
-    expect((element('mcpEndpoint') as HTMLInputElement).value).toBe(server.endpoint);
-    expect(element('mcpFormNotice').textContent).toContain('template');
-    element('mcpConnectionForm').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
-    await vi.waitFor(()=>expect(element('mcpFormError').textContent).toContain('template'));
-    expect(fetcher.mock.calls.every(([,init])=>init.method==='GET')).toBe(true);
-    expect(fetcher.mock.calls.every(([url])=>!url.startsWith('https:'))).toBe(true);page.dispose();
+    expect((element('mcpConnectionDialog') as HTMLDialogElement).open).toBe(false);
+    expect(element('mcpCatalogServers').textContent).toContain('template');
+    expect(fetcher.mock.calls.every(([,init])=>init.method==='GET')).toBe(true);page.dispose();
   });
   it('preserves cursors on empty filtered pages and uses the submitted search for next page',async()=>{
     const {page,fetcher}=setup(async()=>Response.json({servers:[],nextCursor:'next/+?&'}));click('mcpAdd');await wait();
@@ -64,13 +57,10 @@ describe('Available MCP catalog',()=>{
     expect((element('mcpEndpoint') as HTMLInputElement).value).toBe('');
     expect(fetcher.mock.calls.filter(([url])=>url.includes('/available?'))).toHaveLength(1);page.dispose();
   });
-  it('retries reads explicitly and prefills a plain endpoint without any mutation',async()=>{
-    let calls=0;
-    const {page,fetcher}=setup(async()=>++calls===1?Response.json({},{status:503}):Response.json({servers:[{...server,endpoint:'https://example.org/mcp'}]}));
+  it('retries catalog reads explicitly without mutating a connection',async()=>{
+    let calls=0;const {page,fetcher}=setup(async()=>++calls===1?Response.json({},{status:503}):Response.json({servers:[server]}));
     click('mcpAdd');await wait();expect(calls).toBe(1);click('mcpCatalogRetry');await wait();expect(calls).toBe(2);
-    (element('mcpCatalogServers').querySelector('button') as HTMLButtonElement).click();
-    await vi.waitFor(()=>expect((element('mcpConnectionDialog') as HTMLDialogElement).open).toBe(true));
-    expect((element('mcpEndpoint') as HTMLInputElement).value).toBe('https://example.org/mcp');
+    expect(element('mcpCatalogServers').querySelector('button')?.textContent).toBe('Connect');
     expect(fetcher.mock.calls.every(([,init])=>init.method==='GET')).toBe(true);page.dispose();
   });
   it('cancels a catalog read when returning to Connected',async()=>{

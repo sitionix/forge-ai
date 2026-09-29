@@ -21,8 +21,10 @@ export interface McpCommand {
   credentialChange?: 'KEEP' | 'REPLACE' | 'REMOVE'; credential?: {bearer?: string; headers?: Record<string,string>;clientSecret?:string};
   oauthConfiguration?:McpOAuthConfiguration;
 }
+export interface McpConnectResult {connection:McpConnection;authorization:{transactionId:string;connectionId:string;authorizationUrl:string}|null;}
 export class McpApi {
   constructor(options?: {fetcher?: (url:string,init:RequestInit)=>Promise<Response>;location?:Pick<Location,'pathname'>});
+  connectCatalog(command:{displayName:string;endpoint:string},signal?:AbortSignal):Promise<McpConnectResult>;
   startOAuth(id:string,signal?:AbortSignal):Promise<{transactionId:string;connectionId:string;authorizationUrl:string}>;
   cancelOAuth(id:string,transactionId:string,signal?:AbortSignal):Promise<void>;
   list(signal?:AbortSignal):Promise<McpConnection[]>;

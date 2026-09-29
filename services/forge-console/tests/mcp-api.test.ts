@@ -50,3 +50,9 @@ it('only OAuth browser mutations carry same-origin cookie credentials',async()=>
  expect(fetcher.mock.calls[1]![1]).toMatchObject({method:'DELETE',credentials:'same-origin',body:'{}'});
  expect(fetcher.mock.calls[2]![1]).toMatchObject({method:'GET',credentials:'omit'});
 });
+
+it('catalog Connect sends only name and endpoint with same-origin transaction cookies',async()=>{
+ const fetcher=vi.fn(async(_url:string,_init:RequestInit)=>Response.json({}));const api=new McpApi({fetcher,location:{pathname:'/fgaisox/operator/settings.html'}});
+ await api.connectCatalog({displayName:'Example',endpoint:'https://example.org/mcp'});
+ expect(fetcher.mock.calls[0]).toEqual(['/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connect',expect.objectContaining({method:'POST',credentials:'same-origin',body:'{"displayName":"Example","endpoint":"https://example.org/mcp"}'})]);
+});

@@ -2,6 +2,8 @@ import { contextPathFromLocation } from './infrastructure-http-client.js';
 
 const messages = {
   MCP_REGISTRY_UNAVAILABLE: 'MCP catalog unavailable. Retry or add a custom integration.',
+  MCP_OAUTH_SETUP_REQUIRED: 'Forge needs a registered OAuth client for this provider. Contact the installation owner.',
+  MCP_CUSTOM_REQUIRED: 'Use Add custom MCP for this endpoint or its required credentials.',
   MCP_OAUTH_RECONNECT_REQUIRED: 'Sign in again to reconnect this integration.',
   MCP_OAUTH_DENIED: 'Sign-in was declined. You can try Connect again.',
   MCP_OAUTH_INVALID_TRANSACTION: 'Sign-in expired or was cancelled. Connect again.',
@@ -56,6 +58,7 @@ export class McpApi {
     try { return response.status === 204 ? undefined : await response.json(); }
     catch (_) { throw this.failure(502,'UPSTREAM_INVALID_RESPONSE'); }
   }
+  connectCatalog({displayName,endpoint},signal) {return this.request('POST','/infrastructure/agents/integrations/mcp/connect',{displayName,endpoint},signal,'same-origin');}
   startOAuth(id,signal) {return this.request('POST',`${this.connections}/${encodeURIComponent(id)}/oauth/start`,{},signal,'same-origin');}
   cancelOAuth(id,transactionId,signal) {return this.request('DELETE',`${this.connections}/${encodeURIComponent(id)}/oauth/transactions/${encodeURIComponent(transactionId)}`,{},signal,'same-origin');}
   list(signal) { return this.request('GET',this.connections,undefined,signal); }

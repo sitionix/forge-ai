@@ -1,5 +1,6 @@
 import {McpConnectionForm} from './mcp-connection-form.js';
 import {McpApi} from './mcp-api.js';
+import {McpCatalogConnect} from './mcp-catalog-connect.js';
 import {McpCatalog} from './mcp-catalog.js';
 import {RequestCoordinator} from './request-coordinator.js';
 import {renderMcpConnections,renderMcpDetails} from './mcp-connections-view.js';
@@ -11,7 +12,8 @@ export class SettingsPage {
     this.requests=new RequestCoordinator();this.listeners=new window.AbortController();
     this.disposed=false;this.selection=0;this.selected=null;this.pending=false;
     this.form=new McpConnectionForm({document,window,api:this.api,onConfirmed:id=>void this.confirmed(id),onError:error=>this.error(error),onClose:saved=>this.formClosed(saved)});
-    this.catalog=new McpCatalog({document,window,api:this.api,onSelect:server=>void this.add(server)});
+    this.catalog=new McpCatalog({document,window,api:this.api,onSelect:server=>this.catalogConnect.connect(server)});
+    this.catalogConnect=new McpCatalogConnect({window,api:this.api,catalog:this.catalog,onSaved:()=>this.refresh(false)});
   }
   element(id) { return this.document.getElementById(id); }
   listen(id,event,callback) { this.element(id)?.addEventListener(event,callback,{signal:this.listeners.signal}); }
@@ -54,7 +56,7 @@ export class SettingsPage {
     if(reload) {void this.catalog.load();this.element('mcpCatalogSearch').focus();}
     else if(this.catalogFocus?.isConnected) this.catalogFocus.focus();
   }
-  closeCatalog() {this.requests.abort('add');this.catalog.cancel();this.element('mcpCatalog').close();this.element('mcpCatalog').hidden=true;this.element('mcpAdd').focus();}
+  closeCatalog() {this.catalogConnect.cancel();this.requests.abort('add');this.catalog.cancel();this.element('mcpCatalog').close();this.element('mcpCatalog').hidden=true;this.element('mcpAdd').focus();}
   showDetails() {if(this.form.active) return;this.closeCatalog();const dialog=this.element('mcpDetailsPanel');dialog.hidden=false;if(!dialog.open) dialog.showModal();}
   hideDetails() {this.element('mcpDetailsPanel').close();this.element('mcpDetailsPanel').hidden=true;}
   closeDetails() {
@@ -98,13 +100,13 @@ export class SettingsPage {
   async confirmed(id,selection=this.selection) {
     if(await this.refresh(false) && !this.disposed && this.selection===selection) await this.details(id,{open:!this.form.active});
   }
-  async add(server) {
+  async add() {
     if(this.pending || this.disposed) return;this.pending=true;
     try {
       const result=await this.requests.run('add',({signal})=>this.api.projects(signal));
       if(result.applied) {
         this.catalogFocus=this.document.activeElement;this.closeCatalog();
-        this.selected=null;this.form.openCreate(result.value,server);
+        this.selected=null;this.form.openCreate(result.value);
       }
     } catch(error) {this.error(error);} finally {this.pending=false;}
   }
@@ -130,6 +132,6 @@ export class SettingsPage {
     }
   }
   dispose() {
-    if(this.disposed) return;this.disposed=true;this.form.dispose();this.closeCatalog();this.catalog.dispose();this.requests.dispose();this.listeners.abort();this.resetView();this.notice('');
+    if(this.disposed) return;this.disposed=true;this.catalogConnect.dispose();this.form.dispose();this.closeCatalog();this.catalog.dispose();this.requests.dispose();this.listeners.abort();this.resetView();this.notice('');
   }
 }

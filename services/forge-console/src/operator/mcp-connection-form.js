@@ -52,13 +52,7 @@ export class McpConnectionForm {
     this.element('mcpSaveAccess').disabled=this.pending || this.saved?.enabled!==false;
     this.element('mcpAccessGuard').hidden=!this.saved || this.saved.enabled===false;
   }
-  openCreate(projects,server) {
-    this.open(null,[],projects);
-    if(!server || this.disposed) return;
-    this.element('mcpFormTitle').textContent='Connect MCP';
-    this.element('mcpName').value=server.title||server.name;this.element('mcpEndpoint').value=server.endpoint;
-    if(/[{}]/.test(server.endpoint)) this.element('mcpFormNotice').textContent='This endpoint is a template. Replace its variables with your full HTTP endpoint before saving. New connections remain disabled until explicitly enabled.';
-  }
+  openCreate(projects) {this.open(null,[],projects);}
   openEdit(connection,inventory,projects) { this.open(connection,inventory,projects); }
   open(connection,tools,projects) {
     if(this.disposed) return;this.close(false);this.focusBefore=this.document.activeElement;this.active=true;this.saved=connection;this.tools=tools;this.projects=projects;

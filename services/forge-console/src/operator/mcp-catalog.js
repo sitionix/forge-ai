@@ -44,15 +44,21 @@ export class McpCatalog {
   render(page) {
     const container=this.element('mcpCatalogServers');container.replaceChildren();
     for(const server of page.servers) {
-      const button=this.document.createElement('button');button.type='button';button.className='mcp-catalog-row';
+      const row=this.document.createElement('div');row.className='mcp-catalog-row';row.dataset.endpoint=server.endpoint;row.dataset.name=server.name;
       const title=this.document.createElement('span');title.className='mcp-catalog-title';title.textContent=server.title||server.name;
       const description=this.document.createElement('span');description.className='mcp-catalog-description';description.textContent=server.description||'';
-      const copy=this.document.createElement('span');copy.className='mcp-row-copy';copy.append(title,description);
-      const arrow=this.document.createElement('span');arrow.textContent='›';arrow.setAttribute('aria-hidden','true');
-      button.append(this.icon(server),copy,arrow);button.setAttribute('aria-label',`Configure ${server.title||server.name}`);
+      const status=this.document.createElement('span');status.className='mcp-catalog-status';status.setAttribute('role','status');
+      const copy=this.document.createElement('span');copy.className='mcp-row-copy';copy.append(title,description,status);
+      const button=this.document.createElement('button');button.type='button';button.className='btn btn-secondary';button.textContent='Connect';button.setAttribute('aria-label',`Connect ${server.title||server.name}`);
       button.addEventListener('click',()=>this.onSelect(server),{signal:this.listeners.signal});
-      container.append(button);
+      row.append(this.icon(server),copy,button);container.append(row);
     }
+  }
+  connectionStatus(server,message,action=null) {
+    const row=[...this.element('mcpCatalogServers').children].find(row=>row.dataset.endpoint===server.endpoint && row.dataset.name===server.name);
+    if(!row) return;
+    row.querySelector('.mcp-catalog-status').textContent=message;
+    const button=row.querySelector('button');button.disabled=typeof action!=='string';button.textContent=typeof action==='string'?action:'Connect';
   }
   icon(server) {
     const container=this.document.createElement('span');container.className='mcp-catalog-icon';container.setAttribute('aria-hidden','true');

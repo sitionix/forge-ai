@@ -23,13 +23,12 @@ describe('Compact MCP Settings flow',()=>{
   expect(element('mcpConnections').textContent).not.toContain(connection.endpoint);
   expect(dialog('mcpCatalog').tagName).toBe('DIALOG');expect(dialog('mcpDetailsPanel').tagName).toBe('DIALOG');page.dispose();
  });
- it('uses a compact catalog row and returns to the same catalog after cancelling setup',async()=>{
+ it('keeps the compact catalog and opens only the explicit Custom action as a form',async()=>{
   const {page,fetcher}=setup();click('mcpAdd');await vi.waitFor(()=>expect(element('mcpCatalogServers').querySelector('button')).not.toBeNull());
   expect(dialog('mcpCatalog').open).toBe(true);expect(element('mcpCatalogServers').textContent).not.toContain(server.endpoint);
-  expect(element('mcpCatalogServers').textContent).not.toContain('Connect');
-  const row=element('mcpCatalogServers').querySelector('button')!;row.focus();row.click();
-  await vi.waitFor(()=>expect(dialog('mcpConnectionDialog').open).toBe(true));expect(dialog('mcpCatalog').open).toBe(false);
-  click('mcpFormClose');expect(dialog('mcpCatalog').open).toBe(true);expect(document.activeElement).toBe(row);
+  expect(element('mcpCatalogServers').querySelector('button')?.textContent).toBe('Connect');
+  click('mcpCustom');await vi.waitFor(()=>expect(dialog('mcpConnectionDialog').open).toBe(true));
+  expect(dialog('mcpCatalog').open).toBe(false);click('mcpFormClose');expect(dialog('mcpCatalog').open).toBe(true);
   expect(fetcher.mock.calls.filter(([url])=>url.includes('/available?'))).toHaveLength(1);
   expect(fetcher.mock.calls.every(([,init])=>init.method==='GET')).toBe(true);page.dispose();
  });
@@ -54,7 +53,7 @@ describe('Compact MCP Settings flow',()=>{
   const {page,fetcher}=setup();click('mcpAdd');await vi.waitFor(()=>expect(element('mcpCatalogServers').querySelector('button')).not.toBeNull());
   let finish!:(response:Response)=>void;let signal!:AbortSignal;
   fetcher.mockImplementation(async(_url:string,init:RequestInit)=>{signal=init.signal!;return new Promise(resolve=>{finish=resolve;});});
-  (element('mcpCatalogServers').querySelector('button') as HTMLButtonElement).click();await vi.waitFor(()=>expect(finish).toBeDefined());
+  click('mcpCustom');await vi.waitFor(()=>expect(finish).toBeDefined());
   click('mcpCatalogClose');expect(signal.aborted).toBe(true);finish(Response.json([]));
   await fetcher.mock.results.at(-1)!.value;await Promise.resolve();await Promise.resolve();
   expect(dialog('mcpConnectionDialog').open).toBe(false);expect(dialog('mcpCatalog').open).toBe(false);expect(signal.aborted).toBe(true);page.dispose();
