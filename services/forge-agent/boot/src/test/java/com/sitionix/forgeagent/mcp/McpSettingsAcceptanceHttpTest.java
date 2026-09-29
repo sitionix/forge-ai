@@ -68,12 +68,13 @@ class McpSettingsAcceptanceHttpTest {
             try {
                 if(!exchange.getRequestMethod().equals("POST")) {
                     if(exchange.getRequestURI().getPath().equals("/mcp-oauth")) {
-                        provider.preparations.add("challenge");exchange.getResponseHeaders().set("WWW-Authenticate","Bearer resource_metadata=\"http://127.0.0.1:"+upstream.getAddress().getPort()+"/.well-known/oauth-protected-resource/mcp-oauth\", scope=\"tools\"");
-                        exchange.sendResponseHeaders(401,-1);
+                        exchange.sendResponseHeaders(405,-1);
                     } else exchange.sendResponseHeaders(200,-1);
                     return;
                 }
                 if(exchange.getRequestURI().getPath().equals("/mcp-oauth") && !("Bearer "+McpOAuthProviderFixture.ACCESS).equals(exchange.getRequestHeaders().getFirst("Authorization")) && !("Bearer "+McpOAuthProviderFixture.ACCESS+"-rotated").equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+                    provider.preparations.add("post-challenge");
+                    exchange.getResponseHeaders().set("WWW-Authenticate","Bearer resource_metadata=\"http://127.0.0.1:"+upstream.getAddress().getPort()+"/.well-known/oauth-protected-resource/mcp-oauth\", scope=\"tools\"");
                     exchange.sendResponseHeaders(401,-1);return;
                 }
                 var json=new ObjectMapper();var body=json.readTree(exchange.getRequestBody());

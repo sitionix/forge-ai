@@ -21,6 +21,8 @@ class SpringMcpAuthenticationDiscoveryTest {
     URI base, endpoint;
     McpAuthenticationDiscovery discovery;
     final Map<String,Reply> replies=new ConcurrentHashMap<>();
+    final Map<String,Reply> methodReplies=new ConcurrentHashMap<>();
+    final List<String> methods=new CopyOnWriteArrayList<>(),requests=new CopyOnWriteArrayList<>();
     final List<String> paths=new CopyOnWriteArrayList<>();
     final List<String> credentials=new CopyOnWriteArrayList<>();
     final CountDownLatch release=new CountDownLatch(1);
@@ -29,9 +31,10 @@ class SpringMcpAuthenticationDiscoveryTest {
         server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         executor=Executors.newCachedThreadPool();server.setExecutor(executor);
         server.createContext("/", exchange->{
-            paths.add(exchange.getRequestURI().getPath());
+            paths.add(exchange.getRequestURI().getPath());methods.add(exchange.getRequestMethod());
+            requests.add(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8));
             for(String header:List.of("Authorization","Cookie"))if(exchange.getRequestHeaders().getFirst(header)!=null)credentials.add(header);
-            var reply=replies.getOrDefault(exchange.getRequestURI().getPath(),new Reply(404,"{}",Map.of()));
+            var reply=methodReplies.getOrDefault(exchange.getRequestMethod()+" "+exchange.getRequestURI().getPath(),replies.getOrDefault(exchange.getRequestURI().getPath(),new Reply(404,"{}",Map.of())));
             reply.headers().forEach((key,value)->exchange.getResponseHeaders().set(key,value));
             byte[] bytes=reply.body().getBytes(StandardCharsets.UTF_8);
             try {
@@ -140,6 +143,48 @@ class SpringMcpAuthenticationDiscoveryTest {
     }
     @Test void expiredSharedDeadlineMakesZeroCalls(){
         assertThatThrownBy(()->discovery.discover(endpoint,System.nanoTime()-1)).isInstanceOf(McpOAuthException.class);assertThat(paths).isEmpty();
+    }
+    @Test void postOnlyNoAuthEndpointUsesInitializeAndReleasesItsTemporarySession() throws Exception {
+        reply("/mcp",405,"{}");
+        methodReplies.put("POST /mcp",new Reply(200,"{}",Map.of("Mcp-Session-Id","fixture-session")));
+        methodReplies.put("DELETE /mcp",new Reply(204,"",Map.of("X-Empty","true")));
+        assertThat(discover().oauthRequired()).isFalse();
+        assertThat(methods).containsExactly("GET","POST","DELETE");
+        var request=new ObjectMapper().readTree(requests.get(1));
+        assertThat(request.path("method").asText()).isEqualTo("initialize");
+        assertThat(request.path("params").path("protocolVersion").asText()).isNotBlank();
+        assertThat(credentials).isEmpty();
+    }
+    @Test void postChallengeDiscoversOauthForUnsupportedGetAndMissingSession() {
+        for(int status:List.of(405,400)) {
+            paths.clear();methods.clear();protectedMetadata();reply("/mcp",status,"{}");
+            methodReplies.put("POST /mcp",new Reply(401,"",Map.of("X-Empty","true","WWW-Authenticate","Bearer resource_metadata=\""+base+"/resource\"")));
+            assertThat(discover().oauthRequired()).isTrue();
+            assertThat(methods.subList(0,2)).containsExactly("GET","POST");assertThat(paths).contains("/resource");
+        }
+    }
+    @Test void protectedResourceTlsBoundaryRejectsPublicHttpWithoutOutboundCalls() {
+        var http=context.getBean(McpOAuthMetadataHttpClient.class);
+        assertThatThrownBy(()->http.validateOAuthUri(URI.create("http://public.example/mcp"))).isInstanceOf(McpOAuthException.class).hasNoCause();
+        assertThat(paths).isEmpty();assertThat(credentials).isEmpty();
+    }
+    @Test void publicHttpOauthEndpointsAreRejectedBeforeRegistrationOrCredentialUse() {
+        protectedMetadata();challenge("Bearer resource_metadata=\""+base+"/resource\"");
+        for(String field:List.of("authorization_endpoint","token_endpoint","registration_endpoint","revocation_endpoint")) {
+            String body=asMetadata(base.toString());
+            if(field.equals("authorization_endpoint"))body=body.replace(base+"/authorize","http://public.example/authorize");
+            else if(field.equals("token_endpoint"))body=body.replace(base+"/token","http://public.example/token");
+            else body=body.substring(0,body.length()-1)+",\""+field+"\":\"http://public.example/endpoint\"}";
+            reply("/.well-known/oauth-authorization-server",200,body);invalid();
+        }
+        assertThat(paths).doesNotContain("/register","/token","/authorize");assertThat(credentials).isEmpty();
+    }
+    @Test void absentChallengeScopeUsesProtectedResourceScopesAndRejectsInvalidTokens() {
+        protectedMetadata();challenge("Bearer resource_metadata=\""+base+"/resource\"");
+        assertThat(discover().scopes()).containsExactlyInAnyOrder("read","write");
+        for(String scopes:List.of("[null]","[\"bad scope\"]","[\"\"]")) {
+            reply("/resource",200,"{\"resource\":\""+endpoint+"\",\"authorization_servers\":[\""+base+"\"],\"scopes_supported\":"+scopes+"}");invalid();
+        }
     }
     void invalid(){assertThatThrownBy(this::discover).isInstanceOf(McpOAuthException.class).hasNoCause().hasMessageNotContaining("canary");}
     com.sitionix.forgeagent.domain.model.McpAuthenticationMetadata discover(){return discovery.discover(endpoint,System.nanoTime()+Duration.ofSeconds(3).toNanos());}

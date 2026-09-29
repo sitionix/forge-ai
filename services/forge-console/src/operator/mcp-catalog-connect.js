@@ -8,7 +8,7 @@ export class McpCatalogConnect {
       startCatalog:(server,signal)=>api.connectCatalog({displayName:server.title||server.name,endpoint:server.endpoint},signal),
       onStatus:status=>{
         if(!this.server || status==='idle') return;
-        this.catalog.connectionStatus(this.server,status==='blocked'?'Allow the sign-in window to continue.':status==='waiting'?'Waiting for provider sign-in…':'Preparing sign-in…',status==='blocked'?'Open sign-in':null);
+        this.catalog.connectionStatus(this.server,status==='blocked'?'Allow the sign-in window to continue.':status==='waiting'?'Waiting for provider sign-in…':'Preparing sign-in…',status==='blocked'||status==='waiting'?'Open sign-in':null);
       },
       onConnected:async(connection,signal)=>{
         this.catalog.connectionStatus(this.server,'Checking connection…');

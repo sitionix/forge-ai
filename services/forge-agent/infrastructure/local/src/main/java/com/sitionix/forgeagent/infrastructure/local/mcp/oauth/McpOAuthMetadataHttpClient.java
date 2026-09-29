@@ -8,6 +8,8 @@ import com.sitionix.forgeagent.domain.exception.McpOAuthException;
 import com.sitionix.forgeagent.domain.exception.McpProbeException;
 import com.sitionix.forgeagent.infrastructure.local.mcp.McpEndpointPolicy;
 import java.io.IOException;
+import io.modelcontextprotocol.spec.McpSchema;
+import com.sitionix.forgeagent.domain.model.McpOAuthConfiguration;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -39,7 +41,33 @@ final class McpOAuthMetadataHttpClient {
                     finally {closeBody(response);}
                 });
     }
+    /** Some Streamable HTTP servers reject GET or require a session; initialize observes their auth boundary. */
+    Challenge initializeChallenge(URI uri,long deadline) {
+        var initialize=new McpSchema.InitializeRequest(McpSchema.LATEST_PROTOCOL_VERSION,
+                McpSchema.ClientCapabilities.builder().build(),new McpSchema.Implementation("Forge","Forge","1"));
+        var message=new McpSchema.JSONRPCRequest(McpSchema.JSONRPC_VERSION,McpSchema.METHOD_INITIALIZE,1,initialize);
+        Challenge response=client(uri,deadline).post().uri(uri).contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON,MediaType.TEXT_EVENT_STREAM).body(message)
+                .exchange((request,result)->{try{return new Challenge(result.getStatusCode().value(),HttpHeaders.readOnlyHttpHeaders(result.getHeaders()));}finally{closeBody(result);}});
+        String session=response.headers().getFirst("Mcp-Session-Id");
+        if(response.status()>=200 && response.status()<300 && session!=null) {
+            if(session.isBlank() || session.chars().anyMatch(c->c<0x21 || c>0x7e))throw McpOAuthException.invalidResponse();
+            client(uri,deadline).delete().uri(uri).header(HttpHeaders.CONTENT_LENGTH,"0").header("Mcp-Session-Id",session)
+                    .header("MCP-Protocol-Version",McpSchema.LATEST_PROTOCOL_VERSION)
+                    .exchange((request,result)->{try {
+                        int status=result.getStatusCode().value();
+                        if(!(status>=200 && status<300) && status!=404 && status!=405)throw McpOAuthException.unavailable();
+                        return null;
+                    }finally{closeBody(result);}});
+        }
+        return response;
+    }
+    void validateOAuthUri(URI uri) {
+        try {McpOAuthConfiguration.validateUri(uri);}catch(IllegalArgumentException invalid){throw McpOAuthException.invalidResponse();}
+        if(!"https".equalsIgnoreCase(uri.getScheme()) && !policy.isAllowedPrivateEndpoint(uri))throw McpOAuthException.endpointDenied();
+    }
     <T> T metadata(URI uri,long deadline,Class<T> type) {
+        validateOAuthUri(uri);
         return client(uri,deadline).get().uri(uri).accept(MediaType.APPLICATION_JSON)
                 .exchange((request,response)->{
                     try {if(response.getStatusCode().value()==404)return null;return decode(response,type,deadline);}
@@ -47,6 +75,7 @@ final class McpOAuthMetadataHttpClient {
                 });
     }
     <T> T register(URI uri,long deadline,Object body,Class<T> type) {
+        validateOAuthUri(uri);
         return client(uri,deadline).post().uri(uri).contentType(MediaType.APPLICATION_JSON).accept(MediaType.APPLICATION_JSON)
                 .body(body).exchange((request,response)->{try{return decode(response,type,deadline);}finally{closeBody(response);}});
     }
@@ -56,7 +85,7 @@ final class McpOAuthMetadataHttpClient {
             // HttpURLConnection throws when these header-only responses have no error stream.
             // Their status/headers are sufficient for discovery and standard 404 fallback.
             int status=response.getStatusCode().value();
-            if(status!=401 && status!=404)throw emptyErrorBody;
+            if(status!=400 && status!=401 && status!=404 && status!=405)throw emptyErrorBody;
         }
     }
     private <T> T decode(org.springframework.http.client.ClientHttpResponse response,Class<T> type,long deadline) throws IOException {
@@ -81,12 +110,14 @@ final class McpOAuthMetadataHttpClient {
         } catch(com.fasterxml.jackson.core.JsonProcessingException invalid){throw McpOAuthException.invalidResponse();}
     }
     private RestClient client(URI uri,long deadline) {
+        if(System.nanoTime()>=deadline)throw McpOAuthException.unavailable();
+        try {policy.validate(uri);}catch(McpProbeException denied){throw McpOAuthException.endpointDenied();}
         long remaining=deadline-System.nanoTime();
         if(remaining<java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(1))throw McpOAuthException.unavailable();
-        try {policy.validate(uri);}catch(McpProbeException denied){throw McpOAuthException.endpointDenied();}
         var factory=new SimpleClientHttpRequestFactory() {
             @Override protected void prepareConnection(java.net.HttpURLConnection connection,String method) throws IOException {
                 super.prepareConnection(connection,method);connection.setInstanceFollowRedirects(false);
+                if("DELETE".equals(method))connection.setDoOutput(false);
                 if(connection instanceof javax.net.ssl.HttpsURLConnection secure)secure.setSSLSocketFactory(http.sslContext().getSocketFactory());
             }
         };

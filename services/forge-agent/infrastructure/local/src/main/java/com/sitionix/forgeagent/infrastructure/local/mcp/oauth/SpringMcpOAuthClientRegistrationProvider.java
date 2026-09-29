@@ -45,7 +45,7 @@ final class SpringMcpOAuthClientRegistrationProvider implements McpOAuthClientRe
     private McpOAuthClientRegistration dynamic(McpAuthenticationMetadata m,long deadline) {
         String method=List.of("none","client_secret_basic","client_secret_post").stream().filter(m.clientAuthenticationMethods()::contains).findFirst().orElseThrow(McpOAuthException::setupRequired);
         String application=Set.of("127.0.0.1","localhost","::1","[::1]").contains(callback.getHost())?"native":"web";
-        var request=new RegistrationRequest("Forge",List.of(callback),List.of("authorization_code"),List.of("code"),method,application,String.join(" ",new TreeSet<>(m.scopes())));
+        var request=new RegistrationRequest("Forge",List.of(callback),List.of("authorization_code"),List.of("code"),method,application,m.scopes().isEmpty()?null:String.join(" ",new TreeSet<>(m.scopes())));
         var response=http.register(m.registrationEndpoint(),deadline,request,RegistrationResponse.class);
         if(response.clientId()==null || response.clientId().isBlank() || response.clientId().contains("\r") || response.clientId().contains("\n")
                 || !method.equals(response.method()==null?"client_secret_basic":response.method())
@@ -63,7 +63,7 @@ final class SpringMcpOAuthClientRegistrationProvider implements McpOAuthClientRe
             @JsonProperty("redirect_uris") List<URI> redirectUris,@JsonProperty("token_endpoint_auth_method") String method){}
     private record RegistrationRequest(@JsonProperty("client_name") String clientName,@JsonProperty("redirect_uris") List<URI> redirectUris,
             @JsonProperty("grant_types") List<String> grants,@JsonProperty("response_types") List<String> responseTypes,
-            @JsonProperty("token_endpoint_auth_method") String method,@JsonProperty("application_type") String applicationType,String scope){}
+            @JsonProperty("token_endpoint_auth_method") String method,@JsonProperty("application_type") String applicationType,@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) String scope){}
     private record RegistrationResponse(@JsonProperty("client_id") String clientId,@JsonProperty("client_secret") String clientSecret,
             @JsonProperty("token_endpoint_auth_method") String method,@JsonProperty("redirect_uris") List<URI> redirectUris,
             @JsonProperty("client_secret_expires_at") Long secretExpiresAt) {

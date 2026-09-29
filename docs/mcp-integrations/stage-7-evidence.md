@@ -40,6 +40,19 @@ monotonic preparation deadline are enforced. Issuer-bound installed client has
 priority, then configured supported HTTPS CIMD, then advertised DCR. No Forge
 credential/connection token is sent to discovery/registration.
 
+Automatic protected-resource, OAuth metadata, issuer and authorization/token/registration/revocation
+URLs require HTTPS. HTTP is accepted only for explicitly allowlisted private
+fixture/development addresses, using the existing endpoint allowlist. This does
+not redesign the existing manual Custom OAuth path. GET400/405 performs one bounded
+SDK-typed initialize POST to observe the auth challenge; a successful temporary
+session receives DELETE (404 means gone;405 means server does not support client
+termination). No tools/list or tool call is made by this fallback. The regular Test
+still confirms the saved connection. Challenge scopes are authoritative; otherwise
+protected-resource `scopes_supported` is used. Empty DCR scopes are omitted.
+
+References: [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+and [MCP transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
+
 External preparation finishes before existing connection/start persistence. New
 connections are disabled with SELECTED empty project access and no tool approvals.
 DCR credentials use the existing AES-GCM encrypted connection row, not another
@@ -82,22 +95,48 @@ replay Connect. Global sidebar/search/close remain available.
   before the new catalog slice; later runs completed that Stage 5/6 slice. No
   timeout increase or production policy change was used to hide that observation.
 
+## Final independent review and one fix pass
+
+Five Important findings, no Critical/Minor findings. All five new regression
+checks were observed RED before the fix, then GREEN in the focused suite:
+
+1. Public HTTP OAuth downgrade: authorization/token/registration/revocation targets
+   rejected before registration or credential use. Explicit private HTTP fixtures remain supported.
+2. POST-only/session-required servers: GET405/400 → SDK-typed initialize → no-auth
+   success or401 metadata discovery. A temporary session is released with DELETE.
+   Spring Simple factory must send bodyless DELETE without chunked output; this
+   was isolated by its unexpected EOF, not hidden by a timeout increase.
+3. Waiting popup: **Open sign-in** remains reachable after manually closing the
+   provider window. Reopen uses the same transaction, one Connect POST; catalog
+   close explicitly cancels. COOP does not trigger automatic cancellation.
+4. Missing challenge scope uses validated protected-resource scopes. This corrects
+   the earlier least-privilege ruling against the pinned contract; challenge scope
+   still overrides metadata and installed-client scope ceilings stay enforced.
+5. DCR without scopes omits the optional field rather than sending `scope:""`.
+
+The reviewer declined to classify the synchronous blank popup for no-auth as a
+bug: it is the approved reservation that browsers require before async discovery,
+then closes without redirect. Cost: a brief blank window for a no-auth connection.
+Only one independent branch review and one implementation fix pass were used.
+No extra review cycle or unrelated refactoring was introduced.
+
 ## Executed verification
 
 | Check | Status | Evidence |
 |---|---|---|
-| Discovery/registration/config focused | PASS | 17 + 9 + 1 tests; zero failures/errors/skips. Header-only401/404 RED→GREEN. |
+| Discovery/registration/config focused | PASS | 22 + 10 + 1 tests; zero failures/errors/skips. Header-only401/404 RED→GREEN. |
 | Nexus focused unit + ForgeIT | PASS | Mapper/adapter/controller/use-case tests; 7 catalog + 2 existing OAuth IT. Origin/unknown input local denial, generated cookie binding,409/500 preservation, malformed502, safe unavailable503/canaries. |
-| Console typecheck/tests/build | PASS | 667 tests, zero failures; `tsc --noEmit` and production build exit0. |
-| Joined browser/runtime regression | PASS | Opt-in `McpSettingsAcceptanceHttpTest`, 1 test/0skips: actual built Console, Chrome, Nexus, Agent, disposable PostgreSQL, fakeAS/DCR. Two distinct authorization identities, no automatic permissions/Enable, disabled grants denied. Existing native gateway/refresh/reconnect/revocation slice passes. |
-| Full Agent verify | PASS | 1505 tests; zero failures/errors, 10 explicit opt-in skips. Joined acceptance above was separately executed. |
+| Console typecheck/tests/build | PASS | 668 tests, zero failures; `tsc --noEmit` and production build exit0. |
+| Joined browser/runtime regression | PASS | Opt-in `McpSettingsAcceptanceHttpTest`, 1 test/0skips: actual built Console, Chrome, Nexus, Agent, disposable PostgreSQL, fakeAS/DCR. Two distinct authorization identities, GET405 → POST401 discovery, no automatic permissions/Enable, disabled grants denied. Existing native gateway/refresh/reconnect/revocation slice passes. |
+| Full Agent verify | PASS | 1511 tests; zero failures/errors, 10 explicit opt-in skips. Joined acceptance above was separately executed. |
 | Full Nexus verify | PASS | 374 tests, zero failures/errors/skips. |
 | Runtime Python suite | PASS | 47 tests, exit0. |
 | Agent local/Nexus agent-client dependency analysis | PASS | Both BUILD SUCCESS; no new POM/dependency additions. Existing/transitive declaration warnings remain (below). |
 | `git diff --check` | PASS | Exit0. |
-| Normal local `just start` | NOT_VERIFIED | Pending normal provisioning/restart; no test-only enable switch. |
-| Normal :9099 Settings/catalog browser | NOT_VERIFIED | Pending read-only smoke; user's existing connection must be preserved. |
-| Fresh exact-SHA CI | NOT_VERIFIED | Pending feature-branch workflow; no PR mutation. |
+| Pre-restart Settings asset on old running process | FAIL | Two read-only requests timed out after5s; health and connection list responded200 (list empty). This is not acceptance of the new build; restart is pending. |
+| Normal local `just start` | NOT_VERIFIED | Normal restart requires local interactive sudo. First terminal authentication exited1; a new terminal was opened. No test-only enable switch or unprivileged replacement startup. |
+| Normal :9099 Settings/catalog browser | NOT_VERIFIED | New-version read-only smoke depends on normal restart. User's existing saved GitHub connection is preserved. |
+| Fresh exact-SHA CI | NOT_VERIFIED | Pending post-commit feature-branch workflow at evidence write time; final report will state observed exact-SHA CI status. Earlier298f9bda run36569717386 succeeded but does not verify this fix. No PR mutation. |
 | LIVE_PROVIDER (GitHub OAuth) | NOT_VERIFIED | Registered Forge-owned App/callback/protected installation credentials were not supplied. |
 | Public CIMD deployment | NOT_VERIFIED | Controlled local TLS fixture verifies contract; no provider-accessible production HTTPS publication. |
 | Fresh privileged OS UID/systemd probes | NOT_VERIFIED | Joined fixture substitutes verifier/execution lease. Historical Stage 3/4/6 probes are not repeated claims. |

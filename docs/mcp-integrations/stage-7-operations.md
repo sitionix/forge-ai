@@ -3,7 +3,8 @@
 Settings → Integrations → MCP → Add integration shows the official Registry page.
 Each row has one **Connect** action. It prepares authentication on Agent and opens
 the provider's sign-in window directly; it never opens the Custom MCP form.
-Allow the popup if the browser blocks it, using **Open sign-in** for the same attempt.
+Allow the popup if the browser blocks it, or reopen a manually closed window with
+**Open sign-in** for the same attempt.
 Closing the catalog cancels the attempt; it does not replay creation.
 
 Successful sign-in reads the authoritative connection and runs the existing Test.
@@ -19,7 +20,7 @@ automatic POST retry.
 ## Installation-owned OAuth registration
 
 Agent discovers protected-resource metadata and exact authorization issuer, requires
-S256, then chooses an exact issuer's configured Forge client, a supported configured
+S256 and HTTPS OAuth endpoints (explicit private HTTP development allowlist only), then chooses an exact issuer's configured Forge client, a supported configured
 HTTPS client metadata document, or advertised dynamic client registration (DCR).
 All preparation shares `forge.mcp.oauth.discovery-timeout` (default `20s`) and the
 existing OAuth HTTP settings. Preparation plus one socket read wait must fit `25s`,

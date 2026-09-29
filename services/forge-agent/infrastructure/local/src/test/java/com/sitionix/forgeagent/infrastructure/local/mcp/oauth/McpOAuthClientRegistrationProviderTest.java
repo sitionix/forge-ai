@@ -41,6 +41,13 @@ class McpOAuthClientRegistrationProviderTest {
             assertThat(headers).isEmpty();assertThat(registered.toString()).doesNotContain("secret");
         }
     }
+    @Test void dcrWithNoScopesOmitsTheOptionalScopeField() throws Exception {
+        var m=metadata();var noScopes=new McpAuthenticationMetadata(true,m.resource(),m.issuer(),m.authorizationEndpoint(),m.tokenEndpoint(),null,m.registrationEndpoint(),false,Set.of(),m.clientAuthenticationMethods(),m.codeChallengeMethods());
+        try(var context=context(Map.of())) {
+            assertThat(resolve(context,noScopes).configuration().scopes()).isEmpty();
+            assertThat(new ObjectMapper().readTree(bodies.getFirst()).has("scope")).isFalse();
+        }
+    }
     @Test void installationClientHasPriorityAndSecretIsLoadedOnlyFromProtectedFile() throws Exception {
         Path secret=temporary.resolve("client-secret");Files.writeString(secret,"synthetic-client-canary");Files.setPosixFilePermissions(secret,PosixFilePermissions.fromString("rw-------"));
         try(var context=context(Map.of("forge.mcp.oauth.clients[0].issuer",base.toString(),"forge.mcp.oauth.clients[0].client-id","installed-client",

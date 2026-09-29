@@ -20,8 +20,10 @@ final class SpringMcpAuthenticationDiscovery implements McpAuthenticationDiscove
     @Override public McpAuthenticationMetadata discover(URI endpoint,long deadline) {
         try {
             var response=http.challenge(endpoint,deadline);
+            if(response.status()==400 || response.status()==405)response=http.initializeChallenge(endpoint,deadline);
             if(response.status()>=200 && response.status()<300)return McpAuthenticationMetadata.noAuth(endpoint);
             if(response.status()!=401)throw McpOAuthException.unavailable();
+            http.validateOAuthUri(endpoint);
             var challenge=parseChallenge(response.headers());
             ResourceMetadata resource;
             if(challenge.containsKey("resource_metadata"))resource=http.metadata(uri(challenge.get("resource_metadata")),deadline,ResourceMetadata.class);
@@ -29,7 +31,7 @@ final class SpringMcpAuthenticationDiscovery implements McpAuthenticationDiscove
             if(resource==null && !challenge.containsKey("resource_metadata"))throw McpOAuthException.customRequired();
             if(resource==null || !endpoint.equals(resource.resource()) || resource.servers()==null || resource.servers().isEmpty())
                 throw McpOAuthException.invalidResponse();
-            resource.servers().forEach(SpringMcpAuthenticationDiscovery::validateUri);
+            resource.servers().forEach(http::validateOAuthUri);
             var candidates=resource.servers().size()==1?resource.servers():resource.servers().stream().filter(configuredIssuers::contains).toList();
             if(candidates.size()!=1)throw McpOAuthException.invalidResponse();
             URI issuer=candidates.get(0);
@@ -39,8 +41,8 @@ final class SpringMcpAuthenticationDiscovery implements McpAuthenticationDiscove
                     || server.responseTypes()==null || !server.responseTypes().contains("code")
                     || server.grants()!=null && !server.grants().contains("authorization_code"))throw McpOAuthException.invalidResponse();
             validateValues(server.authMethods());validateValues(server.codeChallengeMethods());
-            for(URI target:new URI[]{server.authorization(),server.token(),server.revocation(),server.registration()})if(target!=null)validateUri(target);
-            Set<String> scopes=challenge.containsKey("scope")?scopes(challenge.get("scope")):Set.of();
+            for(URI target:new URI[]{server.authorization(),server.token(),server.revocation(),server.registration()})if(target!=null)http.validateOAuthUri(target);
+            Set<String> scopes=challenge.containsKey("scope")?scopes(challenge.get("scope")):resourceScopes(resource.scopes());
             return new McpAuthenticationMetadata(true,resource.resource(),issuer,server.authorization(),server.token(),server.revocation(),server.registration(),
                     Boolean.TRUE.equals(server.cimd()),scopes,server.authMethods()==null?Set.of("client_secret_basic"):server.authMethods(),server.codeChallengeMethods());
         } catch(RestClientException transport){throw McpOAuthException.unavailable();}
@@ -81,8 +83,13 @@ final class SpringMcpAuthenticationDiscovery implements McpAuthenticationDiscove
     }
     private static void validateValues(Set<String> values){if(values!=null && values.stream().anyMatch(v->v==null || v.isBlank()))throw McpOAuthException.invalidResponse();}
     private static URI uri(String value){try{return URI.create(value);}catch(IllegalArgumentException invalid){throw McpOAuthException.invalidResponse();}}
-    private static void validateUri(URI value){try{McpOAuthConfiguration.validateUri(value);}catch(IllegalArgumentException invalid){throw McpOAuthException.invalidResponse();}}
-    private record ResourceMetadata(URI resource,@JsonProperty("authorization_servers") List<URI> servers){}
+    private static Set<String> resourceScopes(Set<String> values) {
+        if(values==null)return Set.of();
+        if(values.stream().anyMatch(value->value==null || !value.matches("[\\x21\\x23-\\x5B\\x5D-\\x7E]+")))throw McpOAuthException.invalidResponse();
+        return Set.copyOf(values);
+    }
+    private record ResourceMetadata(URI resource,@JsonProperty("authorization_servers") List<URI> servers,
+            @JsonProperty("scopes_supported") Set<String> scopes){}
     private record ServerMetadata(URI issuer,@JsonProperty("authorization_endpoint") URI authorization,
             @JsonProperty("token_endpoint") URI token,@JsonProperty("revocation_endpoint") URI revocation,
             @JsonProperty("registration_endpoint") URI registration,@JsonProperty("client_id_metadata_document_supported") Boolean cimd,

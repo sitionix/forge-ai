@@ -10,7 +10,7 @@
 
 **Tech Stack:** Existing Java/Spring Boot, Spring HTTP/Jackson/OAuth client primitives, PostgreSQL/AES-GCM, Console JavaScript/TypeScript tests, ForgeIT and existing joined Chrome fixture. No new framework/dependency stack.
 
-**Spec:** `docs/superpowers/specs/2026-09-29-mcp-stage-7-catalog-connect-design.md` — user-approved 2026-09-29. This plan is DRAFT pending review. Execution method: inline, current checkout/branch; no worktrees or implementer subagents.
+**Spec:** `docs/superpowers/specs/2026-09-29-mcp-stage-7-catalog-connect-design.md` — user-approved 2026-09-29. The plan is approved for implementation. Execution method: inline, current checkout/branch; no worktrees or implementer subagents.
 
 ## Global Constraints
 
@@ -54,7 +54,7 @@ No failure enum, routing framework or generic request/deadline/caching abstracti
 - [ ] Run `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/infrastructure/local -am -Dtest=SpringMcpAuthenticationDiscoveryTest,McpOAuthDiscoveryConfigurationTest -Dsurefire.failIfNoSpecifiedTests=false test`; confirm RED before implementation.
 - [ ] Implement `discover(URI, long deadlineNanos)` using Spring HTTP response exchange for the endpoint challenge (close the response without consuming an advertised MCP event stream). Read metadata using typed Jackson DTOs; parse headers with Spring's existing challenge parser for quoted Bearer parameters if the installed API provides it. If it does not, keep `parseChallenge(HttpHeaders)` as a private tested method in this adapter, supporting multiple challenges, quoted commas/escaped quotes and duplicate-parameter rejection; no parser framework. Follow only standard discovery paths; fallback only on endpoint-not-found, not malformed/security failure.
 - [ ] Use existing OAuth connect/read/TLS settings and probe response cap (`forge.mcp.probe.max-response-bytes`, default 1048576). Add positive `forge.mcp.oauth.discovery-timeout=20s` as a total metadata/registration preparation deadline; validate it is at most 25s to stay below the ordinary 30s Agent HTTP budget. `McpConnectService` computes one monotonic deadline and passes it to discovery and registration; each request is capped by remaining time. This is a management preparation invariant, not a tool-call timeout ceiling. Do not allocate a generic deadline framework. Configuration tests must reject budgets incompatible with the documented normal management bound.
-- [ ] Apply endpoint policy before every outbound URL, exact resource/issuer checks, explicit selection when multiple authorization servers have no uniquely configured issuer. Require authorization-code/S256 compatibility. Prefer challenge scopes; never request all advertised optional scopes automatically.
+- [ ] Apply endpoint policy before every outbound URL, exact resource/issuer checks, explicit selection when multiple authorization servers have no uniquely configured issuer. Require authorization-code/S256 compatibility. Treat challenge scopes as authoritative; when absent, use validated protected-resource scopes_supported per pinned MCP scope-selection contract (final-review ruling in Stage 7 evidence).
 - [ ] Run focused tests GREEN; commit only Task 1 files.
 
 ### Task 2: Issuer-bound client selection and Agent Connect orchestration

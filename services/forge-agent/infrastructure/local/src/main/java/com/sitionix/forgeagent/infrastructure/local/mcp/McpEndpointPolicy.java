@@ -10,6 +10,16 @@ import java.util.Set;
 public final class McpEndpointPolicy {
     private final Set<String> allowedPrivateEndpoints;
     public McpEndpointPolicy(Set<String> allowedPrivateEndpoints) { this.allowedPrivateEndpoints = Set.copyOf(allowedPrivateEndpoints); }
+    /** HTTP OAuth development endpoints require an explicit allowlist entry and private addresses. */
+    public boolean isAllowedPrivateEndpoint(URI endpoint) {
+        int port=endpoint.getPort()<0?80:endpoint.getPort();
+        if(endpoint.getHost()==null || !allowedPrivateEndpoints.contains(endpoint.getHost().toLowerCase(Locale.ROOT)+":"+port))return false;
+        try {
+            InetAddress[] addresses=InetAddress.getAllByName(endpoint.getHost());
+            return addresses.length>0 && java.util.Arrays.stream(addresses)
+                    .allMatch(address->address.isLoopbackAddress() || address.isSiteLocalAddress());
+        } catch(java.net.UnknownHostException unavailable){return false;}
+    }
     public void validate(URI endpoint) {
         if (endpoint == null || endpoint.getHost() == null || endpoint.getRawUserInfo() != null
                 || endpoint.getRawQuery() != null || endpoint.getRawFragment() != null
