@@ -50,8 +50,8 @@ public class PostgresMcpOAuthTransactionRepository implements McpOAuthTransactio
         });
     }
 
-    public Optional<McpOAuthTransaction> findClaimed(UUID owner, UUID connection, UUID id) {
-        return jdbc.query("SELECT * FROM mcp_oauth_transactions WHERE installation_id=? AND connection_id=? AND id=? AND claimed_at IS NOT NULL", mapper(), owner, connection, id)
+    public Optional<McpOAuthTransaction> find(UUID owner, UUID connection, UUID id) {
+        return jdbc.query("SELECT * FROM mcp_oauth_transactions WHERE installation_id=? AND connection_id=? AND id=?", mapper(), owner, connection, id)
                 .stream().findFirst();
     }
     public void delete(UUID owner, UUID connection, UUID id) {

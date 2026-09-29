@@ -96,7 +96,7 @@ class AgentMcpManagementGuardIT {
 
   @Test void probeFailureNeverPublishesTransportCauseOrCredential(CapturedOutput output) throws Exception {
     var connection = mcpService.create("canary", java.net.URI.create("https://example.org/mcp"),
-        McpAuthType.BEARER, McpProjectAccess.all(), McpCredentialSecret.bearer("synthetic-probe-secret"));
+        McpAuthType.BEARER, McpProjectAccess.all(), McpCredentialSecret.bearer("synthetic-probe-secret"),null,null);
     try {
       org.mockito.Mockito.doThrow(new IllegalStateException("upstream-cause-canary"))
           .when(remoteProbe).probe(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),

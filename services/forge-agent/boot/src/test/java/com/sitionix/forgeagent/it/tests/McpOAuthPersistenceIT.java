@@ -70,9 +70,9 @@ class McpOAuthPersistenceIT extends AgentManagementFixture {
         try {
             transactions.claim(transaction.installationId(), transaction.id(), transaction.stateHash(), transaction.browserHash(), Instant.now()).orElseThrow();
             transactions.delete(UUID.randomUUID(), transaction.connectionId(), transaction.id());
-            assertThat(transactions.findClaimed(transaction.installationId(), transaction.connectionId(), transaction.id())).isPresent();
+            assertThat(transactions.find(transaction.installationId(), transaction.connectionId(), transaction.id())).isPresent();
             transactions.delete(transaction.installationId(), transaction.connectionId(), transaction.id());
-            assertThat(transactions.findClaimed(transaction.installationId(), transaction.connectionId(), transaction.id())).isEmpty();
+            assertThat(transactions.find(transaction.installationId(), transaction.connectionId(), transaction.id())).isEmpty();
         } finally { connections.delete(transaction.installationId(), transaction.connectionId()); }
     }
 

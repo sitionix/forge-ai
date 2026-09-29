@@ -11,7 +11,7 @@ public record McpOAuthConfiguration(URI issuer, URI authorizationEndpoint, URI t
         validateUri(issuer); validateUri(authorizationEndpoint); validateUri(tokenEndpoint); validateUri(resource);
         if (revocationEndpoint != null) validateUri(revocationEndpoint);
         if (clientId == null || clientId.isBlank() || clientId.contains("\r") || clientId.contains("\n")
-                || !Set.of("none", "client_secret_post", "client_secret_basic").contains(clientAuthenticationMethod)
+                || clientAuthenticationMethod == null || !Set.of("none", "client_secret_post", "client_secret_basic").contains(clientAuthenticationMethod)
                 || scopes == null || scopes.stream().anyMatch(s -> s == null || !s.matches("[\\x21\\x23-\\x5B\\x5D-\\x7E]+")))
             throw new IllegalArgumentException("Invalid OAuth configuration");
         scopes = Set.copyOf(scopes);

@@ -8,8 +8,12 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 @Order(Ordered.HIGHEST_PRECEDENCE)
-@RestControllerAdvice(assignableTypes={McpConnectionsController.class,McpAvailableController.class,McpProbeController.class})
+@RestControllerAdvice(assignableTypes={McpConnectionsController.class,McpAvailableController.class,McpProbeController.class,McpOAuthController.class})
 public class McpConnectionsExceptionHandler {
+    @ExceptionHandler(com.sitionix.forgeagent.domain.exception.McpOAuthException.class)
+    public ResponseEntity<ForgeAgentErrorResponse> oauthFailure(com.sitionix.forgeagent.domain.exception.McpOAuthException failure) {
+        return ResponseEntity.status(failure.status()).body(new ForgeAgentErrorResponse(failure.code(),failure.getMessage(),null));
+    }
     @ExceptionHandler(NoSuchElementException.class) public ResponseEntity<ForgeAgentErrorResponse> missing() {
         return response(HttpStatus.NOT_FOUND,"NOT_FOUND","MCP connection not found.");
     }

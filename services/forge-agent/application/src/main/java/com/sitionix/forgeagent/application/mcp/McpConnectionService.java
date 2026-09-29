@@ -7,7 +7,7 @@ import java.time.Instant;
 import java.util.*;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Management operations. Wired only when the management prerequisite enables MCP. */
+/** Connection management; authorization never enables a connection. */
 public class McpConnectionService {
     private static final String PURPOSE = "credential";
     private final McpConnectionRepository repository;
@@ -16,33 +16,35 @@ public class McpConnectionService {
     private final McpCredentialCipher cipher;
     private final McpGatewayService gateway;
 
-    public McpConnectionService(McpConnectionRepository repository, ProjectRepository projects,
-                                ForgeInstanceIdentityRepository identity, McpCredentialCipher cipher) {
-        this(repository, projects, identity, cipher, null);
-    }
+    private final McpOAuthCredentialCipher oauthCipher;
 
     public McpConnectionService(McpConnectionRepository repository, ProjectRepository projects,
                                 ForgeInstanceIdentityRepository identity, McpCredentialCipher cipher,
-                                McpGatewayService gateway) {
+                                McpGatewayService gateway, McpOAuthCredentialCipher oauthCipher) {
         this.repository = Objects.requireNonNull(repository);
         this.projects = Objects.requireNonNull(projects);
         this.identity = Objects.requireNonNull(identity);
         this.cipher = Objects.requireNonNull(cipher);
         this.gateway = gateway;
+        this.oauthCipher = Objects.requireNonNull(oauthCipher);
     }
 
     @Transactional
     public McpConnection create(String displayName, URI endpoint, McpAuthType authType,
-                                McpProjectAccess access, McpCredentialSecret secret) {
+                                McpProjectAccess access, McpCredentialSecret secret,
+                                McpOAuthConfiguration oauth, McpOAuthCredentials oauthSetup) {
         validate(displayName, endpoint, authType, access);
         if (authType == McpAuthType.NONE && secret != null) throw new IllegalArgumentException("Invalid credential change");
         if (secret != null && secret.type() != authType) throw new IllegalArgumentException("Invalid credential change");
+        validateOAuth(authType, oauth, oauthSetup);
         UUID installation = identity.getOrCreate(), id = UUID.randomUUID();
         Instant now = Instant.now();
         var connection = new McpConnection(id, installation, displayName.strip(), endpoint, authType, false,
-                access, Set.of(), secret != null, now, now, null, null, null, null);
+                access, Set.of(), secret != null, now, now, null, null, oauth, null);
         repository.insert(new McpConnectionState(connection,
-                secret == null ? null : cipher.encrypt(installation,id,PURPOSE,secret.bytes())));
+                authType == McpAuthType.OAUTH ? oauthCipher.encrypt(installation,id,
+                        oauthSetup == null ? new McpOAuthCredentials(null,null) : oauthSetup)
+                        : secret == null ? null : cipher.encrypt(installation,id,PURPOSE,secret.bytes())));
         return connection;
     }
 
@@ -62,29 +64,38 @@ public class McpConnectionService {
 
     @Transactional
     public McpConnection update(UUID id, String displayName, URI endpoint, McpAuthType authType,
-                                McpProjectAccess access, McpCredentialChange change, McpCredentialSecret replacement) {
+                                McpProjectAccess access, McpCredentialChange change, McpCredentialSecret replacement,
+                                McpOAuthConfiguration oauth, McpOAuthCredentials oauthSetup) {
         validate(displayName, endpoint, authType, access);
-        if (change == null || (change == McpCredentialChange.REPLACE) != (replacement != null)
+        if (change == null || (change == McpCredentialChange.REPLACE) != (replacement != null || oauthSetup != null)
                 || (authType == McpAuthType.NONE && change == McpCredentialChange.REPLACE)
                 || (replacement != null && replacement.type() != authType)) throw new IllegalArgumentException("Invalid credential change");
         UUID installation = identity.getOrCreate();
         var result = repository.change(installation,id,state -> {
             McpConnection current = state.connection();
-            if (change == McpCredentialChange.KEEP && current.credentialConfigured()
-                    && (current.authType() != authType || !current.endpoint().equals(endpoint)))
+            var configuration = authType == McpAuthType.OAUTH && oauth == null ? current.oauthConfiguration() : oauth;
+            validateOAuth(authType, configuration, oauthSetup);
+            boolean identityChanged = current.authType() != authType || !current.endpoint().equals(endpoint)
+                    || !Objects.equals(current.oauthConfiguration(),configuration) || change != McpCredentialChange.KEEP;
+            if (identityChanged && (current.authType() == McpAuthType.OAUTH || authType == McpAuthType.OAUTH) && current.enabled())
+                throw new IllegalArgumentException("Disable connection before changing OAuth setup");
+            if (change == McpCredentialChange.KEEP && state.credential() != null
+                    && (current.authType() != authType || !current.endpoint().equals(endpoint)
+                    || !Objects.equals(current.oauthConfiguration(),configuration)))
                 throw new IllegalArgumentException("Credential identity changed");
             McpEncryptedCredential encrypted = switch (change) {
                 case KEEP -> state.credential();
-                case REMOVE -> null;
-                case REPLACE -> cipher.encrypt(installation,id,PURPOSE,replacement.bytes());
+                case REMOVE -> authType == McpAuthType.OAUTH ? oauthCipher.encrypt(installation,id,new McpOAuthCredentials(null,null)) : null;
+                case REPLACE -> authType == McpAuthType.OAUTH ? oauthCipher.encrypt(installation,id,oauthSetup)
+                        : cipher.encrypt(installation,id,PURPOSE,replacement.bytes());
             };
             if (authType == McpAuthType.NONE) encrypted = null;
-            boolean identityChanged = current.authType() != authType || !current.endpoint().equals(endpoint)
-                    || change != McpCredentialChange.KEEP;
             var updated = new McpConnection(id, installation, displayName.strip(), endpoint, authType,
-                    current.enabled(), access, identityChanged ? Set.of() : current.allowedTools(), encrypted != null,
+                    current.enabled(), access, identityChanged ? Set.of() : current.allowedTools(),
+                    authType == McpAuthType.OAUTH ? !identityChanged && current.credentialConfigured() : encrypted != null,
                     current.createdAt(), Instant.now(), identityChanged ? null : current.checkedAt(),
-                    identityChanged ? null : current.safeDiagnostic(), null, null);
+                    identityChanged ? null : current.safeDiagnostic(), configuration,
+                    identityChanged ? null : current.oauthAuthorizationId());
             return new McpConnectionState(updated,encrypted);
         }).orElseThrow(() -> new NoSuchElementException("MCP connection not found")).connection();
         if (gateway != null) gateway.revokeConnection(id);
@@ -120,6 +131,12 @@ public class McpConnectionService {
             finally { Arrays.fill(plaintext,(byte)0); }
         }).orElseThrow(() -> new NoSuchElementException("MCP connection not found"));
         if (gateway != null) gateway.revokeConnection(id);
+    }
+
+    private static void validateOAuth(McpAuthType type, McpOAuthConfiguration configuration, McpOAuthCredentials setup) {
+        if ((type == McpAuthType.OAUTH) != (configuration != null)
+                || (setup != null && (type != McpAuthType.OAUTH || setup.tokens() != null)))
+            throw new IllegalArgumentException("Invalid OAuth setup");
     }
 
     private void validate(String name, URI endpoint, McpAuthType authType, McpProjectAccess access) {

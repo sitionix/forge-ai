@@ -50,8 +50,15 @@ public class AgentMcpProtectedConfiguration {
     }
     @Bean McpCredentialCipher mcpCredentialCipher(McpLocalKeySource keys) { return new AesGcmMcpCredentialCipher(keys); }
     @Bean McpConnectionService mcpConnectionService(McpConnectionRepository repository,ProjectRepository projects,
-            ForgeInstanceIdentityRepository identity,McpCredentialCipher cipher,McpGatewayService gateway) {
-        return new McpConnectionService(repository,projects,identity,cipher,gateway);
+            ForgeInstanceIdentityRepository identity,McpCredentialCipher cipher,McpGatewayService gateway,McpOAuthCredentialCipher oauthCipher) {
+        return new McpConnectionService(repository,projects,identity,cipher,gateway,oauthCipher);
+    }
+    @Bean com.sitionix.forgeagent.application.mcp.McpOAuthService mcpOAuthService(McpConnectionRepository connections,
+            McpOAuthTransactionRepository transactions, ForgeInstanceIdentityRepository identity, McpOAuthClient client,
+            McpCredentialCipher cipher, McpOAuthCredentialCipher oauthCipher, McpGatewayService gateway,
+            com.sitionix.forgeagent.infrastructure.local.mcp.oauth.McpOAuthProperties settings) {
+        return new com.sitionix.forgeagent.application.mcp.McpOAuthService(connections,transactions,identity,client,cipher,
+                oauthCipher,gateway,settings.callbackUri(),settings.transactionTtl(),java.time.Clock.systemUTC());
     }
     @Bean McpAvailableService mcpAvailableService(McpRegistryCatalog catalog) {
         return new McpAvailableService(catalog);
