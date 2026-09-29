@@ -131,3 +131,13 @@ git diff --check
 Actual-main served `settings-page.js` and `operator-ui.css` SHA-256 matched the committed production source. Browser acceptance preserves saved inventory byte-equivalent as parsed JSON; Catalog selection reads metadata/projects only, and does not save, test, approve or enable.
 
 Compact follow-up Agent CI skips: CodexRecoveryLifecycleTest (1), CodexMcpInventoryVerifierTest (1), McpGatewayRuntimeFilterTest (1), AgentMcpProtectedConfigurationTest (1), ForgeAgentProjectAssetIT (1), ForgeAgentPortAwareExecutionIT (6). These skipped scenarios and LIVE_PROVIDER/JOINED_RUNTIME are not certified by the green CI. Subsequent evidence-only commit does not change verified production code.
+
+## Live Catalog timeout investigation — 2026-09-29
+
+A subsequent user screenshot showed the scoped Catalog error. Reproduced actual Nexus and Agent HTTP 503 / MCP_REGISTRY_UNAVAILABLE at approximately five seconds. The configured Registry read timeout is 5s. Direct public Registry requests also stalled before the first response byte despite successful TCP/TLS establishment (20s and 10s bounds expired); this is not a request for the entire registry.
+
+Pagination was verified independently: the direct Registry page contained exactly 20 entries and a nextCursor. Production maps supported remote metadata from that one page and preserves its cursor. After recovery, actual Nexus returned 19 supported entries and a cursor; an explicit second request with that opaque cursor returned HTTP 200 in 0.407s, 17 supported entries and another cursor. No automatic page traversal or connection mutation occurred.
+
+Disposable Java probes compared JDK HTTP/1.1 and HTTP/2, then the actual Spring typed Registry configuration. Both HTTP versions had successes and timeouts; a protocol-version cause is NOT_VERIFIED. A fresh production-config probe also timed out once and subsequently succeeded on two sequential requests (20 entries each). The running Agent/Nexus path then recovered without a code change, timeout increase or restart. Real Chrome actual-main Catalog acceptance passed again. Exact cause of the transient upstream/network failures is NOT_VERIFIED; earlier green browser acceptance does not imply continuous Registry availability.
+
+A speculative configuration-test draft failed compilation because this module does not depend on Mockito/Spring Test. It was removed after its HTTP-version hypothesis was contradicted; it is not a regression-test PASS and no production change was made. No new dependency, retry policy, HTTP transport, cache/pagination configuration or public error mapping was introduced by this investigation.
