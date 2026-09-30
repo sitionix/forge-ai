@@ -183,12 +183,12 @@ was unavailable, so that newer source/SDK protocol upgrade remains NOT_VERIFIED.
 
 ## Catalog cache and sign-in UX follow-up — 2026-09-29
 
-Current catalog TTL is **56 hours**, superseding the previous five-minute cache
-policy at the user's request. Agent still uses the existing `@Cacheable`/Caffeine
-configuration, maximum 1,000 entries, distinct search/cursor/limit keys and one
-Registry page per cache miss. Console retains the loaded page for 56 hours without
-extending expiry on reads. No persistence, crawler, credentials cache or new HTTP
-stack was introduced. Both caches are in-memory and reset with their owner.
+Current catalog TTL is **five minutes**. Agent uses the existing
+`@Cacheable`/Caffeine configuration, maximum 1,000 entries, distinct
+search/cursor/limit keys and one Registry page per cache miss. Console retains
+the loaded page for five minutes without extending expiry on reads. No
+persistence, crawler, credentials cache or new HTTP stack was introduced. Both
+caches are in-memory and reset with their owner.
 
 The original GitHub popup flash was reproduced against normal main Nexus:
 `POST /fgaisox/api/v1/infrastructure/agents/integrations/mcp/connect` for
@@ -209,9 +209,10 @@ Successful provider navigation, opener isolation, callback confirmation, saved
 connection permissions and explicit Enable behavior remain unchanged.
 
 Regression evidence before changes:
-- Production Caffeine ticker test failed because the previous cache expired before
-  56 hours (expected four upstream calls, observed five).
-- Console cache regression failed after one hour (expected one request, observed two).
+- Production Caffeine ticker test failed at the five-minute boundary because the
+  page remained cached (expected five upstream calls, observed four).
+- Console cache regressions failed at the five-minute boundary because the page
+  remained cached instead of starting a new request.
 - Preparation-window DOM regression failed because the window body was empty.
 - Definite-rejection retry regression failed because the action was disabled.
 
@@ -330,3 +331,22 @@ opt-in skips. `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/boot -am
 verify` completed `BUILD SUCCESS` with 374 fresh tests, zero failures/errors
 or skips. The counts exclude older report XML by modification time.
 `git diff --check` passed. Fresh PR CI remains **NOT_VERIFIED** until it runs.
+
+## PR #160 Registry cache contract correction — 2026-09-30
+
+Agent's production Caffeine page cache and Console's retained current page now
+expire five minutes after loading. The Agent cache remains bounded to 1,000
+entries and distinguishes search, cursor and limit; no new configuration or
+refresh mechanism was introduced. The focused production-cache test uses a
+controllable Caffeine ticker and proves a hit at five minutes minus one
+nanosecond, then a new Registry request exactly at five minutes. The Console
+test proves its page is reused before, and refreshed at, the same boundary.
+
+Both changed tests failed against the prior implementation before the TTL edit:
+Agent expected a fifth Registry call at the five-minute boundary but observed
+four; two Console cases expected a refresh but observed none. After the TTL
+edit, the focused Agent tests passed (9/9) and Console cache tests passed (6/6).
+The full Console typecheck, 670 tests and build passed. Full Agent verify
+completed `BUILD SUCCESS`: 1,513 fresh tests, zero failures/errors and ten
+opt-in skips. `git diff --check` passed. Fresh CI for this correction remains
+**NOT_VERIFIED** until the new PR head checks complete.

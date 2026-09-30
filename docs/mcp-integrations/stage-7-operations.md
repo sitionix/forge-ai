@@ -1,9 +1,9 @@
 # Stage 7 — catalog Connect
 
 Settings → Integrations → MCP → Add integration shows the official Registry page.
-Catalog pages are cached in Agent for **56 hours**, bounded to 1,000 entries.
+Catalog pages are cached in Agent for **5 minutes**, bounded to 1,000 entries.
 Search, cursor and limit remain distinct keys. Console reuses its loaded page for
-the same 56-hour lifetime. These are memory caches; process/page reloads clear them.
+the same five-minute lifetime. These are memory caches; process/page reloads clear them.
 No saved connection or credential is cached by this catalog policy.
 
 Each row has one **Connect** action. It prepares authentication on Agent and opens
