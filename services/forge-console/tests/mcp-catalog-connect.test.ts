@@ -18,16 +18,24 @@ function setup(blocked=false){
 }
 beforeEach(()=>{Channel.instances=[];HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};});
 describe('Catalog direct Connect',()=>{
- it('opens synchronously, performs one typed Connect and navigates without Custom persistence',async()=>{
-  const f=setup();const pending=f.flow.connectCatalog(server);expect(f.windowLike.open).toHaveBeenCalledTimes(1);
+ it('opens the validated provider URL after typed Connect without a local preparation window',async()=>{
+  const f=setup();const pending=f.flow.connectCatalog(server);expect(f.windowLike.open).not.toHaveBeenCalled();
   await pending;expect(f.startCatalog).toHaveBeenCalledWith(server,expect.any(AbortSignal));expect(f.persist).not.toHaveBeenCalled();
+  expect(f.windowLike.open).toHaveBeenCalledWith('https://provider.example/authorize','_blank','popup,width=540,height=720');
   expect(f.popup.location.replace).toHaveBeenCalledWith('https://provider.example/authorize');
   await Channel.instances[0]!.send({transactionId:tx,connectionId:id,result:'connected'});
   expect(f.api.get).toHaveBeenCalledWith(id,expect.any(AbortSignal));expect(f.onConnected).toHaveBeenCalledTimes(1);f.flow.dispose();
  });
- it('no-auth closes the unused popup and confirms the saved disabled connection',async()=>{
+ it('keeps setup failure in Settings and never opens a local or blank window',async()=>{
+  const f=setup();f.startCatalog.mockRejectedValue({code:'MCP_OAUTH_SETUP_REQUIRED',message:'setup required'});
+  await f.flow.connectCatalog(server);
+  expect(f.windowLike.open).not.toHaveBeenCalled();expect(f.popup.close).not.toHaveBeenCalled();
+  expect(f.onError).toHaveBeenCalledWith(expect.objectContaining({code:'MCP_OAUTH_SETUP_REQUIRED'}));
+  expect(f.startCatalog).toHaveBeenCalledTimes(1);f.flow.dispose();
+ });
+ it('no-auth never opens an unnecessary popup and confirms the saved disabled connection',async()=>{
   const f=setup();const noAuth={...connection,authType:'NONE',credentialConfigured:false};f.startCatalog.mockResolvedValue({connection:noAuth,authorization:null} as never);f.api.get.mockResolvedValue(noAuth as never);
-  await f.flow.connectCatalog(server);expect(f.popup.close).toHaveBeenCalledTimes(1);expect(f.popup.location.replace).not.toHaveBeenCalled();
+  await f.flow.connectCatalog(server);expect(f.windowLike.open).not.toHaveBeenCalled();expect(f.popup.close).not.toHaveBeenCalled();expect(f.popup.location.replace).not.toHaveBeenCalled();
   expect(f.onConnected).toHaveBeenCalledWith(noAuth,expect.any(AbortSignal));expect(f.persist).not.toHaveBeenCalled();f.flow.dispose();
  });
  it('double-click and blocked popup reopen never replay Connect',async()=>{
@@ -41,7 +49,7 @@ describe('Catalog direct Connect',()=>{
  });
  it('rejects mismatched authorization and provider denial without exposing details',async()=>{
   const f=setup();f.startCatalog.mockResolvedValue({connection,authorization:{transactionId:tx,connectionId:'wrong',authorizationUrl:'https://provider.example/authorize'}});
-  await f.flow.connectCatalog(server);expect(f.popup.location.replace).not.toHaveBeenCalled();expect(f.onError).toHaveBeenCalled();f.flow.dispose();
+  await f.flow.connectCatalog(server);expect(f.windowLike.open).not.toHaveBeenCalled();expect(f.popup.location.replace).not.toHaveBeenCalled();expect(f.onError).toHaveBeenCalled();f.flow.dispose();
   const denied=setup();await denied.flow.connectCatalog(server);await Channel.instances.at(-1)!.send({transactionId:tx,result:'failed'});
   expect(denied.onError).toHaveBeenCalled();expect(denied.onConnected).not.toHaveBeenCalled();denied.flow.dispose();
  });

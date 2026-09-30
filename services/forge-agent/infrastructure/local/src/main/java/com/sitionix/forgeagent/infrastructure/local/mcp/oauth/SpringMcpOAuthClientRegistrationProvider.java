@@ -24,7 +24,7 @@ final class SpringMcpOAuthClientRegistrationProvider implements McpOAuthClientRe
         } catch(RestClientException unavailable){throw McpOAuthException.unavailable();}
     }
     private McpOAuthClientRegistration installed(McpAuthenticationMetadata m,McpOAuthRegistrationProperties.Client client) {
-        if(!m.clientAuthenticationMethods().contains(client.clientAuthenticationMethod()))throw McpOAuthException.setupRequired();
+        if(!m.clientAuthenticationMethods().isEmpty() && !m.clientAuthenticationMethods().contains(client.clientAuthenticationMethod()))throw McpOAuthException.setupRequired();
         if(!client.scopes().isEmpty() && !client.scopes().containsAll(m.scopes()))throw McpOAuthException.setupRequired();
         Set<String> scopes=m.scopes().isEmpty()?client.scopes():m.scopes();
         String secret=null;
@@ -43,7 +43,7 @@ final class SpringMcpOAuthClientRegistrationProvider implements McpOAuthClientRe
         return result(m,uri.toString(),"none",m.scopes(),null);
     }
     private McpOAuthClientRegistration dynamic(McpAuthenticationMetadata m,long deadline) {
-        String method=List.of("none","client_secret_basic","client_secret_post").stream().filter(m.clientAuthenticationMethods()::contains).findFirst().orElseThrow(McpOAuthException::setupRequired);
+        String method=m.clientAuthenticationMethods().isEmpty()?"client_secret_basic":List.of("none","client_secret_basic","client_secret_post").stream().filter(m.clientAuthenticationMethods()::contains).findFirst().orElseThrow(McpOAuthException::setupRequired);
         String application=Set.of("127.0.0.1","localhost","::1","[::1]").contains(callback.getHost())?"native":"web";
         var request=new RegistrationRequest("Forge",List.of(callback),List.of("authorization_code"),List.of("code"),method,application,m.scopes().isEmpty()?null:String.join(" ",new TreeSet<>(m.scopes())));
         var response=http.register(m.registrationEndpoint(),deadline,request,RegistrationResponse.class);

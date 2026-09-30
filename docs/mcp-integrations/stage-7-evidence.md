@@ -180,3 +180,153 @@ cleanup is part of Stage 7.
 No live-provider/normal runtime outcome is inferred from local stubs. Auth metadata
 contract is pinned to the checked 2025-11-25 reference; roadmap2026-07-28 source
 was unavailable, so that newer source/SDK protocol upgrade remains NOT_VERIFIED.
+
+## Catalog cache and sign-in UX follow-up — 2026-09-29
+
+Current catalog TTL is **56 hours**, superseding the previous five-minute cache
+policy at the user's request. Agent still uses the existing `@Cacheable`/Caffeine
+configuration, maximum 1,000 entries, distinct search/cursor/limit keys and one
+Registry page per cache miss. Console retains the loaded page for 56 hours without
+extending expiry on reads. No persistence, crawler, credentials cache or new HTTP
+stack was introduced. Both caches are in-memory and reset with their owner.
+
+The original GitHub popup flash was reproduced against normal main Nexus:
+`POST /fgaisox/api/v1/infrastructure/agents/integrations/mcp/connect` for
+`https://api.githubcopilot.com/mcp/` returned **409 MCP_OAUTH_SETUP_REQUIRED**.
+The frontend reserved `about:blank` synchronously, then closed it in the preparation
+error path before provider navigation. No successful GitHub authorization occurred.
+The official GitHub host integration guide says DCR is unsupported and requires a
+registered host GitHub App/OAuth App:
+https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md
+Existing CLI authorization was not imported or reused.
+
+The preparation window now uses the existing Console stylesheet, inert text DOM,
+a status message, and a fixed safe error with Close. Preparation failures remain
+visible rather than flashing closed; cancellation/disposal still closes owned
+windows. Definite pre-creation rejections allow explicit Retry without automatic
+POST replay. Uncertain creation outcomes retain the existing reconciliation guard.
+Successful provider navigation, opener isolation, callback confirmation, saved
+connection permissions and explicit Enable behavior remain unchanged.
+
+Regression evidence before changes:
+- Production Caffeine ticker test failed because the previous cache expired before
+  56 hours (expected four upstream calls, observed five).
+- Console cache regression failed after one hour (expected one request, observed two).
+- Preparation-window DOM regression failed because the window body was empty.
+- Definite-rejection retry regression failed because the action was disabled.
+
+Verification after changes:
+- **PASS** Console typecheck, all 670 tests and build.
+- **PASS** focused production Registry configuration/cache tests: nine tests.
+- **PASS** full Agent verify: 1,511 tests, zero failures/errors, ten explicit opt-in
+  skips. Skipped OS/provider acceptance is not fresh verified evidence.
+- **PASS** full Nexus verify: 374 tests, zero failures/errors/skips.
+- **PASS** joined `McpSettingsAcceptanceHttpTest`: one test, zero skips;
+  `STAGE6_JOINED_OAUTH_GATEWAY_PASS` and `STAGE7_JOINED_CATALOG_CONNECT_PASS`.
+  Real Chrome/built assets/Nexus/Agent, disposable authorization provider/database;
+  successful fixture OAuth is not successful live GitHub OAuth. Existing mocked
+  privileged runtime-boundary limitations remain.
+- **PASS** `git diff --check`.
+- **NOT_VERIFIED** fresh CI for these uncommitted follow-up changes.
+- **NOT_VERIFIED** real GitHub OAuth success: installed Forge OAuth client missing;
+  the observed live Connect preparation is the explicit 409 failure above.
+- **PASS** updated normal-runtime browser error presentation after final `just start`
+  (exit 0): real Chrome, official Registry GitHub row, actual main Nexus 409,
+  styled error window remains open, opener is null, Close works, saved connections
+  are unchanged. `GITHUB_SETUP_REQUIRED_BROWSER_PASS` and
+  `SETTINGS_BROWSER_ACTUAL_NEXUS_PASS`; `/tmp/forge-cache-github-browser.log`,
+  Settings error-row screenshot `/tmp/forge-github-setup-settings.png`. This is verified failure handling,
+  **not** successful GitHub authorization. Agent/Nexus health and Settings HTTP 200.
+  The first browser attempt found a missing title caused by replacing the head
+  after setting document.title; a failing DOM regression established this and
+  moving the assignment after head replacement fixed it. The final browser run passed.
+
+Commands/logs:
+- `npm --prefix services/forge-console run typecheck`: `/tmp/forge-cache-typecheck.log`
+- `npm --prefix services/forge-console test`: `/tmp/forge-cache-console-full.log`
+- `npm --prefix services/forge-console run build`: `/tmp/forge-cache-build.log`
+- `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`:
+  `/tmp/forge-cache-agent-full.log`
+- `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/boot -am verify`:
+  `/tmp/forge-cache-nexus-full.log`
+- `mvn -B -ntp -Dapi.version=1.44 -Dforge.codex.stage5-e2e=true -pl services/forge-agent/boot -am -Dtest=McpSettingsAcceptanceHttpTest -Dsurefire.failIfNoSpecifiedTests=false test`:
+  `/tmp/forge-cache-joined.log`
+
+Final live boundary: `GITHUB_CONNECT = FAIL` (409 setup required),
+`GITHUB_SUCCESSFUL_SIGN_IN = NOT_VERIFIED`, `GITHUB_FAILURE_UX = PASS`.
+The failure-UX browser check does not close the missing-installation-client blocker.
+
+## GitHub App preparation — 2026-09-30
+
+Read-only GitHub API confirmed `sitionix/forge-ai` is owned by the personal
+account `sitionix` (`owner.type=User`), and the authenticated account has
+repository admin permission. A pre-filled GitHub App registration form for that
+account was opened in the existing browser session; this is **not** proof that
+the App was submitted, installed, or granted access.
+
+Live GitHub OAuth metadata has no `token_endpoint_auth_methods_supported` and
+advertises multiple `scopes_supported`. GitHub Apps use fine-grained permissions
+instead of OAuth scopes. Before correction, Forge would request every advertised
+scope and reject an installed `client_secret_post` client. New focused tests
+reproduced both failures before the change, then passed after Forge distinguished
+advertised scopes from an explicit challenge and accepted the configured method
+when metadata omits the method list. The existing explicit-challenge scope test
+remains green. The registration details and protected credential boundary are
+recorded in `github-sign-in-setup.md`.
+
+`GITHUB_APP_CREATED = NOT_VERIFIED`; `GITHUB_APP_INSTALLED = NOT_VERIFIED`;
+`GITHUB_CLIENT_CONFIGURED = NOT_VERIFIED`; `GITHUB_SUCCESSFUL_SIGN_IN = NOT_VERIFIED`.
+The focused OAuth discovery/registration tests passed (34 tests, no failures,
+errors or skips). Fresh full Agent verify passed (1,513 tests, no failures or
+errors, ten opt-in skips); the command was
+`mvn -B -ntp -q -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`.
+`git diff --check` passed. Historical report XML was excluded by modification
+time when counting this run.
+
+Subsequent local setup verified the registered App with a short-lived App JWT:
+slug `forge-ai-mcp-sitionix`, personal owner `sitionix`, matching Client ID, and
+read-only Contents/Issues/Pull requests permissions. GitHub's repository
+installation endpoint returned the selected installation for `sitionix/forge-ai`.
+The private key was only used for these read-only checks; its downloaded file
+mode was corrected from `0664` to `0600` and it is not supplied to Forge OAuth.
+The Client secret was entered through a local masked dialog and stored in a
+separate `0600` file; neither its value nor the App JWT was printed. The main
+Agent systemd unit now loads optional `oauth-clients.env` without changing the
+Remote Access unit. The main Agent restarted and returned HTTP 200 health; its
+effective environment has the four OAuth client config keys but no secret value.
+All 48 Python runtime tests and `git diff --check` passed after the unit change.
+Nexus served the current built Settings asset and returned an empty connection
+list before the first live Connect.
+The normal Nexus available-catalog endpoint returned HTTP 200 for exact search
+`io.github.github/github-mcp-server`, with title `GitHub` and endpoint
+`https://api.githubcopilot.com/mcp/`; this is Registry metadata, not an MCP
+handshake or authorized connection.
+
+`GITHUB_APP_CREATED = PASS`; `GITHUB_APP_INSTALLED_FOR_FORGE_AI = PASS`;
+`GITHUB_CLIENT_CONFIGURED = PASS`; `MAIN_AGENT_HEALTH = PASS`;
+`GITHUB_SUCCESSFUL_SIGN_IN = NOT_VERIFIED` until the actual browser consent,
+callback, authoritative connection read, and Test complete.
+
+Subsequent live verification on 2026-09-30: the normal Nexus connection-list
+endpoint returned HTTP 200 with one `GitHub` connection for
+`https://api.githubcopilot.com/mcp/`, `authType=OAUTH`,
+`credentialConfigured=true`, `checkedAt=2026-09-30T09:07:26.322648Z`, and
+`safeDiagnostic=null`. The saved inventory endpoint returned HTTP 200 with
+45 tools, including `get_file_contents`. The catalog Connect flow runs Test
+before showing Connected, and the authoritative `checkedAt` confirms that a
+successful check was persisted. No credential or token was read. The connection
+remains `enabled=false`, with no approved tools or allowed projects; runtime
+access still requires explicit permission editing and Enable. The browser
+consent screen itself was not observed by this verification.
+
+`GITHUB_AUTHORIZED_CONNECTION = PASS`; `GITHUB_MCP_TEST = PASS`;
+`GITHUB_TOOL_INVENTORY = PASS`; `GITHUB_RUNTIME_ACCESS = NOT_VERIFIED`.
+
+PR preparation verification on the current tree (2026-09-30): Console
+typecheck, all 670 tests and build passed; all 48 Python runtime tests passed.
+`mvn -B -ntp -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`
+completed `BUILD SUCCESS` with 1,513 fresh tests, zero failures/errors and ten
+opt-in skips. `mvn -B -ntp -Dapi.version=1.44 -pl services/forge-nexus/boot -am
+verify` completed `BUILD SUCCESS` with 374 fresh tests, zero failures/errors
+or skips. The counts exclude older report XML by modification time.
+`git diff --check` passed. Fresh PR CI remains **NOT_VERIFIED** until it runs.

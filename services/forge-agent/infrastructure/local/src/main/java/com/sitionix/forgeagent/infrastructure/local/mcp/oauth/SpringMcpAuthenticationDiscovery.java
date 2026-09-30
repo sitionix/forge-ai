@@ -42,9 +42,10 @@ final class SpringMcpAuthenticationDiscovery implements McpAuthenticationDiscove
                     || server.grants()!=null && !server.grants().contains("authorization_code"))throw McpOAuthException.invalidResponse();
             validateValues(server.authMethods());validateValues(server.codeChallengeMethods());
             for(URI target:new URI[]{server.authorization(),server.token(),server.revocation(),server.registration()})if(target!=null)http.validateOAuthUri(target);
-            Set<String> scopes=challenge.containsKey("scope")?scopes(challenge.get("scope")):resourceScopes(resource.scopes());
+            resourceScopes(resource.scopes());
+            Set<String> scopes=challenge.containsKey("scope")?scopes(challenge.get("scope")):Set.of();
             return new McpAuthenticationMetadata(true,resource.resource(),issuer,server.authorization(),server.token(),server.revocation(),server.registration(),
-                    Boolean.TRUE.equals(server.cimd()),scopes,server.authMethods()==null?Set.of("client_secret_basic"):server.authMethods(),server.codeChallengeMethods());
+                    Boolean.TRUE.equals(server.cimd()),scopes,server.authMethods()==null?Set.of():server.authMethods(),server.codeChallengeMethods());
         } catch(RestClientException transport){throw McpOAuthException.unavailable();}
     }
     private <T>T first(List<URI> uris,long deadline,Class<T> type) {

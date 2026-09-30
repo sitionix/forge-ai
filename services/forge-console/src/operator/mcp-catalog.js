@@ -1,6 +1,6 @@
 import {RequestCoordinator} from './request-coordinator.js';
 
-const PAGE_TTL=5*60*1000;
+const PAGE_TTL=56*60*60*1000;
 
 export class McpCatalog {
   constructor({document,window,api,onSelect}) {

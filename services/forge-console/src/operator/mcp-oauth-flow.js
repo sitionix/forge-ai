@@ -4,9 +4,9 @@ export class McpOAuthFlow {
     this.window=window;this.api=api;this.persist=persist;this.startCatalog=startCatalog;this.onConnected=onConnected;this.onError=onError;this.onStatus=onStatus;
     this.active=false;this.epoch=0;
   }
-  openWindow() {
+  openWindow(url='about:blank') {
     try {
-      const popup=this.window.open('about:blank','_blank','popup,width=540,height=720');
+      const popup=this.window.open(url,'_blank','popup,width=540,height=720');
       if(popup) popup.opener=null;
       return popup;
     } catch(_) { return null; }
@@ -22,7 +22,7 @@ export class McpOAuthFlow {
       if(!this.current(epoch)) return;
       this.start=await this.api.startOAuth(this.connection.id,this.controller.signal);
       if(!this.current(epoch)) return;
-      this.authorize();
+      this.prepareAuthorization();this.navigate();
     } catch(error) {
       if(this.current(epoch)) {this.cancel();if(error?.name!=='AbortError')this.onError(error);}
     }
@@ -31,7 +31,7 @@ export class McpOAuthFlow {
     if(this.active) return;
     if(!this.window.BroadcastChannel) {this.onError(new Error('Browser sign-in is not supported by this browser.'));return;}
     this.active=true;const epoch=++this.epoch;this.controller=new this.window.AbortController();
-    this.connection=null;this.popup=this.openWindow();this.onStatus('opening');
+    this.connection=null;this.popup=null;this.onStatus('opening');
     try {
       const result=await this.startCatalog(server,this.controller.signal);
       if(!this.current(epoch)) {
@@ -40,7 +40,9 @@ export class McpOAuthFlow {
       }
       if(!result?.connection?.id || result.connection.enabled) throw new Error('Connection is not confirmed. Refresh connected integrations before trying again.');
       this.connection=result.connection;this.start=result.authorization;
-      if(this.start) {this.authorize();return;}
+      if(this.start) {
+        const url=this.prepareAuthorization();this.popup=this.openWindow(url);this.navigate();return;
+      }
       if(this.connection.authType!=='NONE') throw new Error('Sign-in provider configuration is invalid.');
       const confirmed=await this.api.get(this.connection.id,this.controller.signal);
       if(!this.current(epoch)) return;
@@ -50,13 +52,13 @@ export class McpOAuthFlow {
       if(epoch===this.epoch) {this.cancel();if(error?.name!=='AbortError')this.onError(error);}
     }
   }
-  authorize() {
+  prepareAuthorization() {
     const target=new URL(this.start.authorizationUrl);
     if(this.start.connectionId!==this.connection.id || this.connection.authType!=='OAUTH'
         || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(this.start.transactionId)
         || !['http:','https:'].includes(target.protocol) || target.username || target.password) throw new Error('Sign-in provider configuration is invalid.');
     this.channel=new this.window.BroadcastChannel(`forge-mcp-oauth-${this.start.transactionId}`);
-    const epoch=this.epoch;this.channel.onmessage=event=>this.complete(event.data,epoch);this.navigate();
+    const epoch=this.epoch;this.channel.onmessage=event=>this.complete(event.data,epoch);return target.href;
   }
   current(epoch) {return this.active && epoch===this.epoch;}
   navigate() {
@@ -66,7 +68,7 @@ export class McpOAuthFlow {
   retryWindow() {
     if(!this.active || !this.start) return;
     if(this.popup && !this.popup.closed) {this.popup.focus?.();return;}
-    this.popup=this.openWindow();this.navigate();
+    this.popup=this.openWindow(this.start.authorizationUrl);this.navigate();
   }
   async complete(message,epoch) {
     if(!this.current(epoch) || !message || typeof message!=='object'

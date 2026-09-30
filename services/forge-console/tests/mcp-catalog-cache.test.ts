@@ -44,10 +44,11 @@ describe('Catalog page reuse',()=>{
     expect(pending[1]!.signal.aborted).toBe(true);
     expect(fetcher.mock.calls.every(([,init])=>init.method==='GET')).toBe(true);
   });
-  it('reuses the loaded page without extending its five-minute expiry',async()=>{
+  it('reuses the loaded page without extending its 56-hour expiry',async()=>{
     const {pending}=setup();await vi.waitFor(()=>expect(pending).toHaveLength(1));await complete(pending[0]!);
     const row=element('mcpCatalogServers').firstChild;
-    now+=299999;click('mcpAdd');expect(pending).toHaveLength(1);expect(element('mcpCatalogServers').firstChild).toBe(row);
+    now+=60*60*1000;click('mcpAdd');await Promise.resolve();await Promise.resolve();expect(pending).toHaveLength(1);
+    click('mcpCatalogClose');now+=55*60*60*1000-1;click('mcpAdd');expect(pending).toHaveLength(1);expect(element('mcpCatalogServers').firstChild).toBe(row);
     click('mcpCatalogClose');now+=1;click('mcpAdd');await vi.waitFor(()=>expect(pending).toHaveLength(2));
     expect(element('mcpCatalogServers').firstChild).toBe(row);expect(element('mcpCatalogNotice').textContent).toContain('Updating');
     await complete(pending[1]!,[{...server,title:'Updated'}]);
@@ -55,7 +56,7 @@ describe('Catalog page reuse',()=>{
   });
   it('keeps the last page on refresh failure and retries only explicitly',async()=>{
     const {pending}=setup();await vi.waitFor(()=>expect(pending).toHaveLength(1));await complete(pending[0]!);
-    now+=300000;click('mcpAdd');await vi.waitFor(()=>expect(pending).toHaveLength(2));
+    now+=56*60*60*1000;click('mcpAdd');await vi.waitFor(()=>expect(pending).toHaveLength(2));
     pending[1]!.resolve(Response.json({message:'secret-canary'},{status:503}));
     await vi.waitFor(()=>expect(element('mcpCatalogError').hidden).toBe(false));
     expect(element('mcpCatalogServers').textContent).toContain('Search');expect(element('mcpCatalogError').textContent).toContain('last loaded page');

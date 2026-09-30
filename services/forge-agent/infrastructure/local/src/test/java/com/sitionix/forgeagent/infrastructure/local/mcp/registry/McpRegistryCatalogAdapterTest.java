@@ -40,7 +40,7 @@ class McpRegistryCatalogAdapterTest {
         }
     }
     @Test
-    void productionCaffeineCacheExpiresAtFiveMinutesAndKeysEveryRequestParameter() {
+    void productionCaffeineCacheExpiresAtFiftySixHoursAndKeysEveryRequestParameter() {
         long[] nanos = {0};
         Ticker ticker = () -> nanos[0];
         List<String> calls = new ArrayList<>();
@@ -68,7 +68,11 @@ class McpRegistryCatalogAdapterTest {
             catalog.list("one", "page", 21);
             assertThat(calls).hasSize(4);
 
-            nanos[0] = Duration.ofMinutes(5).toNanos();
+            nanos[0] = Duration.ofHours(56).toNanos() - 1;
+            catalog.list("one", "page", 20);
+            assertThat(calls).hasSize(4);
+
+            nanos[0]++;
             catalog.list("one", "page", 20);
             assertThat(calls).containsExactly("one|page|20", "two|page|20",
                     "one|other|20", "one|page|21", "one|page|20");

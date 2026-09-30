@@ -1,6 +1,11 @@
 # Stage 7 — catalog Connect
 
 Settings → Integrations → MCP → Add integration shows the official Registry page.
+Catalog pages are cached in Agent for **56 hours**, bounded to 1,000 entries.
+Search, cursor and limit remain distinct keys. Console reuses its loaded page for
+the same 56-hour lifetime. These are memory caches; process/page reloads clear them.
+No saved connection or credential is cached by this catalog policy.
+
 Each row has one **Connect** action. It prepares authentication on Agent and opens
 the provider's sign-in window directly; it never opens the Custom MCP form.
 Allow the popup if the browser blocks it, or reopen a manually closed window with
@@ -36,11 +41,19 @@ No registration access-token manager, centralized OAuth service or new database
 schema is introduced. DCR client credentials use the existing encrypted connection row.
 
 GitHub Remote MCP does not provide DCR. A registered Forge-owned GitHub App/OAuth
-App with the accepted callback and protected installation credential provisioning
-is still required. That installation prerequisite is not a per-connection end-user
-form. No such live Forge App was supplied for this implementation. Live GitHub
-OAuth remains **NOT_VERIFIED**; disposable AS acceptance is not provider acceptance.
+App with the accepted callback and protected client-secret provisioning is
+required. That installation prerequisite is not a per-connection end-user form.
+The local `sitionix` installation is configured; live Forge verified an OAuth
+credential and a successful GitHub MCP Test with 45 discovered tools. The saved
+connection remains disabled until the operator approves tools/project access and
+explicitly enables it. The external browser consent screen was not independently
+observed by this verification; see `stage-7-evidence.md`.
 
-A safe setup-required row message is preferable to a fake authorization redirect.
+Agent completes preparation before Catalog opens any window. Only the validated
+provider authorization URL is opened; there is no local Forge preparation/error
+window. Preparation errors remain in the Settings row. If the browser blocks the
+provider window, Open sign-in retries opening the same authorization attempt
+without replaying Connect. Definitive pre-creation rejection permits explicit Retry;
+uncertain outcomes retain reconciliation and never trigger automatic POST replay.
 Saved connections, including an existing user's GitHub bearer connection, are never
 converted or overwritten by catalog reads or another Connect action.

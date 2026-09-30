@@ -179,12 +179,17 @@ class SpringMcpAuthenticationDiscoveryTest {
         }
         assertThat(paths).doesNotContain("/register","/token","/authorize");assertThat(credentials).isEmpty();
     }
-    @Test void absentChallengeScopeUsesProtectedResourceScopesAndRejectsInvalidTokens() {
+    @Test void advertisedScopesAreNotRequestedWithoutAChallengeAndInvalidValuesAreRejected() {
         protectedMetadata();challenge("Bearer resource_metadata=\""+base+"/resource\"");
-        assertThat(discover().scopes()).containsExactlyInAnyOrder("read","write");
+        assertThat(discover().scopes()).isEmpty();
         for(String scopes:List.of("[null]","[\"bad scope\"]","[\"\"]")) {
             reply("/resource",200,"{\"resource\":\""+endpoint+"\",\"authorization_servers\":[\""+base+"\"],\"scopes_supported\":"+scopes+"}");invalid();
         }
+    }
+    @Test void absentTokenAuthenticationMethodsRemainUnspecifiedForInstalledClients() {
+        protectedMetadata();challenge("Bearer resource_metadata=\""+base+"/resource\"");
+        reply("/.well-known/oauth-authorization-server",200,asMetadata(base.toString()).replace(",\"token_endpoint_auth_methods_supported\":[\"none\"]",""));
+        assertThat(discover().clientAuthenticationMethods()).isEmpty();
     }
     void invalid(){assertThatThrownBy(this::discover).isInstanceOf(McpOAuthException.class).hasNoCause().hasMessageNotContaining("canary");}
     com.sitionix.forgeagent.domain.model.McpAuthenticationMetadata discover(){return discovery.discover(endpoint,System.nanoTime()+Duration.ofSeconds(3).toNanos());}

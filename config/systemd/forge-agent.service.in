@@ -10,6 +10,7 @@ Group=@FORGE_SYSTEMD_GROUP@
 WorkingDirectory=@FORGE_AI_HOME@
 EnvironmentFile=@FORGE_SYSTEMD_ENV_FILE@
 EnvironmentFile=@FORGE_MCP_MATERIAL_DIR@/agent.env
+EnvironmentFile=-@FORGE_MCP_MATERIAL_DIR@/oauth-clients.env
 ExecStart=@FORGE_AI_HOME@/scripts/runtime/run-agent.sh
 SuccessExitStatus=143
 Restart=on-failure

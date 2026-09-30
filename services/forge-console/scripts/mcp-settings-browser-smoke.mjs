@@ -142,6 +142,22 @@ try {
     assert.deepEqual(after,before,'Catalog selection must not mutate saved connections');
     if(external) assert.equal(await evaluate(`location.port`),'9099');
     console.log(external?(action==='catalog-icons'?'NORMAL_SETTINGS_CATALOG_ICONS_BROWSER_PASS':'NORMAL_SETTINGS_CATALOG_BROWSER_PASS'):'SETTINGS_CATALOG_BROWSER_STUB_PASS');
+  } else if(action==='github-setup-required') {
+    assert.equal(external,'http://127.0.0.1:9099/fgaisox','GitHub check requires normal main Forge');
+    const before=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
+    await click('mcpAdd');await fill('mcpCatalogSearch','io.github.github/github-mcp-server');
+    await evaluate(`document.getElementById('mcpCatalogSearchForm').requestSubmit()`);
+    await until(`document.querySelector('[data-endpoint="https://api.githubcopilot.com/mcp/"] button')`,60000);
+    await evaluate(`document.querySelector('[data-endpoint="https://api.githubcopilot.com/mcp/"] button').click()`,true);
+    await until(`document.querySelector('[data-endpoint="https://api.githubcopilot.com/mcp/"] .mcp-catalog-status').textContent.includes('registered OAuth client')`,30000);
+    assert.deepEqual(connectStatuses,[409],'Missing installation OAuth client is an explicit failure, not successful sign-in');
+    const pages=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    assert.equal(pages.filter(t=>t.type==='page').length,1,'Preparation rejection must not open any extra window');
+    assert.equal(await evaluate(`document.querySelector('.mcp-signin-panel')!==null`),false);
+    if(process.env.SMOKE_SCREENSHOT) {const shot=await cdp('Page.captureScreenshot',{format:'png'});await writeFile(process.env.SMOKE_SCREENSHOT,Buffer.from(shot.data,'base64'));}
+    const after=await evaluate(`fetch(${JSON.stringify(catalog)}).then(response=>response.json())`);
+    assert.deepEqual(after,before,'Failed GitHub preparation must not create or alter connections');
+    console.log('GITHUB_SETUP_REQUIRED_BROWSER_PASS');
   } else if(action==='catalog-oauth') {
     assert(external,'Catalog OAuth requires actual Nexus/Agent, not a stub');
     const issuer=process.env.FORGE_SETTINGS_OAUTH_ISSUER;

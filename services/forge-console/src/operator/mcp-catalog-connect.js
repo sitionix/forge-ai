@@ -17,10 +17,11 @@ export class McpCatalogConnect {
       },
       onError:error=>{
         if(!this.server) return;
-        if(!this.oauth.connection && !['MCP_OAUTH_SETUP_REQUIRED','MCP_CUSTOM_REQUIRED','MCP_ENDPOINT_DENIED'].includes(error?.code)) {
+        const preparationRejected=!this.oauth.connection && ['MCP_OAUTH_SETUP_REQUIRED','MCP_CUSTOM_REQUIRED','MCP_ENDPOINT_DENIED'].includes(error?.code);
+        if(!this.oauth.connection && !preparationRejected) {
           this.uncertain.add(this.key(this.server));
           this.catalog.connectionStatus(this.server,(error?.code?error.message+' ':'')+'Could not confirm the outcome. Close this window and check connected integrations before trying again.',false);
-        } else this.catalog.connectionStatus(this.server,error?.message||'Connection was not completed. Check connected integrations.',false);
+        } else this.catalog.connectionStatus(this.server,error?.message||'Connection was not completed. Check connected integrations.',preparationRejected?'Retry':false);
         this.pending=false;void this.onSaved();
       }});
   }

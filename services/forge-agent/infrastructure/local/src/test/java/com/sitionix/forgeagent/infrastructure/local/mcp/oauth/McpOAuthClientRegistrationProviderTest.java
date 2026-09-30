@@ -56,6 +56,17 @@ class McpOAuthClientRegistrationProviderTest {
             assertThat(registered.credentials().clientSecret()).isEqualTo("synthetic-client-canary");assertThat(registered.toString()).doesNotContain("canary");assertThat(paths).isEmpty();
         }
     }
+    @Test void installedClientUsesConfiguredPostAuthenticationWhenMetadataDoesNotAdvertiseMethods() throws Exception {
+        Path secret=temporary.resolve("github-client-secret");Files.writeString(secret,"synthetic-client-canary");Files.setPosixFilePermissions(secret,PosixFilePermissions.fromString("rw-------"));
+        var m=metadata();var github=new McpAuthenticationMetadata(true,m.resource(),m.issuer(),m.authorizationEndpoint(),m.tokenEndpoint(),null,null,false,Set.of(),Set.of(),Set.of("S256"));
+        try(var context=context(Map.of("forge.mcp.oauth.clients[0].issuer",base.toString(),"forge.mcp.oauth.clients[0].client-id","installed-github-client",
+                "forge.mcp.oauth.clients[0].client-authentication-method","client_secret_post","forge.mcp.oauth.clients[0].client-secret-file",secret.toString()))) {
+            var registered=resolve(context,github);
+            assertThat(registered.configuration().clientAuthenticationMethod()).isEqualTo("client_secret_post");
+            assertThat(registered.configuration().scopes()).isEmpty();
+            assertThat(paths).isEmpty();
+        }
+    }
     @Test void clientConfiguredForAnotherIssuerIsNeverReused(){
         try(var context=context(Map.of("forge.mcp.oauth.clients[0].issuer","https://other.example","forge.mcp.oauth.clients[0].client-id","other-client","forge.mcp.oauth.clients[0].client-authentication-method","none"))) {
             assertThat(resolve(context,metadata()).configuration().clientId()).isEqualTo("dynamic-client");assertThat(bodies.get(0)).doesNotContain("other-client");

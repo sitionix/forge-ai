@@ -115,6 +115,18 @@ class McpProvisioningTest(unittest.TestCase):
 
 
 class NormalEnvironmentRenderingTest(unittest.TestCase):
+    def test_optional_oauth_client_configuration_is_loaded_only_by_main_agent(self):
+        import subprocess
+        repository = pathlib.Path(__file__).resolve().parents[3]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            subprocess.run([str(repository / 'scripts/systemd/render-units.sh'), str(root)],
+                           check=True, capture_output=True)
+            main = (root / 'forge-agent.service').read_text()
+            remote = (root / 'forge-remote-agent.service').read_text()
+            self.assertIn('EnvironmentFile=-/etc/forge-ai/mcp/oauth-clients.env', main)
+            self.assertNotIn('oauth-clients.env', remote)
+
     def test_main_units_reference_protected_paths_and_environment_has_no_database_secret(self):
         import subprocess
         repository = pathlib.Path(__file__).resolve().parents[3]
