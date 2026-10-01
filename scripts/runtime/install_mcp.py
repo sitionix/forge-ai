@@ -36,6 +36,19 @@ def protected_directory(path, uid, gid, mode):
     os.chown(path, uid, gid)
 
 
+def provision_codex_runtime_workspace(workspace_root, control_uid, runtime_gid):
+    path = workspace_root / '.forge-codex-runtime'
+    protected_directory(path, control_uid, runtime_gid, 0o2750)
+    return path
+
+
+def agent_environment(paths, workspace_root, runtime_cwd):
+    return ''.join(f'{key}="{value}"\n' for key, value in {
+        'FORGE_MCP_KEY_FILE': paths['key'], 'FORGE_MCP_DATABASE_CREDENTIAL_FILE': paths['database'],
+        'FORGE_AGENT_HOST': '127.0.0.1', 'FORGE_AGENT_WORKSPACE_ROOT': workspace_root,
+        'FORGE_AGENT_CODEX_RUNTIME_CWD': runtime_cwd}.items()).encode()
+
+
 def install_file(source, target, mode):
     trusted_parent(target)
     if target.is_symlink() or (target.exists() and (not target.is_file() or target.stat().st_nlink != 1)):
@@ -107,6 +120,7 @@ def install(source, control_name, codex_source, database_file, workspace_root, m
         protected_directory(directory, runtime.pw_uid, runtime.pw_gid, 0o700)
     write_once(codex_home / 'config.toml', b'', runtime.pw_uid, runtime.pw_gid)
     protected_directory(workspace_root, control.pw_uid, runtime.pw_gid, 0o2750)
+    runtime_cwd = provision_codex_runtime_workspace(workspace_root, control.pw_uid, runtime.pw_gid)
     if runtime.pw_gid not in os.getgrouplist(control.pw_name, control.pw_gid):
         subprocess.run(['/usr/sbin/usermod', '-aG', runtime.pw_name, control.pw_name], check=True)
     helper = pathlib.Path('/usr/local/libexec/forge-runtime-launcher')
@@ -180,9 +194,7 @@ def install(source, control_name, codex_source, database_file, workspace_root, m
     subprocess.run(['/usr/sbin/runuser', '-u', control_name, '--', '/usr/bin/python3', '-I',
                     str(source / 'scripts/runtime/prepare_workspaces.py'),
                     str(source / 'forge-projects'), str(workspace_root)], check=True)
-    content = ''.join(f'{key}="{value}"\n' for key, value in {
-        'FORGE_MCP_KEY_FILE': paths['key'], 'FORGE_MCP_DATABASE_CREDENTIAL_FILE': paths['database'],
-        'FORGE_AGENT_HOST': '127.0.0.1', 'FORGE_AGENT_WORKSPACE_ROOT': workspace_root}.items()).encode()
+    content = agent_environment(paths, workspace_root, runtime_cwd)
     path = material_root / 'agent.env'
     provision.read_existing(path, control.pw_uid)  # Reject unsafe existing metadata.
     fd, temporary = tempfile.mkstemp(dir=material_root, prefix='.environment-')

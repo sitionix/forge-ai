@@ -2,6 +2,7 @@
 import importlib.util
 import os
 import pathlib
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -62,3 +63,28 @@ class McpInstallationTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.install.install_file(source, target, 0o755)
         self.assertEqual(source.read_bytes(), b'software')
+
+    def test_neutral_codex_workspace_is_managed_and_repeatable(self):
+        workspace = self.root / 'workspaces'
+        workspace.mkdir()
+        with patch.object(self.install, 'trusted_parent'):
+            neutral = self.install.provision_codex_runtime_workspace(workspace, os.getuid(), os.getgid())
+            self.assertEqual(neutral, workspace / '.forge-codex-runtime')
+            self.assertEqual(neutral.stat().st_uid, os.getuid())
+            self.assertEqual(neutral.stat().st_gid, os.getgid())
+            self.assertEqual(stat.S_IMODE(neutral.stat().st_mode), 0o2750)
+            self.assertEqual(self.install.provision_codex_runtime_workspace(workspace, os.getuid(), os.getgid()), neutral)
+            neutral.chmod(0o777)
+            with self.assertRaises(RuntimeError):
+                self.install.provision_codex_runtime_workspace(workspace, os.getuid(), os.getgid())
+
+    def test_agent_environment_routes_codex_inside_launcher_workspace_root(self):
+        workspace = pathlib.Path('/srv/forge/workspaces/forge-projects')
+        content = self.install.agent_environment({'key': pathlib.Path('/synthetic/key'),
+                                                  'database': pathlib.Path('/synthetic/database')},
+                                                 workspace, workspace / '.forge-codex-runtime').decode()
+        values = dict(line.split('=', 1) for line in content.splitlines())
+        self.assertEqual(values['FORGE_AGENT_WORKSPACE_ROOT'], '"/srv/forge/workspaces/forge-projects"')
+        self.assertEqual(values['FORGE_AGENT_CODEX_RUNTIME_CWD'],
+                         '"/srv/forge/workspaces/forge-projects/.forge-codex-runtime"')
+        self.assertNotIn('/tmp/forge-agent-codex-runtime', content)

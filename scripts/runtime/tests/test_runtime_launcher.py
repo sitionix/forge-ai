@@ -232,6 +232,18 @@ class LauncherTests(unittest.TestCase):
             cwd=pathlib.Path(folder)/'%h'; cwd.mkdir()
             with self.assertRaises(ValueError): self.launcher.workspace({'workspace_roots':[folder]},str(cwd))
 
+    def test_neutral_codex_directory_is_managed_but_outside_directory_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder) / 'forge-projects'
+            neutral = root / '.forge-codex-runtime'
+            neutral.mkdir(parents=True)
+            outside = pathlib.Path(folder) / 'outside'
+            outside.mkdir()
+            config = {'workspace_roots': [str(root)]}
+            self.assertEqual(self.launcher.workspace(config, str(neutral)), str(neutral))
+            with self.assertRaisesRegex(ValueError, 'unmanaged working directory'):
+                self.launcher.workspace(config, str(outside))
+
     def test_failed_start_inspection_still_attempts_owned_cleanup(self):
         from unittest.mock import patch, MagicMock
         import io
