@@ -183,7 +183,7 @@ was unavailable, so that newer source/SDK protocol upgrade remains NOT_VERIFIED.
 
 ## Catalog cache and sign-in UX follow-up — 2026-09-29
 
-Current catalog TTL is **five minutes**. Agent uses the existing
+At this 2026-09-29 checkpoint, catalog TTL was **five minutes**. Agent used the existing
 `@Cacheable`/Caffeine configuration, maximum 1,000 entries, distinct
 search/cursor/limit keys and one Registry page per cache miss. Console retains
 the loaded page for five minutes without extending expiry on reads. No
@@ -334,7 +334,7 @@ or skips. The counts exclude older report XML by modification time.
 
 ## PR #160 Registry cache contract correction — 2026-09-30
 
-Agent's production Caffeine page cache and Console's retained current page now
+At this 2026-09-30 checkpoint, Agent's production Caffeine page cache and Console's retained current page
 expire five minutes after loading. The Agent cache remains bounded to 1,000
 entries and distinguishes search, cursor and limit; no new configuration or
 refresh mechanism was introduced. The focused production-cache test uses a
@@ -350,3 +350,55 @@ The full Console typecheck, 670 tests and build passed. Full Agent verify
 completed `BUILD SUCCESS`: 1,513 fresh tests, zero failures/errors and ten
 opt-in skips. `git diff --check` passed. Fresh CI for this correction remains
 **NOT_VERIFIED** until the new PR head checks complete.
+
+## PR #160 measured Registry cache policy — 2026-10-01
+
+Official production endpoint: `https://registry.modelcontextprotocol.io/v0.1/servers`.
+Four sequential read-only GETs used `version=latest`, without a cache-busting
+parameter or parallel load. Response sizes below are downloaded body bytes.
+
+| Request | Status | Total latency | Bytes | nextCursor |
+| --- | --- | ---: | ---: | --- |
+| `?limit=10&version=latest` | 200 | 8.450343 s | 6,740 | present |
+| `?search=github&limit=10&version=latest` | 200 | 11.986551 s | 12,549 | present |
+| `?cursor=ag.hood%2Fname-service%3A0.1.0&limit=10&version=latest` | 200 | 0.551885 s | 7,426 | present |
+| repeat `?limit=10&version=latest` | 200 | 0.702846 s | 6,740 | present |
+
+`REGISTRY_COLD_LATENCY = PASS` for the first-page and search observations above.
+`REGISTRY_RESPONSE_HEADERS = PASS`: each response had `Date` (2026-10-01
+07:25:42, 07:25:54, 07:25:54 and 07:25:55 GMT respectively); none supplied
+`Cache-Control`, `Age`, `ETag` or `Last-Modified`. The Registry did not advertise
+a validator, so `REGISTRY_CONDITIONAL_REQUEST_SUPPORT = NOT_VERIFIED`; no 304
+behavior is inferred from the missing headers. The fast later requests are
+observations, not proof of a particular upstream cache mechanism.
+
+Normal Nexus → Agent → Registry path used the same `search=github&limit=17`
+request twice after restarting both local services, which cleared Agent's
+in-memory cache. The first HTTP 200 took 6.779640 s; the second HTTP 200 took
+0.008627 s. Both returned 3,258 bytes, ten supported servers and a next cursor.
+`REGISTRY_WARM_LATENCY = PASS` for this exact local cache key. An earlier repeat
+against JVMs running JARs overwritten by Maven timed out after 60 seconds; the
+services logged `NoClassDefFoundError` for Logback and even Settings stopped
+responding. That damaged-process attempt is excluded from normal-path latency.
+The restarted Agent health and Nexus Settings endpoints both returned HTTP 200.
+After building the new Agent JAR and restarting it again, the same first request
+returned HTTP 200 in 0.909644 s and the warm repeat in 0.010175 s; both returned
+3,258 bytes and ten supported servers. This later cold observation is faster
+than the earlier cold sample and does not change the TTL decision.
+
+`SELECTED_AGENT_TTL = 30 days`: the official responses offered no shorter
+freshness contract, a cold catalog read took several seconds, and Registry
+metadata is discovery input rather than runtime authorization. Thirty days is
+the smallest product-approved long-lived bound; it reduces recurring cold
+waits while limiting metadata staleness relative to a 90-day choice. Connect
+continues to validate the endpoint, discover auth and test/inventory the
+saved MCP separately. Caffeine remains in-memory, maximum size 1,000, with
+distinct search/cursor/limit keys and one Registry page per cache miss. Console
+keeps its five-minute current-page reuse unchanged.
+
+The production Caffeine ticker regression failed before the Agent TTL edit:
+at 30 days minus one nanosecond it expected four upstream calls but observed
+five. It then passed (9/9 focused Registry tests), proving a hit before expiry
+and a new request at exactly 30 days. Full Agent verify completed `BUILD SUCCESS` with
+1,513 fresh tests, zero failures/errors and ten opt-in skips; `git diff --check`
+passed. Fresh PR CI remains **NOT_VERIFIED** until the new head checks complete.

@@ -28,7 +28,7 @@ class McpRegistryHttpClientConfiguration {
         CaffeineCacheManager manager = new CaffeineCacheManager("mcpRegistryPages");
         manager.setCaffeine(Caffeine.newBuilder()
                 .maximumSize(1000)
-                .expireAfterWrite(Duration.ofMinutes(5))
+                .expireAfterWrite(Duration.ofDays(30))
                 .ticker(ticker));
         return manager;
     }

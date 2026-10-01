@@ -34,7 +34,9 @@ isolation, project/tool policy and explicit per-connection `enabled` remain.
   No compatibility shell, auth toggle, automatic login or new endpoint replaces them.
 - Main Nexus uses the existing typed Agent client/executor and scoped MCP error
   boundary. Catalog remains one official Registry page, filtering URL metadata,
-  five-minute bounded Caffeine cache; no connection creation or provider handshake.
+  five-minute bounded Caffeine cache at this acceptance snapshot; no connection
+  creation or provider handshake. The current Agent cache policy is recorded in
+  [stage-7-evidence.md](stage-7-evidence.md).
 - ForgeIT exercises catalog and CRUD without cookie, Authorization or CSRF. Valid
   Agent errors retain their contract; malformed/unavailable responses and provider
   secret canaries remain covered. Scoped RA login/Origin/CSRF/service bearer still
