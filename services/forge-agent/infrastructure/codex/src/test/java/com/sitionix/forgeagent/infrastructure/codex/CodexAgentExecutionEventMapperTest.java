@@ -134,9 +134,14 @@ class CodexAgentExecutionEventMapperTest {
                 """)).isEmpty();
         assertThat(this.mapper.turnFailed("turn-1", "synthetic-canary", OBSERVED_AT).payload())
                 .doesNotContain("synthetic-canary");
-        assertThat(map("error", """
-                {"threadId":"t","turnId":"u","message":"synthetic-canary"}
-                """).payload()).doesNotContain("synthetic-canary");
+        final JsonNode providerError = this.payload(map("error", """
+                {"threadId":"t","turnId":"u","error":{"message":"synthetic-canary",
+                 "codexErrorInfo":"badRequest"}}
+                """));
+        assertThat(providerError.path("message").asText())
+                .isEqualTo("Provider diagnostic during MCP-enabled execution.");
+        assertThat(providerError.path("providerCode").asText()).isEqualTo("BAD_REQUEST");
+        assertThat(providerError.toString()).doesNotContain("synthetic-canary");
     }
 
     @Test
