@@ -24,7 +24,6 @@ class DefaultCodexAppServerProcessStarterTest {
             var properties = mock(CodexAppServerProperties.class);
             when(properties.getCommand()).thenReturn(List.of("codex", "app-server", "--stdio"));
             var launcher = mock(RuntimeProcessLauncher.class);
-            when(launcher.enabled()).thenReturn(true);
             when(launcher.startCodex(workspace)).thenReturn(mock(ManagedRuntimeProcess.class));
             when(launcher.startCodex(any(Path.class), any(Map.class)))
                     .thenReturn(mock(ManagedRuntimeProcess.class));
@@ -49,10 +48,10 @@ class DefaultCodexAppServerProcessStarterTest {
             var properties = mock(CodexAppServerProperties.class);
             when(properties.getCommand()).thenReturn(List.of("codex", "app-server", "--stdio"));
             var launcher = mock(RuntimeProcessLauncher.class);
-            when(launcher.enabled()).thenReturn(false);
+            when(launcher.startCodex(any(Path.class), any(Map.class))).thenThrow(new IllegalStateException("Runtime boundary unavailable"));
             var starter = new DefaultCodexAppServerProcessStarter(properties, launcher);
             assertThatThrownBy(() -> starter.start(workspace, new McpRuntimeLaunchGrants(Map.of())))
-                    .hasMessageContaining("Isolated Codex runtime is unavailable");
+                    .hasMessage("Failed to start Codex app-server");
         } finally {
             Files.deleteIfExists(workspace);
         }

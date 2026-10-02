@@ -45,7 +45,7 @@ public final class InMemoryMcpRuntimeGrantRepository implements McpRuntimeGrantR
             token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
             hash = hash(token);
         } while (grants.containsKey(hash));
-        grants.put(hash, new Entry(grant, ticker.getAsLong() + remaining));
+        grants.put(hash, new Entry(grant, ticker.getAsLong() + remaining, false));
         return new McpRuntimeGrantHandle(grant.id(), token);
     }
 
@@ -61,9 +61,24 @@ public final class InMemoryMcpRuntimeGrantRepository implements McpRuntimeGrantR
         return entry.grant().connectionId().equals(connectionId) ? Optional.of(entry.grant()) : Optional.empty();
     }
 
+    @Override public synchronized void activateForDispatch(UUID turnId) {
+        if (turnId == null) throw new IllegalArgumentException("Turn id is required");
+        removeExpired();
+        grants.replaceAll((hash, entry) -> entry.grant().turnId().equals(turnId)
+                ? new Entry(entry.grant(), entry.expiresAtNanos(), true) : entry);
+    }
+
     /** Admission and revocation use the same short critical section; accepted calls are in flight. */
     @Override public synchronized boolean admit(String token, UUID connectionId) {
-        return resolve(token, connectionId).isPresent();
+        if (token == null || connectionId == null) return false;
+        String hash = hash(token);
+        Entry entry = grants.get(hash);
+        if (entry == null) return false;
+        if (expired(entry)) {
+            grants.remove(hash);
+            return false;
+        }
+        return entry.dispatchAuthorized() && entry.grant().connectionId().equals(connectionId);
     }
 
     @Override public synchronized void revokeConnection(UUID connectionId) {
@@ -100,5 +115,5 @@ public final class InMemoryMcpRuntimeGrantRepository implements McpRuntimeGrantR
         }
     }
 
-    private record Entry(McpRuntimeGrant grant, long expiresAtNanos) {}
+    private record Entry(McpRuntimeGrant grant, long expiresAtNanos, boolean dispatchAuthorized) {}
 }

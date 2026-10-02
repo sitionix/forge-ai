@@ -12,7 +12,7 @@ final class CodexMcpConfiguration {
     void apply(ObjectNode config, McpExecutionSelection selection, URI gatewayBase, Path cwd) {
         if (config == null || selection == null || cwd == null || !cwd.isAbsolute()
                 || !validGateway(gatewayBase)) {
-            throw new CodexTransportException("Codex MCP configuration is unavailable");
+            throw new CodexMcpExecutionException("Codex MCP configuration is unavailable");
         }
         config.putObject("projects").putObject(cwd.normalize().toString()).put("trust_level", "untrusted");
         config.put("sandbox_workspace_write.network_access", false);
@@ -20,7 +20,7 @@ final class CodexMcpConfiguration {
         for (var entry : selection.entries()) {
             String expectedAlias = "forge_" + entry.connectionId().toString().replace("-", "");
             if (!expectedAlias.equals(entry.alias()) || entry.tools().isEmpty() || servers.has(entry.alias())) {
-                throw new CodexTransportException("Codex MCP selection is invalid");
+                throw new CodexMcpExecutionException("Codex MCP selection is invalid");
             }
             ObjectNode server = servers.putObject(entry.alias());
             server.put("url", gatewayBase.toString().replaceAll("/$", "")

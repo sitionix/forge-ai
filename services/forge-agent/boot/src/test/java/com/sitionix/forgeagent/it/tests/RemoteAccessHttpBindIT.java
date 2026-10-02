@@ -2,7 +2,6 @@ package com.sitionix.forgeagent.it.tests;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.sitionix.forgeagent.ForgeAgentApplication;
 import com.sitionix.forgeagent.infrastructure.local.remoteaccess.RemoteAccessChannelServer;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -22,7 +21,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 
-@SpringBootTest(classes = ForgeAgentApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+@SpringBootTest(classes = com.sitionix.forgeremote.agent.RemoteAccessAgentApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"forge.agent.remote-access.channel-enabled=true", "FORGE_AGENT_HOST=127.0.0.1",
                 "server.port=0", "forge.agent.worker.scheduling-enabled=false"})
 @DirtiesContext

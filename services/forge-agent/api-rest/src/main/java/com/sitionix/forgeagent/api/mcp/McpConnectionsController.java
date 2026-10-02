@@ -3,15 +3,12 @@ package com.sitionix.forgeagent.api.mcp;
 import com.sitionix.forgeagent.application.mcp.McpConnectionService;
 import com.sitionix.forgeagent.domain.model.*;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@ConditionalOnProperty(prefix="forge.mcp",name="enabled",havingValue="true")
 @RequestMapping("/api/v1/integrations/mcp/connections")
 public class McpConnectionsController {
     private final McpConnectionService service;
@@ -20,12 +17,12 @@ public class McpConnectionsController {
     @GetMapping("/{id}") public McpConnectionResponse get(@PathVariable UUID id) { return McpConnectionResponse.from(service.get(id)); }
     @PostMapping public ResponseEntity<McpConnectionResponse> create(@RequestBody McpConnectionRequest request) {
         validate(request,false);
-        return ResponseEntity.status(HttpStatus.CREATED).body(McpConnectionResponse.from(service.create(request.displayName(),request.endpoint(),auth(request),access(request),secret(request))));
+        return ResponseEntity.status(HttpStatus.CREATED).body(McpConnectionResponse.from(service.create(request.displayName(),request.endpoint(),auth(request),access(request),secret(request), request.oauthConfiguration(), oauthSecret(request))));
     }
     @PutMapping("/{id}") public McpConnectionResponse update(@PathVariable UUID id,@RequestBody McpConnectionRequest request) {
         validate(request,true);
         return McpConnectionResponse.from(service.update(id,request.displayName(),request.endpoint(),auth(request),access(request),
-                McpCredentialChange.valueOf(request.credentialChange().name()),secret(request)));
+                McpCredentialChange.valueOf(request.credentialChange().name()),secret(request), request.oauthConfiguration(), oauthSecret(request)));
     }
     @PutMapping("/{id}/enabled") public McpConnectionResponse enabled(@PathVariable UUID id,@RequestBody Enabled request) {
         if (request==null || request.enabled()==null) throw new IllegalArgumentException("Invalid MCP request");
@@ -48,11 +45,20 @@ public class McpConnectionsController {
     private static McpProjectAccess access(McpConnectionRequest request) {
         return new McpProjectAccess(McpProjectAccess.Scope.valueOf(request.projectAccess().scope().name()),request.projectAccess().projectIds());
     }
+    private static McpOAuthCredentials oauthSecret(McpConnectionRequest request) {
+        if (request.authType()!=McpConnectionRequest.AuthType.OAUTH || request.credential()==null) return null;
+        if (request.credential().bearer()!=null || request.credential().headers()!=null)
+            throw new IllegalArgumentException("Invalid credential");
+        return new McpOAuthCredentials(request.credential().clientSecret(),null);
+    }
     private static McpCredentialSecret secret(McpConnectionRequest request) {
         if (request.credential()==null) return null;
+        if (request.authType()!=McpConnectionRequest.AuthType.OAUTH && request.credential().clientSecret()!=null)
+            throw new IllegalArgumentException("Invalid credential");
         return switch (request.authType()) {
             case BEARER -> { if (request.credential().headers()!=null) throw new IllegalArgumentException("Invalid credential"); yield McpCredentialSecret.bearer(request.credential().bearer()); }
             case SECRET_HEADERS -> { if (request.credential().bearer()!=null) throw new IllegalArgumentException("Invalid credential"); yield McpCredentialSecret.headers(request.credential().headers()); }
+            case OAUTH -> null;
             case NONE -> throw new IllegalArgumentException("Invalid credential");
         };
     }

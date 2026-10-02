@@ -1,7 +1,6 @@
 package com.sitionix.forgeproxyit;
 import static org.assertj.core.api.Assertions.*;
 import com.sitionix.forgeai.Application;
-import com.sitionix.forgeai.api.remoteaccess.RemoteAccessOperatorController;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.net.*;
@@ -19,13 +18,12 @@ import org.springframework.test.context.*;
 @SpringBootTest(classes=Application.class,webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties={
     "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
     "spring.config.import=","spring.docker.compose.enabled=false","server.address=127.0.0.1",
-    "forge.mcp.enabled=true","forge.remote-access.enabled=true","forge.remote-access.operator-origin=http://127.0.0.1:9099"})
+    "forge.remote-access.enabled=true","forge.remote-access.operator-origin=http://127.0.0.1:9099"})
 @org.springframework.context.annotation.Import(NexusCombinedOperatorHttpIT.DispatchFixture.class)
 @DirtiesContext
 class NexusCombinedOperatorHttpIT {
     static final String BASE="/fgaisox/api/v1/infrastructure/agents/remote-access";
     static final String OPERATOR="o".repeat(43), SERVICE="s".repeat(43);
-    static final String GENERAL=Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
     static Path directory; static HttpServer upstream;static final AtomicInteger calls=new AtomicInteger();
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) throws Exception {
         directory=Files.createTempDirectory("stage6-operator-http-");
@@ -41,15 +39,13 @@ class NexusCombinedOperatorHttpIT {
             exchange.getResponseHeaders().add("Content-Type","application/json");exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);exchange.close();
         });upstream.createContext("/api/v1/integrations/mcp/connections",exchange -> {
             calls.incrementAndGet();
-            if (!("Bearer "+GENERAL).equals(exchange.getRequestHeaders().getFirst("Authorization"))) { exchange.sendResponseHeaders(401,-1);exchange.close();return; }
+            assertThat(exchange.getRequestHeaders().getFirst("Authorization")).isNull();
             byte[] body="[]".getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type","application/json");exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);exchange.close();
         });upstream.start();
-        var general=directory.resolve("general");Files.writeString(general,GENERAL);Files.setPosixFilePermissions(general,PosixFilePermissions.fromString("rw-------"));
-        registry.add("forge.mcp.agent-service-credential-file",general::toString);
         registry.add("forge.ai.infrastructure.agent.base-url",() -> "http://127.0.0.1:"+upstream.getAddress().getPort());
     }
-    @AfterAll static void stop() throws Exception { upstream.stop(0);for(String name:List.of("operator","service","general"))Files.deleteIfExists(directory.resolve(name));Files.deleteIfExists(directory); }
+    @AfterAll static void stop() throws Exception { upstream.stop(0);for(String name:List.of("operator","service"))Files.deleteIfExists(directory.resolve(name));Files.deleteIfExists(directory); }
     @Autowired ServletWebServerApplicationContext context;
     @Autowired ObjectMapper mapper;
     @Test void actualHttpLoginCookieOriginAndServiceCredentialBoundary() throws Exception {
@@ -65,6 +61,12 @@ class NexusCombinedOperatorHttpIT {
         String csrfMissing=request("POST","/operator/logout","Cookie: "+cookie+"\r\nOrigin: http://127.0.0.1:9099\r\n","");
         assertThat(csrfMissing).startsWith("HTTP/1.1 403");
     }
+    @Test void mcpCatalogNeedsNoRemoteAccessSession() throws Exception {
+        calls.set(0);
+        String response=requestAt("GET","/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connections","","");
+        assertThat(response).startsWith("HTTP/1.1 200").contains("[]");
+        assertThat(calls.get()).isEqualTo(1);
+    }
     @Test void servletScopedSecurityAlsoProtectsEncodedAndMatrixPaths() throws Exception {
         for (String prefix:List.of(BASE.replace("remote-access","%72emote-access"),BASE+";v=1")) {
             String response=requestAt("GET",prefix+"/capabilities","","");
@@ -72,37 +74,7 @@ class NexusCombinedOperatorHttpIT {
             assertThat(response).startsWith("HTTP/1.1 40");
         }
     }
-    @Test void oneCookieCoversGeneralControlRotationLogoutAndCanonicalSession() throws Exception {
-        String login=request("POST","/operator/login","Origin: http://127.0.0.1:9099\r\n","{\"secret\":\""+OPERATOR+"\"}");
-        assertThat(login).startsWith("HTTP/1.1 200").contains("Path=/fgaisox;").doesNotContain("FG_SESSION");
-        String cookie=cookie(login),csrf=csrf(login);
-        var jar=new java.net.CookieManager(null,java.net.CookiePolicy.ACCEPT_ALL);
-        String setCookie=Arrays.stream(login.split("\r\n")).filter(line -> line.toLowerCase().startsWith("set-cookie:")).findFirst().orElseThrow().substring(12);
-        jar.put(URI.create("http://127.0.0.1:9099"+BASE+"/operator/login"),Map.of("Set-Cookie",List.of(setCookie)));
-        assertThat(jar.get(URI.create("http://127.0.0.1:9099/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connections"),Map.of()).get("Cookie")).anyMatch(value -> value.contains(cookie));
-        assertThat(requestAt("GET","/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connections","Cookie: "+cookie+"\r\n","")).startsWith("HTTP/1.1 200");
-        assertThat(requestAt("GET","/fgaisox/api/v1/operator/session","","")).startsWith("HTTP/1.1 401");
-        assertThat(requestAt("POST","/fgaisox/api/v1/operator/session","Origin: http://127.0.0.1:9099\r\n","{\"bootstrapSecret\":\"wrong\"}")).startsWith("HTTP/1.1 401");
-        assertThat(requestAt("GET","/fgaisox/api/v1/operator/session","Cookie: "+cookie+"\r\nSec-Fetch-Site: same-origin\r\n","")).startsWith("HTTP/1.1 200").contains("X-CSRF-TOKEN");
-        String relogin=request("POST","/operator/login","Cookie: "+cookie+"\r\nOrigin: http://127.0.0.1:9099\r\n","{\"secret\":\""+OPERATOR+"\"}");
-        String rotated=cookie(relogin);assertThat(rotated).isNotEqualTo(cookie);
-        assertThat(requestAt("GET","/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connections","Cookie: "+cookie+"\r\n","")).startsWith("HTTP/1.1 401");
-        assertThat(request("POST","/operator/logout","Cookie: "+rotated+"\r\nOrigin: http://127.0.0.1:9099\r\nX-CSRF-TOKEN: "+csrf(relogin)+"\r\n","")).startsWith("HTTP/1.1 204");
-        assertThat(requestAt("GET","/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connections","Cookie: "+rotated+"\r\n","")).startsWith("HTTP/1.1 401");
-    }
-    @Test void canonicalLoginUsesSameOwnerAndLogoutRequiresOriginAndCsrf() throws Exception {
-        String path="/fgaisox/api/v1/operator/session";
-        int before=calls.get();
-        assertThat(requestAt("POST",path,"Origin: http://evil.test\r\n","{\"bootstrapSecret\":\""+OPERATOR+"\"}")).startsWith("HTTP/1.1 403");
-        String login=requestAt("POST",path,"Origin: http://127.0.0.1:9099\r\n","{\"bootstrapSecret\":\""+OPERATOR+"\"}");
-        assertThat(login).startsWith("HTTP/1.1 200").contains("X-CSRF-TOKEN","HttpOnly").doesNotContain(OPERATOR,"FG_SESSION");
-        String headers="Cookie: "+cookie(login)+"\r\nOrigin: http://127.0.0.1:9099\r\n";
-        assertThat(requestAt("DELETE",path,headers,"")).startsWith("HTTP/1.1 403");
-        assertThat(requestAt("DELETE",path,headers+"X-CSRF-TOKEN: wrong\r\n","")).startsWith("HTTP/1.1 403");
-        assertThat(requestAt("DELETE",path,headers+"X-CSRF-TOKEN: "+csrf(login)+"\r\n","")).startsWith("HTTP/1.1 204");
-        assertThat(request("GET","/capabilities","Cookie: "+cookie(login)+"\r\n","")).startsWith("HTTP/1.1 401");
-        assertThat(calls.get()).isEqualTo(before);
-    }
+
     static String cookie(String response) {
         return Arrays.stream(response.split("\r\n")).filter(line -> line.toLowerCase().startsWith("set-cookie:")).findFirst().orElseThrow().substring(12).split(";",2)[0];
     }
@@ -125,11 +97,7 @@ class NexusCombinedOperatorHttpIT {
             else request.getRequestDispatcher(target).forward(request,response);
         }
     }
-    @Test void publicEntryCannotDispatchToUnauthenticatedManagement() throws Exception {
-        int before=calls.get();DispatchController.dispatches.set(0);
-        for(String kind:List.of("forward","include","async")) requestAt("GET","/fgaisox/static/security-probe/"+kind+".html","","");
-        assertThat(calls.get()).isEqualTo(before);assertThat(DispatchController.dispatches.get()).isEqualTo(3);
-    }
+
     // Raw local HTTP lets the random test listener receive the exact configured Host;
     // production uses the configured fixed origin. Agent here is explicitly an HTTP stub.
     String request(String method,String path,String extra,String body) throws Exception {

@@ -195,10 +195,11 @@ class CodexAppServerClientTest {
     @Test
     void defaultStarterLaunchesProcessInResolvedWorkingDirectory() throws Exception {
         final CodexAppServerProperties properties = this.properties();
-        final Path runtimeCwd = Files.createDirectories(
-                Files.createTempDirectory("forge-agent-codex-starter").resolve("runtime"));
+        final Path managedRoot = Files.createTempDirectory("forge-agent-codex-starter");
+        properties.setRuntimeCwd(managedRoot.resolve(".forge-codex-runtime").toString());
+        final Path runtimeCwd = new CodexRuntimeWorkspace(properties).routingWorkspace().cwd();
         properties.setCommand(List.of("pwd"));
-        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties);
+        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties, CodexFixtureProcesses.launcher(properties));
 
         final StartedCodexAppServer started = starter.start(runtimeCwd);
 
@@ -212,7 +213,7 @@ class CodexAppServerClientTest {
         final CodexAppServerProperties properties = this.properties();
         properties.setCommand(List.of("pwd"));
         final Path missing = Files.createTempDirectory("forge-agent-codex-missing").resolve("absent");
-        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties);
+        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties, CodexFixtureProcesses.launcher(properties));
 
         assertThatThrownBy(() -> starter.start(missing))
                 .isInstanceOf(CodexTransportException.class)

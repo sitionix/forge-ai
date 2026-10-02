@@ -2,6 +2,7 @@
 
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,26 @@ sys.path.insert(0, str(ROOT / 'scripts/remote-access'))
 
 
 class RemoteAccessStartupTest(unittest.TestCase):
+    def installation_fixture(self, root):
+        """Exercise real unit installation with disposable prerequisite side effects."""
+        checkout = root / 'checkout'
+        for directory in ('scripts/systemd', 'scripts/remote-access', 'scripts/runtime', 'scripts/lib', 'config/systemd'):
+            shutil.copytree(ROOT / directory, checkout / directory)
+        # Root account/software provisioning is proved separately by normal
+        # runtime acceptance. This RA test must never touch host runtime state.
+        (checkout / 'scripts/runtime/install_mcp.py').write_text(
+            'import pathlib,sys\n'
+            'root=pathlib.Path(sys.argv[1])\n'
+            '(root/"mcp-prepared").write_text("prepared")\n')
+        vendor = root / 'vendor'
+        (vendor / 'bin').mkdir(parents=True)
+        (vendor / 'codex-resources').mkdir()
+        codex = vendor / 'bin/codex'
+        codex.write_text('#!/bin/sh\nexit 0\n')
+        codex.chmod(0o755)
+        (vendor / 'codex-resources/bwrap').write_text('synthetic-resource')
+        return checkout, vendor / 'bin'
+
     def test_existing_control_directory_becomes_traversable_without_listing(self):
         import install
         with tempfile.TemporaryDirectory() as directory:
@@ -132,10 +153,12 @@ class RemoteAccessStartupTest(unittest.TestCase):
     def test_installer_places_inert_remote_units_before_enable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            checkout, codex_bin = self.installation_fixture(root)
             agent_jar = root / 'agent.jar'
             agent_jar.write_bytes(b'synthetic-agent')
             environment = os.environ.copy()
-            environment.update(FORGE_SYSTEMD_USER='local-operator',
+            environment.update(PATH=f'{codex_bin}:{environment.get("PATH", "")}',
+                               FORGE_SYSTEMD_USER='local-operator',
                                FORGE_SYSTEMD_GROUP='local-operator',
                                FORGE_SYSTEMD_USE_SUDO='0',
                                FORGE_SYSTEMD_SKIP_RELOAD='1',
@@ -145,8 +168,9 @@ class RemoteAccessStartupTest(unittest.TestCase):
                                FORGE_REMOTE_ACCESS_AGENT_JAR_SOURCE=str(agent_jar),
                                FORGE_REMOTE_BOOTSTRAP_BIN_DIR=str(root / 'bootstrap-bin'),
                                FORGE_REMOTE_BOOTSTRAP_MANIFEST=str(root / 'etc/enable.json'))
-            subprocess.run([str(ROOT / 'scripts/systemd/install.sh')], cwd=ROOT,
+            subprocess.run([str(checkout / 'scripts/systemd/install.sh')], cwd=checkout,
                            env=environment, check=True, capture_output=True, text=True)
+            self.assertTrue((checkout / 'mcp-prepared').is_file())
             self.assertTrue((root / 'systemd/forge-agent.service').is_file())
             self.assertTrue((root / 'systemd/forge-nexus.service').is_file())
             self.assertTrue((root / 'systemd/forge-remote-agent.service').is_file())
@@ -355,6 +379,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
     def test_just_start_does_not_prepare_or_start_remote_access(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            checkout, codex_bin = self.installation_fixture(root)
             binaries = root / 'bin'
             binaries.mkdir()
             journal = root / 'calls.txt'
@@ -377,7 +402,7 @@ class RemoteAccessStartupTest(unittest.TestCase):
             runtime = root / 'systemd-runtime'
             runtime.mkdir()
             environment = os.environ.copy()
-            environment.update(PATH=f'{binaries}:{environment.get("PATH", "")}',
+            environment.update(PATH=f'{binaries}:{codex_bin}:{environment.get("PATH", "")}',
                                FORGE_TEST_CALLS=str(journal),
                                FORGE_SYSTEMD_USE_SUDO='0',
                                FORGE_SYSTEMD_SKIP_RELOAD='1',
@@ -392,10 +417,11 @@ class RemoteAccessStartupTest(unittest.TestCase):
                                FORGE_REMOTE_BOOTSTRAP_BIN_DIR=str(root / 'bootstrap-bin'),
                                FORGE_REMOTE_BOOTSTRAP_MANIFEST=str(root / 'etc/enable.json'),
                                FORGE_RUNTIME_HEALTH_ATTEMPTS='1')
-            result = subprocess.run([str(ROOT / 'scripts/runtime/systemd.sh'), 'start'],
-                                    cwd=ROOT, env=environment, capture_output=True,
+            result = subprocess.run([str(checkout / 'scripts/runtime/systemd.sh'), 'start'],
+                                    cwd=checkout, env=environment, capture_output=True,
                                     text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((checkout / 'mcp-prepared').is_file())
             calls = journal.read_text()
             self.assertNotIn('prepare_startup.py', calls)
             starts = '\n'.join(line for line in calls.splitlines()

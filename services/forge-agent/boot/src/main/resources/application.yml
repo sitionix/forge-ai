@@ -7,7 +7,7 @@ spring:
   datasource:
     url: ${FORGE_AGENT_DB_URL:jdbc:postgresql://localhost:54329/forge_agent}
     username: ${FORGE_AGENT_DB_USERNAME:forge_agent}
-    password: ${FORGE_AGENT_DB_PASSWORD:forge_agent}
+    password: ${FORGE_AGENT_DB_PASSWORD:}
   flyway:
     enabled: true
   jpa:
@@ -29,7 +29,8 @@ management:
         include: "health,info"
 forge:
   mcp:
-    enabled: ${FORGE_MCP_ENABLED:false}
+    oauth:
+      discovery-timeout: ${FORGE_MCP_OAUTH_DISCOVERY_TIMEOUT:20s}
     tool-call-timeout: ${FORGE_MCP_TOOL_CALL_TIMEOUT:30s}
     gateway:
       max-grants: ${FORGE_MCP_GATEWAY_MAX_GRANTS:1000}
@@ -46,7 +47,7 @@ forge:
     registry:
       base-url: ${FORGE_MCP_REGISTRY_BASE_URL:https://registry.modelcontextprotocol.io}
       connect-timeout: ${FORGE_MCP_REGISTRY_CONNECT_TIMEOUT:3s}
-      read-timeout: ${FORGE_MCP_REGISTRY_READ_TIMEOUT:5s}
+      read-timeout: ${FORGE_MCP_REGISTRY_READ_TIMEOUT:50s}
     runtime:
       helper: ${FORGE_MCP_RUNTIME_HELPER:/usr/local/libexec/forge-runtime-launcher}
   agent:

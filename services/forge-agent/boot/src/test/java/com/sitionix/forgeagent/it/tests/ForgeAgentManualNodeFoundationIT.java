@@ -21,7 +21,7 @@ import org.springframework.http.HttpStatus;
 import static org.assertj.core.api.Assertions.*;
 
 @IntegrationTest
-class ForgeAgentManualNodeFoundationIT {
+class ForgeAgentManualNodeFoundationIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private WorkflowUseCases workflows;
     @Autowired private WorkflowRunUseCases runs;

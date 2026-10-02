@@ -27,16 +27,31 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 
 @IntegrationTest
-class ForgeAgentProjectRepositoryIT {
+class ForgeAgentProjectRepositoryIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     private static final UUID PROJECT_ALPHA_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
 
     @Autowired
     private ForgeAgentTestManager forgeIt;
 
+    @org.springframework.boot.test.mock.mockito.MockBean
+    private com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeProcessLauncher runtimeLauncher;
+
+    @BeforeEach
+    void configureFixtureGit() throws Exception {
+        org.mockito.Mockito.when(runtimeLauncher.startGit(org.mockito.ArgumentMatchers.anyList())).thenAnswer(invocation -> {
+            java.util.List<String> command = invocation.getArgument(0);
+            Process process = new ProcessBuilder(command).start();
+            return new com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess(process, () -> {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+            });
+        });
+    }
+
     @BeforeEach
     void cleanLocalWorkspace() throws IOException {
-        this.deleteRecursively(this.forgeRoot().resolve("forge-projects").resolve(PROJECT_ALPHA_ID.toString()));
+        this.deleteRecursively(MANAGED_WORKSPACE.resolve(PROJECT_ALPHA_ID.toString()));
     }
 
     @Test
@@ -304,10 +319,12 @@ class ForgeAgentProjectRepositoryIT {
 
     private void createInvalidManagedCheckout(final String repositoryName) {
         try {
-            final Path repositoryPath = this.forgeRoot()
-                    .resolve("forge-projects")
+            final Path repositoryPath = MANAGED_WORKSPACE
                     .resolve(PROJECT_ALPHA_ID.toString())
                     .resolve(repositoryName);
+            new com.sitionix.forgeagent.infrastructure.local.LocalProjectWorkspaceAdapter(
+                    new com.sitionix.forgeagent.infrastructure.local.ForgeRootResolver(MANAGED_WORKSPACE))
+                    .resolveProjectWorkspace(PROJECT_ALPHA_ID);
             Files.createDirectories(repositoryPath.resolve(".git"));
             Files.writeString(repositoryPath.resolve("invalid-git-checkout"), "invalid");
         } catch (final IOException exception) {
@@ -315,16 +332,7 @@ class ForgeAgentProjectRepositoryIT {
         }
     }
 
-    private Path forgeRoot() {
-        Path current = Path.of("").toAbsolutePath().normalize();
-        while (current != null) {
-            if (Files.exists(current.resolve(".git"))) {
-                return current;
-            }
-            current = current.getParent();
-        }
-        return Path.of("").toAbsolutePath().normalize();
-    }
+
 
     private void deleteRecursively(final Path path) throws IOException {
         if (!Files.exists(path)) {

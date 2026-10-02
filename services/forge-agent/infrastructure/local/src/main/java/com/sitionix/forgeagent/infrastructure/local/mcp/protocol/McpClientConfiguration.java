@@ -6,14 +6,13 @@ import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
+
 class McpClientConfiguration {
     private static final Duration MAX_MANAGEMENT_PROBE_BUDGET = Duration.ofSeconds(25);
     @Bean SdkMcpRemoteClient mcpRemoteClient(

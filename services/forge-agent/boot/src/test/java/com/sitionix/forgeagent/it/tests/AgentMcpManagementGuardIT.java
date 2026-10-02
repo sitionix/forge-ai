@@ -1,5 +1,9 @@
 package com.sitionix.forgeagent.it.tests;
 
+import com.sitionix.forgeit.core.test.IntegrationTest;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -17,7 +21,6 @@ import com.sitionix.forgeagent.infrastructure.local.mcp.registry.McpRegistryHttp
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
-import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import java.nio.file.Files;
@@ -31,9 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
-import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
@@ -42,20 +43,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
-/** Synthetic web guard proof; the privileged OS boundary has a separate fixture. */
-@IntegrationTest(properties = "forge.mcp.enabled=true")
+/** MCP CRUD and safe errors without Forge login; OS isolation has a separate fixture. */
+@IntegrationTest
 @ExtendWith(OutputCaptureExtension.class)
 class AgentMcpManagementGuardIT {
-  private static final byte[] SERVICE = new byte[32];
   private static final Path DIRECTORY;
-  private static final Path SERVICE_FILE;
   private static final Path KEY_FILE;
   private static final Path DB_FILE;
   static {
     try {
-      Arrays.fill(SERVICE, (byte) 9);
       DIRECTORY = Files.createTempDirectory("agent-guard-it");
-      SERVICE_FILE = file("service", Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE));
       KEY_FILE = file("key", "active=k1\nkey.k1=" + Base64.getEncoder().encodeToString(new byte[32]) + "\n");
       DB_FILE = file("db", "forge-it");
     } catch (Exception exception) {
@@ -65,14 +62,12 @@ class AgentMcpManagementGuardIT {
 
   @DynamicPropertySource
   static void credentials(DynamicPropertyRegistry registry) {
-    registry.add("forge.mcp.service-credential-file", SERVICE_FILE::toString);
     registry.add("forge.mcp.key-file", KEY_FILE::toString);
     registry.add("forge.mcp.database-credential-file", DB_FILE::toString);
   }
 
   @AfterAll
   static void cleanup() throws Exception {
-    Files.deleteIfExists(SERVICE_FILE);
     Files.deleteIfExists(KEY_FILE);
     Files.deleteIfExists(DB_FILE);
     Files.deleteIfExists(DIRECTORY);
@@ -89,63 +84,25 @@ class AgentMcpManagementGuardIT {
   @SpyBean McpRemoteProbe remoteProbe;
   @Autowired JdbcTemplate jdbc;
 
-  @Test void runtimeRouteHasItsOwnBearerAndDoesNotOpenManagementAliases() {
-    var path = PathParams.create().add("id", UUID.randomUUID());
-    String serviceBearer = "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE);
-    clearInvocations(remoteProbe);
-    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.RUNTIME_MCP_DENIED)
-        .withPathParameters(path).header("Host", "localhost")
-        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
-    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.RUNTIME_MCP_DENIED)
-        .withPathParameters(path).header("Host", "localhost")
-        .header("Authorization", serviceBearer)
-        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
-    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.RUNTIME_MCP_DENIED)
-        .withPathParameters(path).header("Host", "localhost")
-        .header("Origin", "https://attacker.example")
-        .header("Authorization", "Bearer runtime-canary")
-        .expectStatus(HttpStatus.FORBIDDEN).assertAndCreate();
-    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.RUNTIME_MCP_ALTERNATIVE)
-        .withPathParameters(path).header("Host", "localhost")
-        .header("Authorization", "Bearer runtime-canary")
-        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
-    verifyNoInteractions(remoteProbe);
-  }
-
-  @Test void probeRouteRequiresServiceBearerBeforeApplication() {
-    var path = PathParams.create().add("id", UUID.randomUUID());
-    clearInvocations(probeService);
-    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.TEST_MCP_CONNECTION)
-        .withPathParameters(path).expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
-    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.TEST_MCP_CONNECTION)
-        .withPathParameters(path).header("Authorization", "Bearer wrong")
-        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
-    verifyNoInteractions(probeService);
-    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.TEST_MCP_CONNECTION)
-        .withPathParameters(path).header("Authorization", "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE))
-        .expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
-  }
 
   @Test void invalidProbeApprovalStopsBeforeService() {
     var path = PathParams.create().add("id", UUID.randomUUID());
     clearInvocations(probeService);
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.APPROVE_MCP_TOOLS_ERROR)
         .withPathParameters(path).withRequest("mcp-invalid-approve-request.json")
-        .header("Authorization", "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE))
         .expectStatus(HttpStatus.BAD_REQUEST).assertAndCreate();
     verifyNoInteractions(probeService);
   }
 
   @Test void probeFailureNeverPublishesTransportCauseOrCredential(CapturedOutput output) throws Exception {
     var connection = mcpService.create("canary", java.net.URI.create("https://example.org/mcp"),
-        McpAuthType.BEARER, McpProjectAccess.all(), McpCredentialSecret.bearer("synthetic-probe-secret"));
+        McpAuthType.BEARER, McpProjectAccess.all(), McpCredentialSecret.bearer("synthetic-probe-secret"),null,null);
     try {
       org.mockito.Mockito.doThrow(new IllegalStateException("upstream-cause-canary"))
           .when(remoteProbe).probe(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
               org.mockito.ArgumentMatchers.any(byte[].class));
       manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.TEST_MCP_CONNECTION_ERROR)
           .withPathParameters(PathParams.create().add("id", connection.id()))
-          .header("Authorization", "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE))
           .expectStatus(HttpStatus.INTERNAL_SERVER_ERROR)
           .andExpectPath(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentAsString())
               .contains("MCP_OPERATION_FAILED").doesNotContain("synthetic-probe-secret", "upstream-cause-canary"))
@@ -159,81 +116,26 @@ class AgentMcpManagementGuardIT {
   }
 
   @Test
-  void availableCatalogRejectsMissingServiceBearerAndInvalidLimitBeforeRegistry() {
+  void availableCatalogRejectsInvalidLimitBeforeRegistry() {
     clearInvocations(registryClient);
-    manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.LIST_MCP_AVAILABLE_UNAUTHORIZED)
-        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.LIST_MCP_AVAILABLE_INVALID)
-        .header("Authorization", "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE))
         .expectStatus(HttpStatus.BAD_REQUEST).assertAndCreate();
     verifyNoInteractions(registryClient);
   }
 
   @Test
-  void cipherAndDatabaseFailuresHaveStaticHttpAndLogBoundary(CapturedOutput output) {
-    String bearer="Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE);
-    try {
-      org.mockito.Mockito.doThrow(new IllegalStateException("cipher-error-canary"))
-          .when(cipher).encrypt(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.any(),
-              org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.any(byte[].class));
-      manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.CREATE_MCP_CONNECTION_ERROR)
-          .header("Authorization",bearer).withRequest("mcp-create-request.json")
-          .expectStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-          .andExpectPath(result -> {
-            String body=result.getResponse().getContentAsString();
-            org.assertj.core.api.Assertions.assertThat(body)
-                .doesNotContain("cipher-error-canary","agent-canary-secret");
-            var error=new ObjectMapper().readTree(body);
-            org.assertj.core.api.Assertions.assertThat(error.path("code").asText()).isEqualTo("MCP_OPERATION_FAILED");
-            org.assertj.core.api.Assertions.assertThat(error.path("message").asText()).isEqualTo("MCP management operation failed.");
-            org.assertj.core.api.Assertions.assertThat(error.path("correlationId").isNull()).isTrue();
-          })
-          .assertAndCreate();
-    } finally { org.mockito.Mockito.reset(cipher); }
-    try {
-      org.mockito.Mockito.doThrow(new IllegalStateException("database-error-canary"))
-          .when(mcpRepository).findAll(org.mockito.ArgumentMatchers.any());
-      manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.LIST_MCP_CONNECTIONS)
-          .header("Authorization",bearer).expectStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-          .andExpectPath(result -> {
-            String body=result.getResponse().getContentAsString();
-            org.assertj.core.api.Assertions.assertThat(body).doesNotContain("database-error-canary");
-            var error=new ObjectMapper().readTree(body);
-            org.assertj.core.api.Assertions.assertThat(error.path("code").asText()).isEqualTo("MCP_OPERATION_FAILED");
-            org.assertj.core.api.Assertions.assertThat(error.path("message").asText()).isEqualTo("MCP management operation failed.");
-          })
-          .assertAndCreate();
-    } finally { org.mockito.Mockito.reset(mcpRepository); }
-    org.assertj.core.api.Assertions.assertThat(output.getAll())
-        .doesNotContain("cipher-error-canary","database-error-canary","agent-canary-secret");
-  }
-
-  @Test
-  void absentWrongAndEncodedControlPathsRejectBeforeController() {
-    clearInvocations(controller);
-    manager.mockMvc().ping(projects()).expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
-    manager.mockMvc().ping(projects()).header("Authorization", "Bearer wrong")
-        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
-    manager.mockMvc().ping(encodedProjects()).expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
-    manager.mockMvc().ping(stream()).expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
-    verifyNoInteractions(controller);
-  }
-
-  @Test
-  void serviceBearerAllowsExistingProjectsRoute() {
+  void projectsNeedNoServiceBearer() {
     manager.mockMvc().ping(projects())
-        .header("Authorization", "Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE))
         .expectStatus(HttpStatus.OK).assertAndCreate();
   }
 
   @Test
   void typedMcpCrudAndSecretRedaction(CapturedOutput output) throws Exception {
-    String bearer="Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE);
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.LIST_MCP_CONNECTIONS)
-        .expectStatus(HttpStatus.UNAUTHORIZED).assertAndCreate();
+        .expectStatus(HttpStatus.OK).assertAndCreate();
     AtomicReference<UUID> id=new AtomicReference<>();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.CREATE_MCP_CONNECTION)
-        .header("Authorization",bearer).withRequest("mcp-create-request.json").expectStatus(HttpStatus.CREATED)
+        .withRequest("mcp-create-request.json").expectStatus(HttpStatus.CREATED)
         .andExpectPath(result -> {
           String body=result.getResponse().getContentAsString();
           org.assertj.core.api.Assertions.assertThat(body).doesNotContain("agent-canary-secret","ciphertext");
@@ -245,41 +147,40 @@ class AgentMcpManagementGuardIT {
         }).assertAndCreate();
     PathParams path=PathParams.create().add("id",id.get());
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.GET_MCP_CONNECTION)
-        .withPathParameters(path).header("Authorization",bearer).expectStatus(HttpStatus.OK)
+        .withPathParameters(path).expectStatus(HttpStatus.OK)
         .andExpectPath(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentAsString())
             .doesNotContain("agent-canary-secret","ciphertext")).assertAndCreate();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.UPDATE_MCP_CONNECTION)
-        .withPathParameters(path).header("Authorization",bearer).withRequest("mcp-update-request.json")
+        .withPathParameters(path).withRequest("mcp-update-request.json")
         .expectStatus(HttpStatus.OK).assertAndCreate();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.GET_MCP_CONNECTION)
-        .withPathParameters(path).header("Authorization",bearer).expectStatus(HttpStatus.OK)
+        .withPathParameters(path).expectStatus(HttpStatus.OK)
         .andExpectPath(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentAsString())
             .contains("test-2","\"scope\":\"ALL\"").doesNotContain("agent-canary-secret"))
         .assertAndCreate();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.ENABLE_MCP_CONNECTION)
-        .withPathParameters(path).header("Authorization",bearer).withRequest("mcp-enable-request.json")
+        .withPathParameters(path).withRequest("mcp-enable-request.json")
         .expectStatus(HttpStatus.OK).assertAndCreate();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.GET_MCP_CONNECTION)
-        .withPathParameters(path).header("Authorization",bearer).expectStatus(HttpStatus.OK)
+        .withPathParameters(path).expectStatus(HttpStatus.OK)
         .andExpectPath(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentAsString())
             .contains("\"enabled\":true"))
         .assertAndCreate();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.REENCRYPT_MCP_CONNECTION)
-        .withPathParameters(path).header("Authorization",bearer).expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
+        .withPathParameters(path).expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.DELETE_MCP_CONNECTION)
-        .withPathParameters(path).header("Authorization",bearer).expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
+        .withPathParameters(path).expectStatus(HttpStatus.NO_CONTENT).assertAndCreate();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.GET_MCP_CONNECTION_ERROR)
-        .withPathParameters(path).header("Authorization",bearer).expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
+        .withPathParameters(path).expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
     org.assertj.core.api.Assertions.assertThat(output.getAll()).doesNotContain("agent-canary-secret");
   }
 
   @Test
   void missingOrWrongOldKeyFailsHttpRotationWithoutChangingCiphertext(CapturedOutput output) throws Exception {
-    String bearer="Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE);
     String original=Files.readString(KEY_FILE);
     AtomicReference<UUID> id=new AtomicReference<>();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.CREATE_MCP_CONNECTION)
-        .header("Authorization",bearer).withRequest("mcp-rotation-create-request.json")
+        .withRequest("mcp-rotation-create-request.json")
         .expectStatus(HttpStatus.CREATED)
         .andExpectPath(result -> id.set(UUID.fromString(new ObjectMapper()
             .readTree(result.getResponse().getContentAsString()).path("id").asText())))
@@ -297,7 +198,7 @@ class AgentMcpManagementGuardIT {
               Base64.getEncoder().encodeToString(wrongBytes)+"\n"}) {
         Files.writeString(KEY_FILE,keyFile);
         manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.REENCRYPT_MCP_CONNECTION_ERROR)
-            .withPathParameters(path).header("Authorization",bearer)
+            .withPathParameters(path)
             .expectStatus(HttpStatus.INTERNAL_SERVER_ERROR)
             .andExpectPath(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentAsString())
                 .doesNotContain("rotation-canary","ciphertext","key.new"))
@@ -318,9 +219,8 @@ class AgentMcpManagementGuardIT {
 
   @Test
   void malformedNestedCredentialHasSafeError(CapturedOutput output) {
-    String bearer="Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE);
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.CREATE_MCP_CONNECTION_ERROR)
-        .header("Authorization",bearer).withRequest("mcp-malformed-credential-request.json")
+        .withRequest("mcp-malformed-credential-request.json")
         .expectStatus(HttpStatus.BAD_REQUEST)
         .andExpectPath(result -> org.assertj.core.api.Assertions.assertThat(result.getResponse().getContentAsString())
             .contains("INVALID_REQUEST").doesNotContain("agent-malformed-canary"))
@@ -330,18 +230,16 @@ class AgentMcpManagementGuardIT {
 
   @Test
   void replaceRequiresCredentialEnvelope() {
-    String bearer="Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE);
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.CREATE_MCP_CONNECTION_ERROR)
-        .header("Authorization",bearer).withRequest("mcp-null-replace-request.json")
+        .withRequest("mcp-null-replace-request.json")
         .expectStatus(HttpStatus.BAD_REQUEST).assertAndCreate();
   }
 
   @Test
   void bearerCanBeCreatedDisabledWithoutConfiguredCredential() throws Exception {
-    String bearer="Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE);
     AtomicReference<UUID> id=new AtomicReference<>();
     manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.CREATE_MCP_CONNECTION)
-        .header("Authorization",bearer).withRequest("mcp-unconfigured-create-request.json")
+        .withRequest("mcp-unconfigured-create-request.json")
         .expectStatus(HttpStatus.CREATED)
         .andExpectPath(result -> {
           var json=new ObjectMapper().readTree(result.getResponse().getContentAsString());
@@ -354,10 +252,9 @@ class AgentMcpManagementGuardIT {
 
   @Test
   void unsupportedTransportAndUnknownToolApprovalsAreRejected() {
-    String bearer="Bearer " + Base64.getUrlEncoder().withoutPadding().encodeToString(SERVICE);
     for(String fixture:new String[]{"mcp-unknown-transport-request.json","mcp-tool-approval-request.json"}){
       manager.mockMvc().ping(ForgeAgentMockMvcEndpoint.CREATE_MCP_CONNECTION_ERROR)
-          .header("Authorization",bearer).withRequest(fixture)
+          .withRequest(fixture)
           .expectStatus(HttpStatus.BAD_REQUEST).assertAndCreate();
     }
   }

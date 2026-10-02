@@ -8,13 +8,12 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 
 @Component
-@ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
+
 public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
     private static final Pattern REMOTE_URL_TEMPLATE = Pattern.compile(
             "^(?:https?://[^\\s]+|\\{[a-zA-Z_][a-zA-Z0-9_]*\\}[^\\s]*)$");
@@ -42,7 +41,8 @@ public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
                     if (remote != null && "streamable-http".equals(remote.type())
                             && remote.url() != null && httpUrl(remote.url())) {
                         servers.add(new McpAvailableServer(entry.server().name(), entry.server().title(),
-                                entry.server().description(), entry.server().version(), remote.url()));
+                                entry.server().description(), entry.server().version(), remote.url(),
+                                iconUrl(entry.server().icons())));
                         break;
                     }
                 }
@@ -52,6 +52,21 @@ public class McpRegistryCatalogAdapter implements McpRegistryCatalog {
         } catch (RestClientException exception) {
             throw new McpRegistryUnavailableException(exception);
         }
+    }
+
+    private static String iconUrl(List<McpRegistryHttpClient.Icon> icons) {
+        if (icons == null) return null;
+        for (var icon : icons) {
+            if (icon == null || icon.src() == null) continue;
+            try {
+                URI uri = URI.create(icon.src());
+                if ("https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null
+                        && uri.getUserInfo() == null) return icon.src();
+            } catch (IllegalArgumentException invalid) {
+                // Optional metadata must not reject an otherwise valid catalog entry.
+            }
+        }
+        return null;
     }
 
     private static boolean httpUrl(String value) {

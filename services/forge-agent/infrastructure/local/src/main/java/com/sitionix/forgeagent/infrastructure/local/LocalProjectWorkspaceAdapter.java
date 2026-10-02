@@ -10,54 +10,33 @@ import java.nio.file.LinkOption;
 import java.nio.file.SecureDirectoryStream;
 import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.PosixFilePermissions;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Stream;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryCloneAttempt;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceState;
 import com.sitionix.forgeagent.domain.model.ProjectRepositoryWorkspaceReference;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspaceException;
 import com.sitionix.forgeagent.domain.port.LocalProjectWorkspacePort;
-import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryProperties;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
 public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
 
-    private static final String FORGE_PROJECTS_DIRECTORY = "forge-projects";
     private static final String CLONE_ATTEMPTS_DIRECTORY = ".forge-clone-attempts";
 
     private final ForgeRootResolver forgeRootResolver;
-    private final RuntimeBoundaryProperties boundary;
 
     public LocalProjectWorkspaceAdapter(ForgeRootResolver resolver) {
-        this(resolver, RuntimeBoundaryProperties.disabled());
-    }
-
-    @Autowired
-    public LocalProjectWorkspaceAdapter(ForgeRootResolver resolver, RuntimeBoundaryProperties boundary) {
         this.forgeRootResolver = resolver;
-        this.boundary = boundary;
     }
 
     @Override
     public Path resolveProjectWorkspace(final UUID projectId) {
         final Path workspace = this.projectWorkspace(projectId).toAbsolutePath().normalize();
         try {
-            if (this.boundary.enabled()) return this.prepareProtectedParent(workspace);
-            Files.createDirectories(workspace);
-            final Path managedRoot = this.forgeRootResolver.resolveForgeRoot()
-                    .resolve(FORGE_PROJECTS_DIRECTORY)
-                    .toRealPath();
-            final Path resolvedWorkspace = workspace.toRealPath();
-            if (!resolvedWorkspace.startsWith(managedRoot)) {
-                throw new LocalProjectWorkspaceException("Forge project workspace resolves outside managed workspace.");
-            }
-            return resolvedWorkspace;
+            return this.prepareProtectedParent(workspace);
         } catch (final IOException exception) {
             throw new LocalProjectWorkspaceException("Failed to prepare Forge project workspace.", exception);
         }
@@ -90,16 +69,13 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
         final Path finalPath = this.repositoryPath(projectId, repository);
         final Path attemptsRoot = this.cloneAttemptsRoot(projectId);
         try {
-            if (this.boundary.enabled()) this.prepareProtectedParent(attemptsRoot);
-            else Files.createDirectories(attemptsRoot);
+            this.prepareProtectedParent(attemptsRoot);
             final Path stagingPath = attemptsRoot.resolve(repository.name() + "-" + UUID.randomUUID()).normalize();
             if (!stagingPath.startsWith(attemptsRoot)) {
                 throw new LocalProjectWorkspaceException("Repository clone attempt resolves outside managed workspace.");
             }
-            if (this.boundary.enabled()) {
-                Files.createDirectory(stagingPath, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwxrwx---")));
-                Files.setAttribute(stagingPath, "unix:mode", 02770, LinkOption.NOFOLLOW_LINKS);
-            } else Files.createDirectory(stagingPath);
+            Files.createDirectory(stagingPath, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwxrwx---")));
+            Files.setAttribute(stagingPath, "unix:mode", 02770, LinkOption.NOFOLLOW_LINKS);
             return new ProjectRepositoryCloneAttempt(stagingPath, finalPath);
         } catch (final IOException exception) {
             throw new LocalProjectWorkspaceException("Failed to prepare Forge repository clone attempt.", exception);
@@ -111,11 +87,9 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
         final Path stagingPath = this.requireManagedStagingTarget(attempt.stagingPath());
         final Path finalPath = this.requireManagedFinalTarget(attempt.finalPath());
         try {
-            if (this.boundary.enabled()) {
-                this.prepareProtectedParent(stagingPath.getParent());
-                this.prepareProtectedParent(finalPath.getParent());
-                if (Files.isSymbolicLink(stagingPath)) throw new IOException("Unsafe staging target");
-            }
+            this.prepareProtectedParent(stagingPath.getParent());
+            this.prepareProtectedParent(finalPath.getParent());
+            if (Files.isSymbolicLink(stagingPath)) throw new IOException("Unsafe staging target");
             if (Files.exists(finalPath)) {
                 throw new LocalProjectWorkspaceException("Forge repository clone target already exists.");
             }
@@ -155,30 +129,17 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
     }
 
     private void deleteRecursively(final Path targetPath, final String failureMessage) {
-        if (this.boundary.enabled()) {
-            try {
-                this.prepareProtectedParent(targetPath.getParent());
-                try (var parent = Files.newDirectoryStream(targetPath.getParent())) {
-                    if (!(parent instanceof SecureDirectoryStream<Path> secure))
-                        throw new IOException("Secure workspace cleanup unavailable");
-                    try (var directory = secure.newDirectoryStream(targetPath.getFileName(), LinkOption.NOFOLLOW_LINKS)) {
-                        deleteSecureContents(directory);
-                    }
-                    secure.deleteDirectory(targetPath.getFileName());
+        try {
+            this.prepareProtectedParent(targetPath.getParent());
+            try (var parent = Files.newDirectoryStream(targetPath.getParent())) {
+                if (!(parent instanceof SecureDirectoryStream<Path> secure))
+                    throw new IOException("Secure workspace cleanup unavailable");
+                try (var directory = secure.newDirectoryStream(targetPath.getFileName(), LinkOption.NOFOLLOW_LINKS)) {
+                    deleteSecureContents(directory);
                 }
-                return;
-            } catch (IOException exception) { throw new LocalProjectWorkspaceException(failureMessage, exception); }
-        }
-        try (Stream<Path> paths = Files.walk(targetPath)) {
-            final List<Path> orderedPaths = paths
-                    .sorted(Comparator.reverseOrder())
-                    .toList();
-            for (final Path path : orderedPaths) {
-                Files.deleteIfExists(path);
+                secure.deleteDirectory(targetPath.getFileName());
             }
-        } catch (final IOException exception) {
-            throw new LocalProjectWorkspaceException(failureMessage, exception);
-        }
+        } catch (IOException exception) { throw new LocalProjectWorkspaceException(failureMessage, exception); }
     }
 
     /** Relative descriptor operations remain anchored if runtime renames a nested path. */
@@ -196,7 +157,7 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
     }
 
     private Path prepareProtectedParent(Path directory) throws IOException {
-        Path managed = this.forgeRootResolver.resolveForgeRoot().resolve(FORGE_PROJECTS_DIRECTORY).toAbsolutePath().normalize();
+        Path managed = this.forgeRootResolver.resolveManagedRoot().toAbsolutePath().normalize();
         Path target = directory.toAbsolutePath().normalize();
         if (!target.startsWith(managed) || !managed.toRealPath().equals(managed)) throw new IOException("Unsafe workspace parent");
         int uid = ((Number)Files.getAttribute(Path.of("/proc/self"), "unix:uid")).intValue();
@@ -236,8 +197,7 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
     }
 
     private Path projectWorkspace(final UUID projectId) {
-        return this.forgeRootResolver.resolveForgeRoot()
-                .resolve(FORGE_PROJECTS_DIRECTORY)
+        return this.forgeRootResolver.resolveManagedRoot()
                 .resolve(projectId.toString())
                 .normalize();
     }
@@ -255,7 +215,7 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
 
     private Path requireManagedCheckout(final UUID projectId, final Path repositoryPath) {
         try {
-            if (this.boundary.enabled()) this.prepareProtectedParent(this.projectWorkspace(projectId));
+            this.prepareProtectedParent(this.projectWorkspace(projectId));
             final Path projectWorkspace = this.projectWorkspace(projectId).toRealPath();
             final Path resolvedRepository = repositoryPath.toRealPath();
             if (!resolvedRepository.startsWith(projectWorkspace)) {
@@ -269,8 +229,7 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
 
     private Path requireManagedFinalTarget(final Path targetPath) {
         final Path normalizedTarget = targetPath.toAbsolutePath().normalize();
-        final Path forgeProjectsRoot = this.forgeRootResolver.resolveForgeRoot()
-                .resolve(FORGE_PROJECTS_DIRECTORY)
+        final Path forgeProjectsRoot = this.forgeRootResolver.resolveManagedRoot()
                 .toAbsolutePath()
                 .normalize();
         if (!normalizedTarget.startsWith(forgeProjectsRoot)) {
@@ -281,8 +240,7 @@ public class LocalProjectWorkspaceAdapter implements LocalProjectWorkspacePort {
 
     private Path requireManagedStagingTarget(final Path targetPath) {
         final Path normalizedTarget = targetPath.toAbsolutePath().normalize();
-        final Path forgeProjectsRoot = this.forgeRootResolver.resolveForgeRoot()
-                .resolve(FORGE_PROJECTS_DIRECTORY)
+        final Path forgeProjectsRoot = this.forgeRootResolver.resolveManagedRoot()
                 .toAbsolutePath()
                 .normalize();
         final Path attemptsDirectoryName = Path.of(CLONE_ATTEMPTS_DIRECTORY);

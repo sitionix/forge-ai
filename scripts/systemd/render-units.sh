@@ -12,6 +12,7 @@ UNIT_ENV_FILE="${3:-${ENV_FILE}}"
 TEMPLATE_DIR="${FORGE_AI_HOME}/config/systemd"
 SYSTEMD_USER="${FORGE_SYSTEMD_USER:-$(id -un)}"
 SYSTEMD_GROUP="${FORGE_SYSTEMD_GROUP:-$(id -gn)}"
+MCP_MATERIAL_DIR="${FORGE_MCP_MATERIAL_DIR:-${FORGE_SYSTEMD_ENV_DIR:-/etc/forge-ai}/mcp}"
 
 resolve_codex_command() {
   if [[ -n "${FORGE_AGENT_CODEX_COMMAND:-}" ]]; then
@@ -39,6 +40,7 @@ render_template() {
   content="${content//@FORGE_SYSTEMD_ENV_FILE@/${UNIT_ENV_FILE}}"
   content="${content//@FORGE_SYSTEMD_USER@/${SYSTEMD_USER}}"
   content="${content//@FORGE_SYSTEMD_GROUP@/${SYSTEMD_GROUP}}"
+  content="${content//@FORGE_MCP_MATERIAL_DIR@/${MCP_MATERIAL_DIR}}"
   printf '%s\n' "${content}" > "${target}"
 }
 
@@ -73,7 +75,6 @@ render_template "${TEMPLATE_DIR}/forge-remote-setup.service.in" "${OUTPUT_DIR}/f
   env_line "FORGE_AGENT_BASE_URL" "http://127.0.0.1:7091"
   env_line "FORGE_AGENT_DB_URL" "${FORGE_AGENT_DB_URL:-jdbc:postgresql://localhost:54329/forge_agent}"
   env_line "FORGE_AGENT_DB_USERNAME" "${FORGE_AGENT_DB_USERNAME:-forge_agent}"
-  env_line "FORGE_AGENT_DB_PASSWORD" "${FORGE_AGENT_DB_PASSWORD:-forge_agent}"
   env_line "FORGE_AGENT_CODEX_COMMAND" "$(resolve_codex_command)"
   env_line "FORGE_AGENT_PORT" "7091"
   # Only Agent consumes FORGE_AGENT_HOST; shared service environment remains safe.

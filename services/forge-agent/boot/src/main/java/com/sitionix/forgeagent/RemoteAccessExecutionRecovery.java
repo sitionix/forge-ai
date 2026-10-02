@@ -3,7 +3,8 @@ package com.sitionix.forgeagent;
 import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessExecutionService;
 import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessControlService;
 import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessMutualPairing;
-import jakarta.annotation.PostConstruct;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import jakarta.annotation.PreDestroy;
 import java.util.concurrent.*;
 import lombok.RequiredArgsConstructor;
@@ -14,7 +15,7 @@ import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 @Component
-@DependsOn({"mcpDowngradeGuard", "remoteAccessChannelServer"})
+@DependsOn("remoteAccessChannelServer")
 @ConditionalOnProperty(name="forge.agent.remote-access.channel-enabled",havingValue="true")
 @RequiredArgsConstructor
 @Slf4j
@@ -29,7 +30,7 @@ public class RemoteAccessExecutionRecovery {
     private static ScheduledExecutorService timer(String name) {
         return Executors.newSingleThreadScheduledExecutor(task -> {var t=new Thread(task,name);t.setDaemon(true);return t;});
     }
-    @PostConstruct public void start() {
+    @EventListener(ApplicationReadyEvent.class) public void start() {
         heartbeat.scheduleWithFixedDelay(() -> {
             try { execution.maintain(); } catch (RuntimeException unavailable) { log.warn("Workload authority unavailable; admissions fail closed"); }
         },1,2,TimeUnit.SECONDS);

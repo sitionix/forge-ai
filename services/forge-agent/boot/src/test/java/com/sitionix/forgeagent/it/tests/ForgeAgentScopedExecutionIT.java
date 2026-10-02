@@ -86,7 +86,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
 @IntegrationTest
-class ForgeAgentScopedExecutionIT {
+class ForgeAgentScopedExecutionIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     private static final UUID A = uuid(1);
     private static final UUID B = uuid(2);
@@ -1234,14 +1234,9 @@ class ForgeAgentScopedExecutionIT {
     }
 
     private Path projectWorkspace() {
-        Path current = Path.of("").toAbsolutePath().normalize();
-        while (current != null && !Files.exists(current.resolve(".git"))) {
-            current = current.getParent();
-        }
-        if (current == null) {
-            throw new IllegalStateException("Forge root could not be resolved for integration test.");
-        }
-        return current.resolve("forge-projects").resolve(PROJECT_ALPHA_ID.toString());
+        return new com.sitionix.forgeagent.infrastructure.local.LocalProjectWorkspaceAdapter(
+                new com.sitionix.forgeagent.infrastructure.local.ForgeRootResolver(MANAGED_WORKSPACE))
+                .resolveProjectWorkspace(PROJECT_ALPHA_ID);
     }
 
     private Path repositoryWorkspace(final UUID repositoryId) {

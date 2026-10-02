@@ -15,7 +15,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @IntegrationTest
-class ForgeAgentRuntimeMigrationIT {
+class ForgeAgentRuntimeMigrationIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     private static final UUID PROJECT_ID = UUID.fromString("96000000-0000-4000-8000-000000000001");
     private static final UUID WORKFLOW_ID = UUID.fromString("96000000-0000-4000-8000-000000000002");

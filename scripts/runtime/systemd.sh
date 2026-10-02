@@ -110,6 +110,7 @@ case "${ACTION}" in
   start)
     validate_manager
     prepare
+    privileged systemctl stop forge-nexus.service forge-agent.service
     "${ROOT}/scripts/systemd/install.sh"
     privileged systemctl enable --now forge-remote-bootstrap.socket
     validate

@@ -24,7 +24,7 @@ public class SdkMcpGatewayToolView implements McpRuntimeToolView {
 
     @Override public void prepare(McpRuntimeGrant grant, byte[] credential) {
         List<McpSchema.Tool> tools = remote.discoverApprovedTools(
-                grant.endpoint(), grant.authType(), credential, grant.tools());
+                grant.endpoint(), grant.authType().protocolType(), credential, grant.tools());
         synchronized (views) {
             removeExpired();
             views.put(grant.id(), new Entry(grant.connectionId(), grant.turnId(), grant.deadline(), List.copyOf(tools)));

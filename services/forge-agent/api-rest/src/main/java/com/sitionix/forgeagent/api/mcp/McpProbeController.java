@@ -5,7 +5,6 @@ import com.sitionix.forgeagent.domain.model.McpAllowedTool;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,7 +14,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@ConditionalOnProperty(prefix = "forge.mcp", name = "enabled", havingValue = "true")
 @RequestMapping("/api/v1/integrations/mcp/connections")
 public class McpProbeController {
     private final McpProbeService service;

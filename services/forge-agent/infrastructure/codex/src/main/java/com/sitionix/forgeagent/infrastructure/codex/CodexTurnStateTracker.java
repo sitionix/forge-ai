@@ -144,13 +144,19 @@ final class CodexTurnStateTracker {
         final String threadId = this.notificationThreadId(params);
         final String turnId = this.notificationTurnId(params);
         // The installed protocol also emits unscoped diagnostic errors. Only an
-        // exact thread+turn pair is execution-terminal; global diagnostics must
+        // exact thread+turn pair can affect execution; global diagnostics must
         // not be attributed to whichever turn happens to be active.
         if (threadId == null || turnId == null) {
             return;
         }
         final CodexExecutionState execution = this.execution(threadId);
         if (execution == null || execution.done()) {
+            return;
+        }
+        // Codex explicitly guarantees that retryable ErrorNotification frames do
+        // not interrupt the turn. Forge must not convert provider retry telemetry
+        // into a terminal node failure.
+        if (this.willRetry(params)) {
             return;
         }
         if (!execution.hasTurnId()) {
@@ -282,6 +288,13 @@ final class CodexTurnStateTracker {
 
     private String providerFailure(final JsonNode params) {
         return this.nonBlank(params.path("turn").path("error").path("message"));
+    }
+
+    private boolean willRetry(final JsonNode params) {
+        if (!params.has("willRetry")) return false;
+        final JsonNode value = params.get("willRetry");
+        if (!value.isBoolean()) throw this.executionFailed();
+        return value.asBoolean();
     }
 
     private String resolvePhase(final JsonNode item) {

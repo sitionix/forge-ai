@@ -45,7 +45,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @IntegrationTest
-class ForgeAgentProjectTaskIT {
+class ForgeAgentProjectTaskIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     private static final UUID REPOSITORY_A1_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
     private static final UUID REPOSITORY_A2_ID = UUID.fromString("70000000-0000-4000-8000-000000000002");

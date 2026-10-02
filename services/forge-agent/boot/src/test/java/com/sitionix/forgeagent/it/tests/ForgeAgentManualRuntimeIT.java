@@ -23,7 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @IntegrationTest
-class ForgeAgentManualRuntimeIT {
+class ForgeAgentManualRuntimeIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private WorkflowUseCases workflows;
     @Autowired private WorkflowRunUseCases runs;

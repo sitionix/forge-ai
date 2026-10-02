@@ -14,7 +14,7 @@ class McpAvailableServiceTest {
     void listsOneRegistryPageWithoutConnectingToAnyMcpServer() {
         McpRegistryCatalog catalog = (search, cursor, limit) -> new McpAvailablePage(
                 List.of(new McpAvailableServer("io.example/search", "Search", "Search records",
-                        "1.0.0", "https://example.org/mcp")), "next-page");
+                        "1.0.0", "https://example.org/mcp", null)), "next-page");
         McpAvailableService service = new McpAvailableService(catalog);
 
         McpAvailablePage page = service.list("search", null, 20);

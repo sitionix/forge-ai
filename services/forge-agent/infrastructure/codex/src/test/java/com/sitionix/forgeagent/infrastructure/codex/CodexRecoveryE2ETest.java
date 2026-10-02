@@ -74,7 +74,7 @@ class CodexRecoveryE2ETest {
 
         final CodexAppServerProperties recoveryProperties = this.properties(workspacePath);
         final RecordingProcessStarter recoveryStarter = new RecordingProcessStarter(
-                new DefaultCodexAppServerProcessStarter(recoveryProperties), this.objectMapper);
+                new DefaultCodexAppServerProcessStarter(recoveryProperties, CodexFixtureProcesses.launcher(recoveryProperties)), this.objectMapper);
         final Clock clock = Clock.systemUTC();
         final CodexRecoveryInspector inspector = new CodexRecoveryInspector(
                 this.objectMapper, recoveryStarter, recoveryProperties,
@@ -92,7 +92,7 @@ class CodexRecoveryE2ETest {
     private CodexAppServerClient client(final CodexAppServerProperties properties) {
         return new CodexAppServerClient(
                 this.objectMapper,
-                new DefaultCodexAppServerProcessStarter(properties),
+                new DefaultCodexAppServerProcessStarter(properties, CodexFixtureProcesses.launcher(properties)),
                 properties,
                 new CodexRuntimeWorkspace(properties)
         );

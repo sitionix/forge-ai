@@ -149,6 +149,43 @@ class CodexTurnStateTrackerTest {
     }
 
     @Test
+    void retryableProviderErrorDoesNotTerminateTheTurn() throws Exception {
+        final CodexTurnStateTracker tracker = new CodexTurnStateTracker();
+        final CodexExecutionState state = tracker.register("thread-1");
+        tracker.bindTurnId(state, "turn-1");
+        tracker.handleNotification("turn/started", this.json.readTree(
+                "{\"threadId\":\"thread-1\",\"turn\":{\"id\":\"turn-1\"}}"));
+
+        tracker.handleNotification("error", this.json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-1","willRetry":true,
+                 "error":{"message":"transient provider failure","codexErrorInfo":"serverOverloaded"}}
+                """));
+
+        assertThat(state.result()).isNotDone();
+
+        tracker.handleNotification("item/completed", this.json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-1",
+                 "item":{"type":"agentMessage","phase":"final_answer","text":"recovered"}}
+                """));
+        tracker.handleNotification("thread/status/changed", this.json.readTree(
+                "{\"threadId\":\"thread-1\",\"status\":{\"type\":\"idle\"}}"));
+
+        assertThat(state.result()).isCompletedWithValue("recovered");
+    }
+
+    @Test
+    void malformedRetryMarkerFailsClosed() throws Exception {
+        final CodexTurnStateTracker tracker = new CodexTurnStateTracker();
+        final CodexExecutionState state = tracker.register("thread-1");
+        tracker.bindTurnId(state, "turn-1");
+
+        assertThatThrownBy(() -> tracker.handleNotification("error", this.json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-1","willRetry":"yes",
+                 "error":{"message":"invalid wire shape"}}
+                """))).hasMessage("Codex execution failed.");
+    }
+
+    @Test
     void unscopedProviderErrorIsNotMisattributedToAnActiveTurn() throws Exception {
         final CodexTurnStateTracker tracker = new CodexTurnStateTracker();
         final CodexExecutionState state = tracker.register("thread-1");

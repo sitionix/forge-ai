@@ -1,7 +1,5 @@
 package com.sitionix.forgeproxyit;
 import static org.assertj.core.api.Assertions.*;
-import com.sitionix.forgeai.Application;
-import com.sitionix.forgeai.api.remoteaccess.RemoteAccessOperatorController;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.net.*;
@@ -16,7 +14,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.*;
-@SpringBootTest(classes=Application.class,webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties={
+@SpringBootTest(classes=com.sitionix.forgeremote.nexus.RemoteAccessNexusApplication.class,webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties={
     "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
     "spring.config.import=","spring.docker.compose.enabled=false","server.address=127.0.0.1",
     "forge.remote-access.enabled=true","forge.remote-access.operator-origin=http://127.0.0.1:9099"})

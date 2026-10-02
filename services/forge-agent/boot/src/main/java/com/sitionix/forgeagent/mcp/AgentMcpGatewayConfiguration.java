@@ -17,7 +17,6 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -25,7 +24,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.ApplicationContext;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
+
 class AgentMcpGatewayConfiguration {
     @Bean McpGatewayAddress mcpGatewayAddress(ApplicationContext context) {
         return () -> {
@@ -49,9 +48,9 @@ class AgentMcpGatewayConfiguration {
             NodeRunRepository nodes, WorkflowRunRepository workflows, ProjectRepository projects,
             McpConnectionRepository connections, ForgeInstanceIdentityRepository identity,
             McpRuntimeGrantRepository grants, SdkMcpGatewayToolView views,
-            McpCredentialCipher cipher, McpRemoteToolClient remote, Clock clock) {
+            com.sitionix.forgeagent.application.mcp.McpCredentialService credentials, McpRemoteToolClient remote, Clock clock) {
         return new McpGatewayService(sessions, nodes, workflows, projects, connections, identity,
-                grants, views, cipher, remote, clock);
+                grants, views, credentials, remote, clock);
     }
 
     @Bean McpExecutionSelectionService mcpExecutionSelectionService(WorkflowRunRepository workflows,

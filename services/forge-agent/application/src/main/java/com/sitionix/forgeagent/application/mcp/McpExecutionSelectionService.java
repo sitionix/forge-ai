@@ -56,7 +56,8 @@ public final class McpExecutionSelectionService {
                             connection.displayName(), connection.allowedTools()));
                     tokens.put(alias, grant.token());
                 } catch (McpProbeException | McpToolCallException | McpGatewayAccessException unavailable) {
-                    diagnostics.add(new McpExecutionSelection.Diagnostic(connection.id(), "CONNECTION_UNAVAILABLE"));
+                    diagnostics.add(new McpExecutionSelection.Diagnostic(connection.id(),
+                            McpExecutionSelection.DiagnosticCode.CONNECTION_UNAVAILABLE));
                 }
             }
         } catch (RuntimeException failure) {
@@ -68,6 +69,11 @@ public final class McpExecutionSelectionService {
         }
         return new McpExecutionPreparation(new McpExecutionSelection(entries, diagnostics),
                 new McpRuntimeLaunchGrants(tokens));
+    }
+
+    public void activateForDispatch(AgentSessionExecutionClaim claim) {
+        if (claim == null) throw new IllegalArgumentException("Tracked MCP execution is required");
+        gateway.activateForDispatch(claim);
     }
 
     public void revoke(AgentSessionExecutionClaim claim) {

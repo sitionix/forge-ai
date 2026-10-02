@@ -23,14 +23,12 @@ public final class RuntimeBoundaryVerifier implements SmartInitializingSingleton
     }
 
     @Override public void afterSingletonsInstantiated() {
-        if (!properties.enabled()) return;
         verify(List.of(), true);
         launcher.markReady();
     }
 
     /** Does not read or return credential contents. Every supplied path must already exist. */
     public void verifyProtectedPaths(List<Path> protectedPaths) {
-        if (!properties.enabled()) throw RuntimeProcessLauncher.unavailable();
         verify(List.copyOf(protectedPaths), false);
     }
 

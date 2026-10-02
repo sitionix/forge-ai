@@ -10,8 +10,6 @@ import com.sitionix.forgeagent.infrastructure.local.mcp.*;
 import com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresMcpConnectionRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresMcpToolInventoryRepository;
 import com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresForgeInstanceIdentityRepository;
-import com.sitionix.forgeagent.AgentMcpDowngradeConfiguration;
-import com.sitionix.forgeagent.RemoteAccessPairingReconciliation;
 import com.sitionix.forgeagent.it.infra.ForgeAgentTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import java.net.URI;
@@ -24,10 +22,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 @IntegrationTest
-class McpConnectionPersistenceIT {
+class McpConnectionPersistenceIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     private static final String FP_ONE = "sha256:" + "a".repeat(64);
     private static final String FP_TWO = "sha256:" + "b".repeat(64);
     private static final String FP_THREE = "sha256:" + "c".repeat(64);
@@ -37,25 +34,25 @@ class McpConnectionPersistenceIT {
     @Autowired private ProjectRepository projects;
 
     @Test void inventoryIsStoredAndSchemaChangeRevokesOnlyChangedApproval() {
-        var connections = new PostgresMcpConnectionRepository(jdbc, transactions);
+        var connections = new PostgresMcpConnectionRepository(jdbc, transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var inventory = new PostgresMcpToolInventoryRepository(jdbc, connections, transactions);
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
         URI endpoint = URI.create("https://example.org/mcp");
         var connection = new McpConnection(id, installation, "inventory", endpoint, McpAuthType.NONE,
-                false, McpProjectAccess.all(), Set.of(), false, now, now, null, null);
+                false, McpProjectAccess.all(), Set.of(), false, now, now, null, null, null, null);
         connections.insert(new McpConnectionState(connection, null));
         inventory.replace(installation, id, endpoint, McpAuthType.NONE, null, List.of(
                 new McpToolSummary("read", "Read", FP_ONE),
-                new McpToolSummary("write", "Write", FP_TWO)));
+                new McpToolSummary("write", "Write", FP_TWO)), null);
         var approved = inventory.approve(installation, id, Set.of(
                 new McpAllowedTool("read", FP_ONE), new McpAllowedTool("write", FP_TWO)));
         assertThat(approved.allowedTools()).hasSize(2);
         assertThat(approved.checkedAt()).isNotNull();
         inventory.replace(installation, id, endpoint, McpAuthType.NONE, null, List.of(
                 new McpToolSummary("read", "Read", FP_ONE),
-                new McpToolSummary("write", "Changed", FP_THREE)));
+                new McpToolSummary("write", "Changed", FP_THREE)), null);
         assertThat(connections.findById(installation, id).orElseThrow().allowedTools())
                 .containsExactly(new McpAllowedTool("read", FP_ONE));
         assertThatThrownBy(() -> inventory.approve(installation, id, Set.of(new McpAllowedTool("write", FP_TWO))))
@@ -65,23 +62,23 @@ class McpConnectionPersistenceIT {
             var c = state.connection();
             return new McpConnectionState(new McpConnection(c.id(), c.installationId(), c.displayName(),
                     changedEndpoint, c.authType(), c.enabled(), c.projectAccess(),
-                    Set.of(), c.credentialConfigured(), c.createdAt(), Instant.now(), null, null), null);
+                    Set.of(), c.credentialConfigured(), c.createdAt(), Instant.now(), null, null, null, null), null);
         });
         assertThat(inventory.list(installation, id)).isEmpty();
         inventory.replace(installation, id, changedEndpoint, McpAuthType.NONE, null,
-                List.of(new McpToolSummary("read", "Read", FP_ONE)));
+                List.of(new McpToolSummary("read", "Read", FP_ONE)), null);
         connections.change(installation, id, state -> {
             var c = state.connection();
             return new McpConnectionState(new McpConnection(c.id(), c.installationId(), c.displayName(),
                     c.endpoint(), c.authType(), c.enabled(), c.projectAccess(), Set.of(),
-                    c.credentialConfigured(), c.createdAt(), Instant.now(), null, null), state.credential());
+                    c.credentialConfigured(), c.createdAt(), Instant.now(), null, null, null, null), state.credential());
         });
         assertThat(inventory.list(installation, id)).isEmpty();
         connections.delete(installation, id);
     }
 
     @Test void completedProbeCannotPublishInventoryForReplacedCredential() {
-        var connections = new PostgresMcpConnectionRepository(jdbc, transactions);
+        var connections = new PostgresMcpConnectionRepository(jdbc, transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var inventory = new PostgresMcpToolInventoryRepository(jdbc, connections, transactions);
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate();
         UUID id = UUID.randomUUID();
@@ -89,46 +86,21 @@ class McpConnectionPersistenceIT {
         Instant now = Instant.now();
         var oldCredential = new McpEncryptedCredential("test", new byte[]{1});
         var connection = new McpConnection(id, installation, "credential-race", endpoint, McpAuthType.BEARER,
-                false, McpProjectAccess.all(), Set.of(), true, now, now, null, null);
+                false, McpProjectAccess.all(), Set.of(), true, now, now, null, null, null, null);
         connections.insert(new McpConnectionState(connection, oldCredential));
         connections.change(installation, id, state ->
                 new McpConnectionState(state.connection(), new McpEncryptedCredential("test", new byte[]{2})));
         assertThatThrownBy(() -> inventory.replace(installation, id, endpoint, McpAuthType.BEARER,
-                oldCredential, List.of(new McpToolSummary("read", null, FP_ONE))))
+                oldCredential, List.of(new McpToolSummary("read", null, FP_ONE)), null))
                 .isInstanceOf(IllegalStateException.class).hasMessage("MCP connection changed during probe");
         assertThat(inventory.list(installation, id)).isEmpty();
         connections.delete(installation, id);
     }
 
-    @Test void retainedCredentialProbeIgnoresConnectionEnableAndChecksBothStorageSignals() {
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
-        assertThat(repository.hasRetainedCredentials()).isFalse();
-        UUID installation=new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(), id=UUID.randomUUID();
-        Instant now=Instant.now();
-        var connection=new McpConnection(id,installation,"retained",URI.create("https://example.org/mcp"),
-                McpAuthType.BEARER,false,McpProjectAccess.all(),Set.of(),true,now,now,null,null);
-        repository.insert(new McpConnectionState(connection,new McpEncryptedCredential("k1",new byte[]{1,2,3})));
-        assertThat(repository.hasRetainedCredentials()).isTrue();
-        new ApplicationContextRunner()
-                .withUserConfiguration(RemoteAccessPairingReconciliation.class,AgentMcpDowngradeConfiguration.class)
-                .withBean(McpConnectionRepository.class,() -> repository)
-                .run(context -> assertThat(context.getStartupFailure()).isNotNull()
-                        .hasRootCauseMessage("MCP downgrade refused: protected material retained or unavailable"));
-        assertThat(repository.credential(installation,id)).contains(new McpEncryptedCredential("k1",new byte[]{1,2,3}));
-        jdbc.update("DELETE FROM mcp_connection_credentials WHERE connection_id=?",id);
-        assertThat(repository.hasRetainedCredentials()).isTrue();
-        jdbc.update("UPDATE mcp_connections SET credential_configured=FALSE WHERE id=?",id);
-        assertThat(repository.hasRetainedCredentials()).isFalse();
-        jdbc.update("INSERT INTO mcp_connection_credentials(connection_id,key_id,ciphertext) VALUES(?,?,?)",id,"k1",new byte[]{1,2,3});
-        assertThat(repository.hasRetainedCredentials()).isTrue();
-        repository.delete(installation,id);
-        assertThat(repository.hasRetainedCredentials()).isFalse();
-    }
-
     @Test void migrationAndRoundTripSeparateMetadataFromCiphertext() {
         assertThat(jdbc.queryForList("SELECT table_name FROM information_schema.tables WHERE table_schema='public'",String.class))
                 .contains("mcp_connections","mcp_connection_credentials","mcp_connection_projects","mcp_allowed_tools");
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         forgeIt.postgresql().create().to(PROJECT.withJson("project_alpha.json")).build();
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(), id = UUID.randomUUID(), project = UUID.fromString("10000000-0000-4000-8000-000000000001");
         var connection = connection(id,installation,project);
@@ -147,7 +119,7 @@ class McpConnectionPersistenceIT {
     }
 
     @Test void failedTransactionRollsBackMetadataAndCredentialTogether() {
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         forgeIt.postgresql().create().to(PROJECT.withJson("project_alpha.json")).build();
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(), id = UUID.randomUUID();
         var connection = connection(id,installation,UUID.fromString("10000000-0000-4000-8000-000000000001"));
@@ -160,19 +132,19 @@ class McpConnectionPersistenceIT {
     }
 
     @Test void persistedAesCredentialRotatesToActiveKeyWithoutPlaintextStorage() {
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var identity = new PostgresForgeInstanceIdentityRepository(jdbc);
         byte[] oldKey = new byte[32], newKey = new byte[32];
         Arrays.fill(oldKey,(byte)7); Arrays.fill(newKey,(byte)8);
         var oldCipher = new AesGcmMcpCredentialCipher(() -> new McpLocalKeys("old",Map.of("old",oldKey)));
-        var service = new McpConnectionService(repository,projects,identity,oldCipher);
+        var service = new McpConnectionService(repository,projects,identity,oldCipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class),org.mockito.Mockito.mock(McpOAuthClient.class));
         var created = service.create("Bearer",URI.create("https://example.org/mcp"),McpAuthType.BEARER,
-                McpProjectAccess.all(),McpCredentialSecret.bearer("synthetic-credential"));
+                McpProjectAccess.all(),McpCredentialSecret.bearer("synthetic-credential"), null, null);
         var before = repository.credential(created.installationId(),created.id()).orElseThrow();
         assertThat(before.keyId()).isEqualTo("old");
         assertThat(new String(before.bytes(),StandardCharsets.UTF_8)).doesNotContain("synthetic-credential");
         var activeCipher = new AesGcmMcpCredentialCipher(() -> new McpLocalKeys("new",Map.of("old",oldKey,"new",newKey)));
-        new McpConnectionService(repository,projects,identity,activeCipher).reencrypt(created.id());
+        new McpConnectionService(repository,projects,identity,activeCipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class),org.mockito.Mockito.mock(McpOAuthClient.class)).reencrypt(created.id());
         var after = repository.credential(created.installationId(),created.id()).orElseThrow();
         assertThat(after.keyId()).isEqualTo("new");
         assertThat(new String(activeCipher.decrypt(created.installationId(),created.id(),"credential",after),StandardCharsets.UTF_8))
@@ -185,11 +157,11 @@ class McpConnectionPersistenceIT {
     @Test void getAndListUseOneSnapshotForPolicyAndTools() {
         forgeIt.postgresql().create().to(PROJECT.withJson("project_alpha.json")).build();
         UUID project = UUID.fromString("10000000-0000-4000-8000-000000000001");
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         UUID installation = new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(), id = UUID.randomUUID();
         Instant now = Instant.now();
         var all = new McpConnection(id,installation,"x",URI.create("https://example.org"),McpAuthType.NONE,true,
-                McpProjectAccess.all(),Set.of(new McpAllowedTool("old","h1")),false,now,now,null,null);
+                McpProjectAccess.all(),Set.of(new McpAllowedTool("old","h1")),false,now,now,null,null, null, null);
         repository.insert(new McpConnectionState(all,null));
         var switched = new java.util.concurrent.atomic.AtomicBoolean();
         JdbcTemplate hooked = hookedJdbc(() -> {
@@ -197,7 +169,7 @@ class McpConnectionPersistenceIT {
                     new McpConnectionState(withPolicy(state.connection(),McpProjectAccess.selected(Set.of(project)),
                             Set.of(new McpAllowedTool("new","h2"))),null));
         });
-        var before = new PostgresMcpConnectionRepository(hooked,transactions).findById(installation,id).orElseThrow();
+        var before = new PostgresMcpConnectionRepository(hooked,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules()).findById(installation,id).orElseThrow();
         assertThat(before.projectAccess()).isEqualTo(McpProjectAccess.all());
         assertThat(before.allowedTools()).containsExactly(new McpAllowedTool("old","h1"));
         switched.set(false);
@@ -205,7 +177,7 @@ class McpConnectionPersistenceIT {
             if (switched.compareAndSet(false,true)) repository.change(installation,id,state ->
                     new McpConnectionState(withPolicy(state.connection(),McpProjectAccess.all(),Set.of(new McpAllowedTool("old","h1"))),null));
         });
-        var listed = new PostgresMcpConnectionRepository(hooked,transactions).findAll(installation).stream()
+        var listed = new PostgresMcpConnectionRepository(hooked,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules()).findAll(installation).stream()
                 .filter(c -> c.id().equals(id)).findFirst().orElseThrow();
         assertThat(listed.projectAccess()).isEqualTo(McpProjectAccess.selected(Set.of(project)));
         assertThat(listed.allowedTools()).containsExactly(new McpAllowedTool("new","h2"));
@@ -215,7 +187,7 @@ class McpConnectionPersistenceIT {
     @Test void concurrentEndpointReplacementAndEnableKeepOneCredentialIdentity() throws Exception {
         forgeIt.postgresql().create().to(PROJECT.withJson("project_alpha.json")).build();
         UUID project = UUID.fromString("10000000-0000-4000-8000-000000000001");
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var identity = new PostgresForgeInstanceIdentityRepository(jdbc);
         byte[] key = new byte[32]; Arrays.fill(key,(byte)9);
         var realCipher = new AesGcmMcpCredentialCipher(() -> new McpLocalKeys("active",Map.of("active",key)));
@@ -231,11 +203,11 @@ class McpConnectionPersistenceIT {
             }
             public byte[] decrypt(UUID i,UUID c,String p,McpEncryptedCredential value) { return realCipher.decrypt(i,c,p,value); }
         };
-        var service = new McpConnectionService(repository,projects,identity,pausingCipher);
-        var created = service.create("x",URI.create("https://example.org/a"),McpAuthType.BEARER,McpProjectAccess.all(),McpCredentialSecret.bearer("first"));
+        var service = new McpConnectionService(repository,projects,identity,pausingCipher, null, org.mockito.Mockito.mock(McpOAuthCredentialCipher.class),org.mockito.Mockito.mock(McpOAuthClient.class));
+        var created = service.create("x",URI.create("https://example.org/a"),McpAuthType.BEARER,McpProjectAccess.all(),McpCredentialSecret.bearer("first"), null, null);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var update = executor.submit(() -> service.update(created.id(),"x",URI.create("https://example.org/b"),
-                    McpAuthType.BEARER,McpProjectAccess.selected(Set.of(project)),McpCredentialChange.REPLACE,McpCredentialSecret.bearer("second")));
+                    McpAuthType.BEARER,McpProjectAccess.selected(Set.of(project)),McpCredentialChange.REPLACE,McpCredentialSecret.bearer("second"), null, null));
             assertThat(encrypted.await(5,TimeUnit.SECONDS)).isTrue();
             var enable = executor.submit(() -> service.setEnabled(created.id(),true));
             awaitBlockedStatement("SELECT id FROM mcp_connections");
@@ -252,12 +224,12 @@ class McpConnectionPersistenceIT {
     }
 
     @Test void concurrentDeleteCannotBeUndoneByStaleMutation() throws Exception {
-        var repository = new PostgresMcpConnectionRepository(jdbc,transactions);
+        var repository = new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules());
         var identity = new PostgresForgeInstanceIdentityRepository(jdbc);
         UUID installation = identity.getOrCreate(), id = UUID.randomUUID();
         Instant now = Instant.now();
         var original = new McpConnection(id,installation,"x",URI.create("https://example.org/a"),McpAuthType.NONE,
-                false,McpProjectAccess.all(),Set.of(),false,now,now,null,null);
+                false,McpProjectAccess.all(),Set.of(),false,now,now,null,null, null, null);
         repository.insert(new McpConnectionState(original,null));
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
@@ -269,7 +241,7 @@ class McpConnectionPersistenceIT {
             }));
             assertThat(entered.await(5,TimeUnit.SECONDS)).isTrue();
             var deleting = executor.submit(() -> repository.delete(installation,id));
-            awaitBlockedStatement("DELETE FROM mcp_connections");
+            awaitBlockedStatement("SELECT id FROM mcp_connections");
             release.countDown();
             changing.get(5,TimeUnit.SECONDS); deleting.get(5,TimeUnit.SECONDS);
         } finally { release.countDown(); }
@@ -298,13 +270,13 @@ class McpConnectionPersistenceIT {
 
     private static McpConnection withPolicy(McpConnection c,McpProjectAccess access,Set<McpAllowedTool> tools) {
         return new McpConnection(c.id(),c.installationId(),c.displayName(),c.endpoint(),c.authType(),c.enabled(),access,
-                tools,c.credentialConfigured(),c.createdAt(),Instant.now(),c.checkedAt(),c.safeDiagnostic());
+                tools,c.credentialConfigured(),c.createdAt(),Instant.now(),c.checkedAt(),c.safeDiagnostic(), null, null);
     }
 
     private static McpConnection connection(UUID id,UUID installation,UUID project) {
         Instant now = Instant.parse("2026-09-23T10:00:00Z");
         return new McpConnection(id,installation,"Same",URI.create("https://example.org/mcp"),McpAuthType.BEARER,
                 false,McpProjectAccess.selected(Set.of(project)),Set.of(new McpAllowedTool("tool","sha256:abcd")),true,
-                now,now,null,null);
+                now,now,null,null, null, null);
     }
 }

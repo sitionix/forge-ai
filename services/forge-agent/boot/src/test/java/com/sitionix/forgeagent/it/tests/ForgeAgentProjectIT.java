@@ -15,12 +15,12 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @IntegrationTest
-class ForgeAgentProjectIT {
+class ForgeAgentProjectIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     @Test
-    void mcpRoutesAreAbsentWhenFeatureIsOff() {
+    void mcpRoutesExistWithoutGlobalActivationSetting() {
         forgeIt.mockMvc().ping(com.sitionix.forgeagent.it.infra.ForgeAgentMockMvcEndpoint.LIST_MCP_CONNECTIONS)
-                .expectStatus(HttpStatus.NOT_FOUND).assertAndCreate();
+                .expectStatus(HttpStatus.OK).assertAndCreate();
     }
 
     @Autowired

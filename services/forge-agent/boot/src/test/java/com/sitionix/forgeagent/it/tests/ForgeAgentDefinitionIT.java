@@ -27,7 +27,7 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.PROJECT;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @IntegrationTest
-class ForgeAgentDefinitionIT {
+class ForgeAgentDefinitionIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     @Autowired
     private ForgeAgentTestManager forgeIt;

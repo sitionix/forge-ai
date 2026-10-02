@@ -11,7 +11,7 @@ Group=@FORGE_SYSTEMD_GROUP@
 WorkingDirectory=@FORGE_AI_HOME@
 EnvironmentFile=/etc/forge-ai/forge-remote-nexus.env
 EnvironmentFile=/etc/forge-remote/management/nexus.env
-ExecStart=/usr/bin/java -jar @FORGE_AI_HOME@/services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar --spring.docker.compose.enabled=false --server.address=127.0.0.1 --server.port=9100
+ExecStart=/usr/bin/java -Dloader.main=com.sitionix.forgeremote.nexus.RemoteAccessNexusApplication -cp @FORGE_AI_HOME@/services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar org.springframework.boot.loader.launch.PropertiesLauncher --spring.docker.compose.enabled=false --server.address=127.0.0.1 --server.port=9100
 SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5s

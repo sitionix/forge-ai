@@ -119,12 +119,12 @@ final class CodexAppServerClient implements CodexClient {
                                    final CodexExecutionIdentityCallbacks callbacks, final boolean durable,
                                    final McpRuntimeLaunchGrants grants) {
         if (grants == null || (request.mcpSelection() == null && !grants.isEmpty()))
-            throw new CodexTransportException("Codex MCP configuration is unavailable");
+            throw new CodexMcpExecutionException("Codex MCP configuration is unavailable");
         if (request.mcpSelection() != null) {
             var aliases = request.mcpSelection().entries().stream()
                     .map(McpExecutionSelection.Entry::alias).collect(Collectors.toSet());
             if (!aliases.equals(grants.tokens().keySet()))
-                throw new CodexTransportException("Codex MCP launch grants do not match selection");
+                throw new CodexMcpExecutionException("Codex MCP launch grants do not match selection");
             this.threadStartParams(request);
         }
         final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
@@ -218,9 +218,17 @@ final class CodexAppServerClient implements CodexClient {
                                                            final CodexExecutionEventObserver eventObserver,
                                                            final McpRuntimeLaunchGrants grants,
                                                            final boolean mcpConfigured) {
-        final StartedCodexAppServer started = mcpConfigured
-                ? this.processStarter.start(workingDirectory, grants)
-                : this.processStarter.start(workingDirectory);
+        final StartedCodexAppServer started;
+        try {
+            started = mcpConfigured
+                    ? this.processStarter.start(workingDirectory, grants)
+                    : this.processStarter.start(workingDirectory);
+        } catch (RuntimeException failure) {
+            if (mcpConfigured) {
+                throw new CodexMcpExecutionException("Codex MCP runtime launch failed", failure);
+            }
+            throw failure;
+        }
         return new CodexJsonRpcTransport(
                 this.objectMapper,
                 started,
@@ -443,7 +451,7 @@ final class CodexAppServerClient implements CodexClient {
         final ObjectNode config = this.codexConfig();
         if (request.mcpSelection() != null) {
             if (this.gatewayAddress == null)
-                throw new CodexTransportException("Codex MCP gateway is unavailable");
+                throw new CodexMcpExecutionException("Codex MCP gateway is unavailable");
             this.mcpConfiguration.apply(config, request.mcpSelection(), this.gatewayAddress.baseUrl(),
                     request.executionWorkspace().cwd());
         }

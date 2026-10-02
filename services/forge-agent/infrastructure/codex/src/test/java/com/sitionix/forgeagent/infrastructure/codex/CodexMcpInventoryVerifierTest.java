@@ -20,8 +20,9 @@ class CodexMcpInventoryVerifierTest {
     private final ObjectMapper json = new ObjectMapper();
     private final CodexMcpInventoryVerifier verifier = new CodexMcpInventoryVerifier(json);
     private final String alias = "forge_0123456789ab4cde80123456789abcde";
+    private final UUID connectionId = UUID.fromString("01234567-89ab-4cde-8012-3456789abcde");
     private final McpExecutionSelection selected = new McpExecutionSelection(List.of(
-            new McpExecutionSelection.Entry(alias, UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"),
+            new McpExecutionSelection.Entry(alias, connectionId,
                     "Search", Set.of(new McpAllowedTool("search", "sha256:fingerprint")))), List.of());
 
     @Test void exactInventoryIsEffective() throws Exception {
@@ -34,6 +35,38 @@ class CodexMcpInventoryVerifierTest {
             assertThat(request.path("params").path("limit").asInt()).isEqualTo(100);
             harness.reply(request, "{\"data\":[" + connected(alias, "search") + "],\"nextCursor\":null}");
             assertThat(result.get(1, TimeUnit.SECONDS).effectiveTools().get(alias)).containsExactly("search");
+        }
+    }
+
+    @Test void transitionalStatusesArePolledUntilConnected() throws Exception {
+        for (String status : List.of("notStarted", "starting")) {
+            try (var harness = new Harness()) {
+                var result = CompletableFuture.supplyAsync(() -> verifier.verify(harness.transport, "thread-a",
+                        selected, Duration.ofSeconds(2)));
+                var first = harness.request();
+                harness.reply(first, "{\"data\":[" + status(alias, status) + "],\"nextCursor\":null}");
+                var second = harness.request();
+                harness.reply(second, "{\"data\":[" + connected(alias, "search") + "],\"nextCursor\":null}");
+
+                var inventory = result.get(1, TimeUnit.SECONDS);
+                assertThat(inventory.effectiveTools().get(alias)).containsExactly("search");
+                assertThat(inventory.diagnostics()).isEmpty();
+            }
+        }
+    }
+
+    @Test void temporarilyMissingExpectedServerIsPolledUntilVisible() throws Exception {
+        try (var harness = new Harness()) {
+            var result = CompletableFuture.supplyAsync(() -> verifier.verify(harness.transport, "thread-a",
+                    selected, Duration.ofSeconds(2)));
+            var first = harness.request();
+            harness.reply(first, "{\"data\":[],\"nextCursor\":null}");
+            var second = harness.request();
+            harness.reply(second, "{\"data\":[" + connected(alias, "search") + "],\"nextCursor\":null}");
+
+            var inventory = result.get(1, TimeUnit.SECONDS);
+            assertThat(inventory.effectiveTools().get(alias)).containsExactly("search");
+            assertThat(inventory.diagnostics()).isEmpty();
         }
     }
 
@@ -51,7 +84,7 @@ class CodexMcpInventoryVerifierTest {
         }
     }
 
-    @Test void brokenExpectedConnectionHasOnlySafeDiagnostic() throws Exception {
+    @Test void terminalExpectedConnectionHasOnlyTypedSafeDiagnostic() throws Exception {
         try (var harness = new Harness()) {
             var result = CompletableFuture.supplyAsync(() -> verifier.verify(harness.transport, "thread-a",
                     selected, Duration.ofSeconds(1)));
@@ -60,7 +93,24 @@ class CodexMcpInventoryVerifierTest {
                     + "\"tools\":{},\"toolsError\":\"synthetic-secret-canary\"}],\"nextCursor\":null}");
             var inventory = result.get(1, TimeUnit.SECONDS);
             assertThat(inventory.effectiveTools()).isEmpty();
+            assertThat(inventory.diagnostics()).singleElement().satisfies(diagnostic -> {
+                assertThat(diagnostic.connectionId()).isEqualTo(connectionId);
+                assertThat(diagnostic.code()).isEqualTo(
+                        McpExecutionSelection.DiagnosticCode.MCP_CONNECTION_UNAVAILABLE);
+            });
             assertThat(inventory.diagnostics().toString()).doesNotContain("synthetic-secret-canary");
+        }
+    }
+
+    @Test void unknownRuntimeStatusFailsClosed() throws Exception {
+        try (var harness = new Harness()) {
+            var result = CompletableFuture.supplyAsync(() -> verifier.verify(harness.transport, "thread-a",
+                    selected, Duration.ofSeconds(1)));
+            var request = harness.request();
+            harness.reply(request, "{\"data\":[{\"name\":\"" + alias
+                    + "\",\"runtimeStatus\":\"future-status\",\"tools\":{}}],\"nextCursor\":null}");
+            assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
+                    .hasRootCauseMessage("Codex MCP inventory did not match issued grants");
         }
     }
 
@@ -141,6 +191,10 @@ class CodexMcpInventoryVerifierTest {
     private static String connected(String name, String tool) {
         return "{\"name\":\"" + name + "\",\"runtimeStatus\":\"connected\",\"tools\":{\""
                 + tool + "\":{\"name\":\"" + tool + "\"}}}";
+    }
+
+    private static String status(String name, String runtimeStatus) {
+        return "{\"name\":\"" + name + "\",\"runtimeStatus\":\"" + runtimeStatus + "\",\"tools\":{}}";
     }
 
     private final class Harness implements AutoCloseable {

@@ -1,10 +1,12 @@
 # Stage 1 / Task 2 — мінімальна control/runtime boundary
 
+Historical design: its global activation/downgrade branches are OBSOLETE. Current main applications always compose MCP; see [normal-runtime-evidence.md](normal-runtime-evidence.md). Historical probes below were not rerun unless explicitly recorded there.
+
 Read-only design review бази `/tmp/forge-mcp-stage1`, `edf49dbf`; Task 1 diff не перевірявся. Це проєкт реалізації, **не PASS deployment**. Джерела: `stage-1-plan.md` Task 2, `stage-0-evidence.md` 116–146, `roadmap.md` Stage 1 та наведені нижче production classes. Жодних host/service/personal-config змін.
 
 ## Рішення
 
-Один default-off `forge.mcp.enabled` в Agent/Nexus. Коли false: старі runtime/API шляхи зберігаються, нові management endpoints недоступні. Коли true: увесь control API автентифікований; Codex **і Git** запускаються під окремим runtime UID через один вузький root-owned helper та наявний systemd. Нового довгоживучого сервісу, IAM, runner framework чи network listener немає. За відсутності prerequisite процес startup завершується відмовою, а не переходить до старого starter.
+Історична модель (OBSOLETE): один default-off глобальний MCP switch в Agent/Nexus. Коли false: старі runtime/API шляхи зберігаються, нові management endpoints недоступні. Коли true: увесь control API автентифікований; Codex **і Git** запускаються під окремим runtime UID через один вузький root-owned helper та наявний systemd. Нового довгоживучого сервісу, IAM, runner framework чи network listener немає. За відсутності prerequisite процес startup завершується відмовою, а не переходить до старого starter.
 
 Helper створює transient systemd **service**, не scope, для кожного Codex/Git процесу. Це необхідно для гарантованого cleanup між UID; простий `sudo -u runtime codex` недостатній. Split Task 2 на 2a (launcher/boundary/proof) і 2b (auth), після обох — REST Task 3.
 
@@ -68,7 +70,7 @@ New production files:
 - `A/api-rest/src/main/java/com/sitionix/forgeagent/api/security/{McpManagementProperties,AgentManagementAuthenticationFilter,ProtectedCredentialFile}.java`
 - `N/api-rest/src/main/java/com/sitionix/forgeai/api/security/{McpManagementProperties,OperatorSessionService,OperatorSessionController,OperatorManagementAuthenticationFilter,ProtectedCredentialFile}.java`
 - `N/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/AgentServiceCredential.java` (protected file reader shared within existing appropriate module; не api-rest dependency)
-- `scripts/runtime/forge-runtime-launcher.py`, `config/systemd/forge-agent-mcp-isolation.conf.in`, `config/sudoers/forge-runtime.in`, `docs/mcp-integrations/stage-1-operations.md`
+- `scripts/runtime/forge-runtime-launcher.py`, `config/systemd/forge-agent.service.in`, `config/sudoers/forge-runtime.in`, `docs/mcp-integrations/stage-1-operations.md`
 - `docs/mcp-integrations/probes/stage1-boundary/` (disposable image/VM fixture, scripts, synthetic test sources; no production paths).
 
 Tests — існуючі `DefaultGitCommandRunnerTest`, `CodexAppServerClientTest`, transport/recovery tests + sibling runtime/auth tests. HTTP integration через existing `ForgeAgentTestManager`/`NexusProxyTestManager`, endpoints/contracts і fixture resources, не паралельний ad hoc integration framework.

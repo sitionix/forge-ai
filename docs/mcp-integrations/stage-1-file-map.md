@@ -157,7 +157,7 @@
 ## config/
 
 - [config/sudoers/forge-runtime.in](../../config/sudoers/forge-runtime.in)
-- [config/systemd/forge-agent-mcp-isolation.conf.in](../../config/systemd/forge-agent-mcp-isolation.conf.in)
+- Main Agent isolation wiring is now in [config/systemd/forge-agent.service.in](../../config/systemd/forge-agent.service.in); the old opt-in drop-in is obsolete.
 
 ## docs/
 

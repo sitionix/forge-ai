@@ -54,6 +54,28 @@ public final class ForgeAgentWireMockEndpoints {
                 (WiremockDefault) context -> context.plainUrl().responseStatus(200)
                         .responseBody("agent-mcp-available-response.json"));
     }
+    public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectOutbound,com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectInbound> connectMcp(int status,String fixture) {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connect",HttpMethod.POST,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectOutbound.class,com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectInbound.class,
+                (WiremockDefault)c->c.plainUrl().responseStatus(status).responseBody(fixture));
+    }
+    public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound,com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthStartInbound> startMcpOAuth() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/oauth/start",HttpMethod.POST,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound.class,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthStartInbound.class,
+                (WiremockDefault)c->c.plainUrl().responseStatus(200).responseBody("agent-mcp-oauth-start-response.json"));
+    }
+    public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCallbackOutbound,com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCompletionInbound> completeMcpOAuth() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/oauth/callback",HttpMethod.POST,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCallbackOutbound.class,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCompletionInbound.class,
+                (WiremockDefault)c->c.plainUrl().responseStatus(200).responseBody("agent-mcp-oauth-complete-response.json"));
+    }
+    public static Endpoint<com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound,Void> cancelMcpOAuth() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/oauth/transactions/{transactionId}",HttpMethod.DELETE,
+                com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound.class,Void.class,
+                (WiremockDefault)c->c.plainUrl().responseStatus(204));
+    }
     public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse[]> listMcpConnections() {
         return Endpoint.createContract("/api/v1/integrations/mcp/connections", HttpMethod.GET,
                 Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectionInboundResponse[].class,

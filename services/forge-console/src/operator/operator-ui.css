@@ -6108,11 +6108,38 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 
 .sidebar-settings { padding: 12px; border-top: 1px solid var(--line); }
 .settings-shell { max-width: 1100px; }
-.settings-shell [hidden], #mcpConnectionDialog [hidden] { display: none !important; }
+.settings-shell [hidden], #mcpConnectionDialog [hidden], #mcpCatalog[hidden], #mcpCatalog [hidden], #mcpDetailsPanel[hidden], #mcpDetailsPanel [hidden] { display: none !important; }
 .mcp-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.mcp-section-head, .mcp-dialog-head, .mcp-dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.mcp-section-head { flex-wrap: wrap; }
+.mcp-section-head .mcp-description { margin: 6px 0 0; }
+.mcp-catalog-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 24px; }
+.mcp-catalog-dialog[open] { display: flex; flex-direction: column; }
+.mcp-dialog-head { align-items: start; flex-shrink: 0; }
+.mcp-dialog-head h2 { margin: 0; font: 700 24px/1.2 var(--display); }
+.mcp-dialog-head .mcp-description { margin: 8px 0 0; font-size: .8rem; }
+.mcp-close, .mcp-search-submit { border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.mcp-close { font-size: 24px; line-height: 1; padding: 4px 8px; }
+.mcp-search { display: flex; align-items: center; margin-top: 20px; border: 1px solid rgba(27,36,31,.18); border-radius: 8px; }
+.mcp-search .text-input { flex: 1; min-width: 0; border: 0; background: transparent; }
+.mcp-search-submit { padding: 8px 12px; font-size: 24px; }
+.mcp-catalog-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; max-height: 420px; margin-top: 8px; }
+.mcp-catalog-row, .mcp-connection-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 4px; border: 0; border-bottom: 1px solid rgba(27,36,31,.12); background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.mcp-catalog-row:hover, .mcp-connection-row:hover { background: rgba(27,36,31,.04); }
+.mcp-catalog-row:focus-visible, .mcp-connection-row:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.mcp-catalog-icon { flex: 0 0 32px; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; background: rgba(27,36,31,.06); font-weight: 700; overflow: hidden; }
+.mcp-catalog-icon img { width: 32px; height: 32px; object-fit: contain; }
+.mcp-row-copy { flex: 1; min-width: 0; }
+.mcp-catalog-title { display: block; font-size: .85rem; font-weight: 700; overflow-wrap: anywhere; }
+.mcp-catalog-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: .75rem; line-height: 1.5; color: var(--muted); margin-top: 4px; }
+.mcp-connection-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; font-weight: 700; }
+.mcp-connection-state { font-size: .7rem; color: var(--muted); }
+.mcp-dialog-footer { padding-top: 20px; flex-shrink: 0; flex-wrap: wrap; }
+#mcpNotice:empty, #mcpCatalogNotice:empty, #mcpDetailsNotice:empty { display: none; }
+.mcp-details-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; padding: 24px; }
+.mcp-remove { color: var(--danger); }
 .mcp-card { padding: 16px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 #mcpDetails { overflow-wrap: anywhere; }
-#mcpLoginForm { display: grid; gap: 12px; max-width: 460px; }
 
 #mcpConnectionDialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto; }
 #mcpConnectionForm, #mcpAccess { display: grid; gap: 12px; }
@@ -6129,3 +6156,25 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 @media (max-width: 600px) {
   .sidebar-brand .sidebar-title { display: none; }
 }
+
+.settings-header h1 { margin: 0 0 24px; }
+.settings-header, .settings-shell > h2 { color: var(--panel-strong); }
+#mcpIntegrations h3 { margin: 0; font-size: 1.2rem; }
+.mcp-description { color: var(--muted); margin: 8px 0 24px; }
+#mcpConnections:has(> p:only-child) { padding: 24px 0 8px; color: var(--muted); }
+#mcpIntegrations .error-box { margin: 16px 0; }
+
+/* Provider sign-in uses the existing compact connection dialog. */
+#mcpOAuthAdvanced { margin: 8px 0 16px; }
+#mcpOAuthAdvanced summary { cursor: pointer; color: var(--muted); margin-bottom: 12px; }
+#mcpConnectionForm input:not([type=checkbox]), #mcpConnectionForm select, #mcpConnectionForm textarea {
+  width: 100%; min-height: 40px; box-sizing: border-box; border: 1px solid rgba(27, 36, 31, 0.18);
+  border-radius: 8px; padding: 8px 12px; background: var(--panel-strong); color: inherit; font: inherit;
+}
+#mcpOAuthAdvanced input, #mcpOAuthAdvanced select { margin: 6px 0 12px; }
+#mcpOAuthCallbackUri { display: block; overflow-wrap: anywhere; font-size: 12px; margin-top: 8px; }
+.mcp-oauth-result { max-width: 560px; margin: 12vh auto; padding: 20px; }
+
+.mcp-catalog-row { cursor: default; }
+.mcp-catalog-row > button { flex-shrink: 0; }
+.mcp-catalog-status { display: block; font-size: 12px; margin-top: 4px; white-space: normal; color: var(--ink); }

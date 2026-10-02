@@ -28,7 +28,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 @IntegrationTest
-class ForgeAgentManualSelectionIT {
+class ForgeAgentManualSelectionIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private WorkflowUseCases workflows;
     @Autowired private WorkflowRunUseCases runs;

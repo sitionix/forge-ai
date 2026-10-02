@@ -2,6 +2,9 @@ environment: localhost
 server:
   address: ${FORGE_NEXUS_HOST:}
   port: 9099
+  tomcat:
+    accesslog:
+      condition-unless: forgeSensitiveRequest
   servlet:
     context-path: /fgaisox
 spring:
@@ -31,7 +34,8 @@ management:
       enabled: true
 forge:
   mcp:
-    enabled: ${FORGE_MCP_ENABLED:false}
+    catalog:
+      agent-read-timeout: ${FORGE_MCP_CATALOG_AGENT_READ_TIMEOUT:55s}
   ai:
     infrastructure:
       jarvis:
@@ -49,3 +53,9 @@ forge:
         base-url: ${FORGE_AGENT_BASE_URL:http://127.0.0.1:7091}
         connect-timeout: 2s
         read-timeout: 30s
+
+# Spring's resolved-exception DEBUG output includes raw transport messages.
+# Public scoped handlers log safe operational warnings instead.
+logging:
+  level:
+    org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver: WARN

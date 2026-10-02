@@ -85,8 +85,9 @@ public final class CodexAgentExecutor implements AgentExecutor {
         }
         final McpExecutionPreparation prepared;
         try {
-            prepared = this.mcpSelectionService == null ? null
+            final McpExecutionPreparation candidate = this.mcpSelectionService == null ? null
                     : this.mcpSelectionService.prepare(claim, Instant.now().plus(this.properties.getTurnTimeout()));
+            prepared = hasMcpContext(candidate) ? candidate : null;
         } catch (RuntimeException failure) {
             throw new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "MCP execution preparation failed.");
         }
@@ -133,7 +134,31 @@ public final class CodexAgentExecutor implements AgentExecutor {
                                 if (CodexAgentExecutor.this.dispatchGuard == null) {
                                     throw new IllegalStateException("Tracked execution requires a dispatch guard.");
                                 }
-                                CodexAgentExecutor.this.dispatchGuard.dispatch(claim.agentSessionClaim(), writeRequest);
+                                CodexAgentExecutor.this.dispatchGuard.dispatch(claim.agentSessionClaim(), () -> {
+                                    final boolean mcpActivated = prepared != null && !prepared.launchGrants().isEmpty();
+                                    if (mcpActivated) {
+                                        try {
+                                            CodexAgentExecutor.this.mcpSelectionService.activateForDispatch(
+                                                    claim.agentSessionClaim());
+                                        } catch (RuntimeException failure) {
+                                            throw new CodexMcpExecutionException(
+                                                    "Codex MCP dispatch activation failed", failure);
+                                        }
+                                    }
+                                    try {
+                                        writeRequest.run();
+                                    } catch (RuntimeException failure) {
+                                        if (mcpActivated) {
+                                            try {
+                                                CodexAgentExecutor.this.mcpSelectionService.revoke(
+                                                        claim.agentSessionClaim());
+                                            } catch (RuntimeException ignored) {
+                                                // The enclosing execution finally retries revocation.
+                                            }
+                                        }
+                                        throw failure;
+                                    }
+                                });
                             }
                             @Override public void executionEvent(
                                     com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate event) {
@@ -180,8 +205,12 @@ public final class CodexAgentExecutor implements AgentExecutor {
             }
             return this.parseExecutionResult(outputText, claim.availableOutputs(), selectionRequired);
         } catch (RuntimeException failure) {
-            if (prepared != null && !(failure instanceof ConflictException))
+            if (CodexMcpExecutionException.causedBy(failure)) {
                 throw new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "MCP execution failed.");
+            }
+            if (prepared != null && failure instanceof CodexTransportException) {
+                throw new CodexTransportException("Codex execution failed.");
+            }
             throw failure;
         } finally {
             if (prepared != null && claim.agentSessionClaim() != null) {
@@ -191,6 +220,12 @@ public final class CodexAgentExecutor implements AgentExecutor {
                 }
             }
         }
+    }
+
+    private static boolean hasMcpContext(final McpExecutionPreparation prepared) {
+        return prepared != null && (!prepared.selection().entries().isEmpty()
+                || !prepared.selection().diagnostics().isEmpty()
+                || !prepared.launchGrants().isEmpty());
     }
 
     private String executeTracked(final CodexTurnRequest request, final NodeExecutionClaim claim,
