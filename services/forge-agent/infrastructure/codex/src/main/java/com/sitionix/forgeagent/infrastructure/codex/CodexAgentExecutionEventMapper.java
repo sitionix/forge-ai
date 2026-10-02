@@ -273,7 +273,9 @@ final class CodexAgentExecutionEventMapper {
                                                                final Instant observedAt) {
         if (this.mcpMode) {
             final ObjectNode payload = this.objectMapper.createObjectNode();
-            payload.put("message", "MCP provider diagnostic.");
+            payload.put("message", "Provider diagnostic during MCP-enabled execution.");
+            payload.put("providerCode", ProviderDiagnosticCode.from(
+                    params.path("error").path("codexErrorInfo")).name());
             return Optional.of(this.event(type, type == AgentExecutionEventType.ERROR
                     ? AgentExecutionEventStatus.FAILED : null, null, null, payload, observedAt));
         }
@@ -351,6 +353,51 @@ final class CodexAgentExecutionEventMapper {
                 target.set(targetField, value.deepCopy());
                 return;
             }
+        }
+    }
+
+    private enum ProviderDiagnosticCode {
+        CONTEXT_WINDOW_EXCEEDED("contextWindowExceeded"),
+        SESSION_BUDGET_EXCEEDED("sessionBudgetExceeded"),
+        USAGE_LIMIT_EXCEEDED("usageLimitExceeded"),
+        RATE_LIMIT_EXCEEDED("rateLimitExceeded"),
+        FLEX_UNAVAILABLE("flexUnavailable"),
+        SERVER_OVERLOADED("serverOverloaded"),
+        CYBER_POLICY("cyberPolicy"),
+        MISALIGNMENT_POLICY_VIOLATION("misalignmentPolicyViolation"),
+        TOO_MANY_DENIALS("tooManyDenials"),
+        INTERNAL_SERVER_ERROR("internalServerError"),
+        UNAUTHORIZED("unauthorized"),
+        BAD_REQUEST("badRequest"),
+        THREAD_ROLLBACK_FAILED("threadRollbackFailed"),
+        SANDBOX_ERROR("sandboxError"),
+        OTHER("other"),
+        HTTP_CONNECTION_FAILED("httpConnectionFailed"),
+        RESPONSE_STREAM_CONNECTION_FAILED("responseStreamConnectionFailed"),
+        RESPONSE_STREAM_DISCONNECTED("responseStreamDisconnected"),
+        RESPONSE_TOO_MANY_FAILED_ATTEMPTS("responseTooManyFailedAttempts"),
+        ACTIVE_TURN_NOT_STEERABLE("activeTurnNotSteerable"),
+        UNKNOWN(null);
+
+        private final String wireValue;
+
+        ProviderDiagnosticCode(final String wireValue) {
+            this.wireValue = wireValue;
+        }
+
+        static ProviderDiagnosticCode from(final JsonNode value) {
+            if (value != null && value.isTextual()) {
+                for (final ProviderDiagnosticCode code : values()) {
+                    if (code.wireValue != null && code.wireValue.equals(value.asText())) return code;
+                }
+                return UNKNOWN;
+            }
+            if (value != null && value.isObject()) {
+                for (final ProviderDiagnosticCode code : values()) {
+                    if (code.wireValue != null && value.has(code.wireValue)) return code;
+                }
+            }
+            return UNKNOWN;
         }
     }
 
