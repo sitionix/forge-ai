@@ -91,6 +91,47 @@ class CodexAgentExecutorTest {
     }
 
     @Test
+    void mcpGrantActivationHappensInsideDispatchFenceBeforeTurnWrite() {
+        var selectionService = mock(McpExecutionSelectionService.class);
+        var codex = mock(CodexClient.class);
+        var leases = mock(AgentSessionLeaseService.class);
+        var dispatch = mock(com.sitionix.forgeagent.domain.port.AgentExecutionDispatchGuard.class);
+        var claim = this.trackedClaim("thread-existing");
+        var selection = new McpExecutionSelection(List.of(
+                new McpExecutionSelection.Entry("forge_0123456789ab4cde80123456789abcde",
+                        UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"), "fixture",
+                        java.util.Set.of(new com.sitionix.forgeagent.domain.model.McpAllowedTool(
+                                "search", "sha256:" + "a".repeat(64))))), List.of());
+        var grants = new McpRuntimeLaunchGrants(Map.of(
+                "forge_0123456789ab4cde80123456789abcde", "synthetic-grant"));
+        when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
+                .thenReturn(new McpExecutionPreparation(selection, grants));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(1).run();
+            return null;
+        }).when(dispatch).dispatch(org.mockito.ArgumentMatchers.eq(claim.agentSessionClaim()), any());
+        var activated = new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(ignored -> {
+            activated.set(true);
+            return null;
+        }).when(selectionService).activateForDispatch(claim.agentSessionClaim());
+        when(codex.executeDurable(any(), any(), any(), any(McpRuntimeLaunchGrants.class), any()))
+                .thenAnswer(invocation -> {
+                    var callbacks = invocation.<CodexExecutionIdentityCallbacks>getArgument(4);
+                    callbacks.dispatchTurnStart(() -> assertThat(activated).isTrue());
+                    return "{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}";
+                });
+        var executor = new CodexAgentExecutor(this.objectMapper, codex, leases, null, dispatch,
+                selectionService, new CodexAppServerProperties());
+
+        executor.execute(claim);
+
+        verify(dispatch).dispatch(org.mockito.ArgumentMatchers.eq(claim.agentSessionClaim()), any());
+        verify(selectionService).activateForDispatch(claim.agentSessionClaim());
+        verify(selectionService).revoke(claim.agentSessionClaim());
+    }
+
+    @Test
     void failedMcpPreparationDoesNotStartCodexOrExposeCause() {
         var selectionService = mock(McpExecutionSelectionService.class);
         var codex = mock(CodexClient.class);
