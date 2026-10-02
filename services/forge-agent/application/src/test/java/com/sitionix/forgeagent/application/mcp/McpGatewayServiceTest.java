@@ -102,15 +102,15 @@ class McpGatewayServiceTest {
         assertThat(plaintext).containsOnly((byte) 0);
     }
 
-    @Test void freshStartingGrantAllowsDiscoveryButNotToolCallUntilTurnIsActive() {
-        startingGrantRequiresActiveTurnForCall(AgentExecutionSessionStatus.CREATING);
+    @Test void freshStartingGrantAllowsDiscoveryAndOnlyDispatchAuthorizedToolCalls() {
+        startingGrantRequiresDispatchAuthorization(AgentExecutionSessionStatus.CREATING);
     }
 
-    @Test void resumingStartingGrantAllowsDiscoveryButNotToolCallUntilTurnIsActive() {
-        startingGrantRequiresActiveTurnForCall(AgentExecutionSessionStatus.RESUMING);
+    @Test void resumingStartingGrantAllowsDiscoveryAndOnlyDispatchAuthorizedToolCalls() {
+        startingGrantRequiresDispatchAuthorization(AgentExecutionSessionStatus.RESUMING);
     }
 
-    private void startingGrantRequiresActiveTurnForCall(AgentExecutionSessionStatus starting) {
+    private void startingGrantRequiresDispatchAuthorization(AgentExecutionSessionStatus starting) {
         var sessionStatus = new AgentExecutionSessionStatus[]{starting};
         var turnStatus = new AgentExecutionTurnStatus[]{AgentExecutionTurnStatus.STARTING};
         when(sessions.findSession(sessionId)).thenAnswer(ignored ->
@@ -129,17 +129,25 @@ class McpGatewayServiceTest {
         assertThat(handle.token()).isEqualTo("starting-grant");
         when(grants.resolve("starting-grant", connectionId)).thenAnswer(ignored -> Optional.of(issued[0]));
         assertThat(service.authorize(handle.token(), connectionId)).isEqualTo(issued[0]);
+        when(grants.admit("starting-grant", connectionId)).thenReturn(false);
         assertThatThrownBy(() -> service.call(handle.token(), connectionId, tool.name(), tool.schemaFingerprint(), "{}"))
                 .isInstanceOf(McpGatewayAccessException.class);
         verifyNoInteractions(remote);
 
-        sessionStatus[0] = AgentExecutionSessionStatus.ACTIVE;
-        turnStatus[0] = AgentExecutionTurnStatus.ACTIVE;
+        service.activateForDispatch(claim);
+        verify(grants).activateForDispatch(turnId);
+        when(grants.admit("starting-grant", connectionId)).thenReturn(true);
         when(remote.call(eq(issued[0].endpoint()), eq(issued[0].authType()), any(), eq(tool.name()),
                 eq(tool.schemaFingerprint()), eq("{}"), any())).thenAnswer(invocation -> {
             assertThat(invocation.<java.util.function.BooleanSupplier>getArgument(6).getAsBoolean()).isTrue();
             return new McpToolCallResult(false, "[]", null);
         });
+        assertThat(sessionStatus[0]).isEqualTo(starting);
+        assertThat(turnStatus[0]).isEqualTo(AgentExecutionTurnStatus.STARTING);
+        assertThat(service.call(handle.token(), connectionId, tool.name(), tool.schemaFingerprint(), "{}").isError()).isFalse();
+
+        sessionStatus[0] = AgentExecutionSessionStatus.ACTIVE;
+        turnStatus[0] = AgentExecutionTurnStatus.ACTIVE;
         assertThat(service.call(handle.token(), connectionId, tool.name(), tool.schemaFingerprint(), "{}").isError()).isFalse();
     }
 
