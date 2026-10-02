@@ -71,6 +71,11 @@ public final class McpExecutionSelectionService {
                 new McpRuntimeLaunchGrants(tokens));
     }
 
+    public void activateForDispatch(AgentSessionExecutionClaim claim) {
+        if (claim == null) throw new IllegalArgumentException("Tracked MCP execution is required");
+        gateway.activateForDispatch(claim);
+    }
+
     public void revoke(AgentSessionExecutionClaim claim) {
         if (claim != null) gateway.revokeExecution(claim.turnId());
     }
