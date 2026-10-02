@@ -73,7 +73,7 @@ class CodexAgentExecutorTest {
         var alias = "forge_0123456789ab4cde80123456789abcde";
         var selection = new McpExecutionSelection(List.of(
                 new McpExecutionSelection.Entry(alias,
-                        UUID.fromString("01234567-89ab-4cde-80123456789abcde"),
+                        UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"),
                         "fixture", java.util.Set.of(new com.sitionix.forgeagent.domain.model.McpAllowedTool(
                         "search", "sha256:" + "a".repeat(64))))), List.of());
         var grants = new McpRuntimeLaunchGrants(Map.of(alias, "synthetic-grant"));
@@ -126,7 +126,7 @@ class CodexAgentExecutorTest {
         var alias = "forge_0123456789ab4cde80123456789abcde";
         var selection = new McpExecutionSelection(List.of(
                 new McpExecutionSelection.Entry(alias,
-                        UUID.fromString("01234567-89ab-4cde-80123456789abcde"),
+                        UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"),
                         "fixture", java.util.Set.of(new com.sitionix.forgeagent.domain.model.McpAllowedTool(
                         "search", "sha256:" + "a".repeat(64))))), List.of());
         var grants = new McpRuntimeLaunchGrants(Map.of(alias, "synthetic-grant"));
@@ -154,7 +154,7 @@ class CodexAgentExecutorTest {
         var alias = "forge_0123456789ab4cde80123456789abcde";
         var selection = new McpExecutionSelection(List.of(
                 new McpExecutionSelection.Entry(alias,
-                        UUID.fromString("01234567-89ab-4cde-80123456789abcde"),
+                        UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"),
                         "fixture", java.util.Set.of(new com.sitionix.forgeagent.domain.model.McpAllowedTool(
                         "search", "sha256:" + "a".repeat(64))))), List.of());
         var grants = new McpRuntimeLaunchGrants(Map.of(alias, "synthetic-grant"));
