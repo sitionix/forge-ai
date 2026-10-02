@@ -102,6 +102,120 @@ class McpGatewayServiceTest {
         assertThat(plaintext).containsOnly((byte) 0);
     }
 
+    @Test void freshStartingGrantAllowsDiscoveryButNotToolCallUntilTurnIsActive() {
+        startingGrantRequiresActiveTurnForCall(AgentExecutionSessionStatus.CREATING);
+    }
+
+    @Test void resumingStartingGrantAllowsDiscoveryButNotToolCallUntilTurnIsActive() {
+        startingGrantRequiresActiveTurnForCall(AgentExecutionSessionStatus.RESUMING);
+    }
+
+    private void startingGrantRequiresActiveTurnForCall(AgentExecutionSessionStatus starting) {
+        var sessionStatus = new AgentExecutionSessionStatus[]{starting};
+        var turnStatus = new AgentExecutionTurnStatus[]{AgentExecutionTurnStatus.STARTING};
+        when(sessions.findSession(sessionId)).thenAnswer(ignored ->
+                Optional.of(session(nodeId, now.plusSeconds(60), sessionStatus[0])));
+        when(sessions.findByNodeRunId(nodeId)).thenAnswer(ignored -> Optional.of(new AgentExecutionAllocation(
+                session(nodeId, now.plusSeconds(60), sessionStatus[0]), turn(turnStatus[0]))));
+        when(cipher.decrypt(installation, connectionId, "credential", encrypted))
+                .thenAnswer(ignored -> new byte[]{42});
+        var issued = new McpRuntimeGrant[1];
+        when(grants.issue(any())).thenAnswer(invocation -> {
+            issued[0] = invocation.getArgument(0);
+            return new McpRuntimeGrantHandle(issued[0].id(), "starting-grant");
+        });
+
+        var handle = service.issue(claim, now.plusSeconds(120), connectionId);
+        assertThat(handle.token()).isEqualTo("starting-grant");
+        when(grants.resolve("starting-grant", connectionId)).thenAnswer(ignored -> Optional.of(issued[0]));
+        assertThat(service.authorize(handle.token(), connectionId)).isEqualTo(issued[0]);
+        assertThatThrownBy(() -> service.call(handle.token(), connectionId, tool.name(), tool.schemaFingerprint(), "{}"))
+                .isInstanceOf(McpGatewayAccessException.class);
+        verifyNoInteractions(remote);
+
+        sessionStatus[0] = AgentExecutionSessionStatus.ACTIVE;
+        turnStatus[0] = AgentExecutionTurnStatus.ACTIVE;
+        when(remote.call(eq(issued[0].endpoint()), eq(issued[0].authType()), any(), eq(tool.name()),
+                eq(tool.schemaFingerprint()), eq("{}"), any())).thenAnswer(invocation -> {
+            assertThat(invocation.<java.util.function.BooleanSupplier>getArgument(6).getAsBoolean()).isTrue();
+            return new McpToolCallResult(false, "[]", null);
+        });
+        assertThat(service.call(handle.token(), connectionId, tool.name(), tool.schemaFingerprint(), "{}").isError()).isFalse();
+    }
+
+    @Test void unrelatedSessionAndTurnPhasesNeverIssueGrant() {
+        var rejected = List.of(
+                new Object[]{AgentExecutionSessionStatus.WAITING, AgentExecutionTurnStatus.QUEUED},
+                new Object[]{AgentExecutionSessionStatus.IDLE, AgentExecutionTurnStatus.STARTING},
+                new Object[]{AgentExecutionSessionStatus.ACTIVE, AgentExecutionTurnStatus.QUEUED},
+                new Object[]{AgentExecutionSessionStatus.CREATING, AgentExecutionTurnStatus.ACTIVE},
+                new Object[]{AgentExecutionSessionStatus.RESUMING, AgentExecutionTurnStatus.ACTIVE},
+                new Object[]{AgentExecutionSessionStatus.FAILED, AgentExecutionTurnStatus.FAILED},
+                new Object[]{AgentExecutionSessionStatus.CLOSED, AgentExecutionTurnStatus.SUCCEEDED});
+        for (var pair : rejected) {
+            var status = (AgentExecutionSessionStatus) pair[0];
+            var turnStatus = (AgentExecutionTurnStatus) pair[1];
+            when(sessions.findSession(sessionId)).thenReturn(Optional.of(session(nodeId, now.plusSeconds(60), status)));
+            when(sessions.findByNodeRunId(nodeId)).thenReturn(Optional.of(new AgentExecutionAllocation(
+                    session(nodeId, now.plusSeconds(60), status), turn(turnStatus))));
+            assertThatThrownBy(() -> service.issue(claim, now.plusSeconds(120), connectionId))
+                    .as(status + "/" + turnStatus).isInstanceOf(McpGatewayAccessException.class);
+        }
+        verifyNoInteractions(views, remote);
+    }
+
+    @Test void staleLeaseNodeWorkflowAndProjectDenyBeforeDiscovery() {
+        assertThatThrownBy(() -> service.issue(new AgentSessionExecutionClaim(sessionId, turnId, nodeId,
+                "other", 7L, now.plusSeconds(60), null, "codex"), now.plusSeconds(120), connectionId))
+                .isInstanceOf(McpGatewayAccessException.class);
+        assertThatThrownBy(() -> service.issue(new AgentSessionExecutionClaim(sessionId, turnId, nodeId,
+                "owner", 8L, now.plusSeconds(60), null, "codex"), now.plusSeconds(120), connectionId))
+                .isInstanceOf(McpGatewayAccessException.class);
+        when(nodes.findById(nodeId)).thenReturn(Optional.of(new NodeRun(nodeId, workflowId, UUID.randomUUID(),
+                UUID.randomUUID(), "agent", "instructions", null, NodeInputMode.DEPENDENCIES_ONLY,
+                new NodePosition(1, 1), UUID.randomUUID(), null, null, null, null,
+                NodeRunStatus.FAILED, null, null, null, now, now, null, null)));
+        assertThatThrownBy(() -> service.issue(claim, now.plusSeconds(120), connectionId))
+                .isInstanceOf(McpGatewayAccessException.class);
+        when(nodes.findById(nodeId)).thenReturn(Optional.of(new NodeRun(nodeId, workflowId, UUID.randomUUID(),
+                UUID.randomUUID(), "agent", "instructions", null, NodeInputMode.DEPENDENCIES_ONLY,
+                new NodePosition(1, 1), UUID.randomUUID(), null, null, null, null,
+                NodeRunStatus.RUNNING, null, null, null, now, now, null, null)));
+        when(workflows.findById(workflowId)).thenReturn(Optional.of(new WorkflowRun(workflowId, projectId,
+                UUID.randomUUID(), null, "workflow", "input", WorkflowRunStatus.FAILED, List.of(),
+                List.of(), List.of(), null, null, null, now, now, null, List.of())));
+        assertThatThrownBy(() -> service.issue(claim, now.plusSeconds(120), connectionId))
+                .isInstanceOf(McpGatewayAccessException.class);
+        when(workflows.findById(workflowId)).thenReturn(Optional.of(new WorkflowRun(workflowId, projectId,
+                UUID.randomUUID(), null, "workflow", "input", WorkflowRunStatus.RUNNING, List.of(),
+                List.of(), List.of(), null, null, null, now, now, null, List.of())));
+        when(projects.findById(projectId)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.issue(claim, now.plusSeconds(120), connectionId))
+                .isInstanceOf(McpGatewayAccessException.class);
+        verifyNoInteractions(views, remote);
+    }
+
+    @Test void finalAdmissionRechecksActiveTurnBeforeExternalDispatch() {
+        var grant = issuedGrant();
+        when(grants.resolve("synthetic-token", connectionId)).thenReturn(Optional.of(grant));
+        byte[] credential = {8, 9};
+        when(cipher.decrypt(installation, connectionId, "credential", encrypted)).thenReturn(credential);
+        var turnStatus = new AgentExecutionTurnStatus[]{AgentExecutionTurnStatus.ACTIVE};
+        when(sessions.findByNodeRunId(nodeId)).thenAnswer(ignored -> Optional.of(new AgentExecutionAllocation(
+                session(nodeId, now.plusSeconds(60)), turn(turnStatus[0]))));
+        int[] dispatched = {0};
+        when(remote.call(eq(grant.endpoint()), eq(grant.authType()), same(credential), eq(tool.name()),
+                eq(tool.schemaFingerprint()), eq("{}"), any())).thenAnswer(invocation -> {
+            turnStatus[0] = AgentExecutionTurnStatus.FAILED;
+            if (invocation.<java.util.function.BooleanSupplier>getArgument(6).getAsBoolean()) dispatched[0]++;
+            throw new McpGatewayAccessException();
+        });
+        assertThatThrownBy(() -> service.call("synthetic-token", connectionId, tool.name(), tool.schemaFingerprint(), "{}"))
+                .isInstanceOf(McpGatewayAccessException.class);
+        assertThat(dispatched[0]).isZero();
+        assertThat(credential).containsOnly((byte) 0);
+    }
+
     @Test void foreignNodeAndEmptySelectedProjectsDenyBeforeDiscovery() {
         when(sessions.findSession(sessionId)).thenReturn(Optional.of(session(UUID.randomUUID(), now.plusSeconds(60))));
         assertThatThrownBy(() -> service.issue(claim, now.plusSeconds(120), connectionId))
@@ -210,9 +324,18 @@ class McpGatewayServiceTest {
     }
 
     private AgentExecutionSession session(UUID activeNode, Instant leaseExpiry) {
+        return session(activeNode, leaseExpiry, AgentExecutionSessionStatus.ACTIVE);
+    }
+
+    private AgentExecutionSession session(UUID activeNode, Instant leaseExpiry, AgentExecutionSessionStatus status) {
         return new AgentExecutionSession(sessionId, workflowId, UUID.randomUUID(), UUID.randomUUID(), null,
                 "codex", null, null, NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE,
-                AgentExecutionSessionStatus.ACTIVE, null, activeNode, "owner", 7L, leaseExpiry,
+                status, null, activeNode, "owner", 7L, leaseExpiry,
                 null, null, now, now, null, null);
+    }
+
+    private AgentExecutionTurn turn(AgentExecutionTurnStatus status) {
+        return new AgentExecutionTurn(turnId, sessionId, nodeId, null, 1,
+                status, null, null, null, null, null, now, null, now, now);
     }
 }

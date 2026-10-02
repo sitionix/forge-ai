@@ -115,12 +115,14 @@ class McpGatewayEndToEndHttpTest {
         Instant now = Instant.now();
         var session = new AgentExecutionSession(sessionId, workflowId, UUID.randomUUID(), UUID.randomUUID(),
                 null, "codex", null, null, NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE,
-                AgentExecutionSessionStatus.ACTIVE, null, nodeId, "owner", 7L, now.plusSeconds(60),
+                AgentExecutionSessionStatus.CREATING, null, nodeId, "owner", 7L, now.plusSeconds(60),
                 null, null, now, now, null, null);
         var turn = new AgentExecutionTurn(turnId, sessionId, nodeId, null, 1,
-                AgentExecutionTurnStatus.ACTIVE, null, null, null, null, null, now, null, now, now);
-        when(sessions.findSession(sessionId)).thenReturn(Optional.of(session));
-        when(sessions.findByNodeRunId(nodeId)).thenReturn(Optional.of(new AgentExecutionAllocation(session, turn)));
+                AgentExecutionTurnStatus.STARTING, null, null, null, null, null, now, null, now, now);
+        var sessionState = new AgentExecutionSession[]{session};
+        var turnState = new AgentExecutionTurn[]{turn};
+        when(sessions.findSession(sessionId)).thenAnswer(ignored -> Optional.of(sessionState[0]));
+        when(sessions.findByNodeRunId(nodeId)).thenAnswer(ignored -> Optional.of(new AgentExecutionAllocation(sessionState[0], turnState[0])));
         when(sessions.lockCurrentLease(sessionId, "owner", 7L)).thenReturn(true);
         when(nodes.findById(nodeId)).thenReturn(Optional.of(new NodeRun(nodeId, workflowId, UUID.randomUUID(),
                 UUID.randomUUID(), "agent", "instructions", null, NodeInputMode.DEPENDENCIES_ONLY,
@@ -152,6 +154,8 @@ class McpGatewayEndToEndHttpTest {
         var claim = new AgentSessionExecutionClaim(sessionId, turnId, nodeId, "owner", 7L,
                 now.plusSeconds(60), null, "codex");
         var handle = runtime.issue(claim, now.plusSeconds(50), connectionId);
+        assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.CREATING);
+        assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.STARTING);
         assertThat(upstream.calls()).isZero();
 
         var builder = HttpRequest.newBuilder().header("Authorization", "Bearer " + handle.token());
@@ -160,6 +164,18 @@ class McpGatewayEndToEndHttpTest {
         try (var client = McpClient.sync(transport).requestTimeout(Duration.ofSeconds(4)).build()) {
             assertThat(client.initialize().capabilities().tools()).isNotNull();
             assertThat(client.listTools().tools()).extracting(McpSchema.Tool::name).containsExactly("read");
+            try {
+                assertThat(client.callTool(new McpSchema.CallToolRequest("read", Map.of())).isError()).isTrue();
+            } catch (RuntimeException denied) { /* Protocol-level denial may surface as an SDK exception. */ }
+            assertThat(upstream.calls()).isZero();
+            sessionState[0] = new AgentExecutionSession(sessionId, workflowId, session.sourceNodeId(),
+                    session.sourceAgentId(), null, "codex", null, null, NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE,
+                    AgentExecutionSessionStatus.ACTIVE, null, nodeId, "owner", 7L, now.plusSeconds(60),
+                    null, null, now, now, null, null);
+            turnState[0] = new AgentExecutionTurn(turnId, sessionId, nodeId, null, 1,
+                    AgentExecutionTurnStatus.ACTIVE, null, null, null, null, null, now, null, now, now);
+            assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.ACTIVE);
+            assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.ACTIVE);
             assertThat(client.callTool(new McpSchema.CallToolRequest("read", Map.of())).isError()).isFalse();
         }
         assertThat(upstream.calls()).isEqualTo(1);

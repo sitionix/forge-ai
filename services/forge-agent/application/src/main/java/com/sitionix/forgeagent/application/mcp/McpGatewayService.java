@@ -50,7 +50,7 @@ public class McpGatewayService implements McpGatewayRuntime {
     /** Callable only from an Agent-owned execution path, never from HTTP management. */
     public McpRuntimeGrantHandle issue(AgentSessionExecutionClaim claim, Instant executionDeadline, UUID connectionId) {
         if (claim == null || executionDeadline == null || connectionId == null) throw denied();
-        var session = liveSession(claim.sessionId(), claim.turnId(), claim.nodeRunId(),
+        var session = executionSession(claim.sessionId(), claim.turnId(), claim.nodeRunId(),
                 claim.leaseOwnerId(), claim.leaseToken());
         if (session == null || !sessions.lockCurrentLease(claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken()))
             throw denied();
@@ -101,6 +101,7 @@ public class McpGatewayService implements McpGatewayRuntime {
     @Override public McpToolCallResult call(String token, UUID connectionId, String toolName,
                                   String fingerprint, String argumentsJson) {
         var grant = authorize(token, connectionId);
+        validateForToolCall(grant);
         if (toolName == null || fingerprint == null
                 || !grant.tools().contains(new McpAllowedTool(toolName, fingerprint))) throw denied();
         var connection = connections.findById(grant.installationId(), connectionId)
@@ -111,11 +112,11 @@ public class McpGatewayService implements McpGatewayRuntime {
         byte[] plaintext = credentials.resolve(connection);
         long started = System.nanoTime();
         try {
-            authorize(token,connectionId);
+            validateForToolCall(grant);
             var result = remote.call(grant.endpoint(), grant.authType().protocolType(), plaintext,
                     toolName, fingerprint, argumentsJson, () -> {
                         try {
-                            authorize(token, connectionId);
+                            validateForToolCall(grant);
                             return grants.admit(token, connectionId);
                         } catch (McpGatewayAccessException denial) {
                             return false;
@@ -148,7 +149,7 @@ public class McpGatewayService implements McpGatewayRuntime {
     }
 
     private void validate(McpRuntimeGrant grant) {
-        if (liveSession(grant.sessionId(), grant.turnId(), grant.nodeRunId(),
+        if (executionSession(grant.sessionId(), grant.turnId(), grant.nodeRunId(),
                 grant.leaseOwnerId(), grant.leaseToken()) == null) throw denied();
         var workflow = workflows.findById(grant.workflowRunId()).orElseThrow(McpGatewayService::denied);
         if (workflow.status() != WorkflowRunStatus.RUNNING || !grant.projectId().equals(workflow.projectId())
@@ -162,11 +163,17 @@ public class McpGatewayService implements McpGatewayRuntime {
             throw denied();
     }
 
-    private AgentExecutionSession liveSession(UUID sessionId, UUID turnId, UUID nodeRunId,
+    private void validateForToolCall(McpRuntimeGrant grant) {
+        validate(grant);
+        var session = executionSession(grant.sessionId(), grant.turnId(), grant.nodeRunId(),
+                grant.leaseOwnerId(), grant.leaseToken());
+        if (session == null || session.status() != AgentExecutionSessionStatus.ACTIVE) throw denied();
+    }
+
+    private AgentExecutionSession executionSession(UUID sessionId, UUID turnId, UUID nodeRunId,
                                                String owner, long token) {
         var session = sessions.findSession(sessionId).orElse(null);
-        if (session == null || session.status() != AgentExecutionSessionStatus.ACTIVE
-                || !nodeRunId.equals(session.activeNodeRunId())
+        if (session == null || !nodeRunId.equals(session.activeNodeRunId())
                 || !owner.equals(session.leaseOwnerId()) || token != session.leaseToken()
                 || session.leaseExpiresAt() == null || !session.leaseExpiresAt().isAfter(clock.instant())) return null;
         var node = nodes.findById(nodeRunId).orElse(null);
@@ -175,8 +182,13 @@ public class McpGatewayService implements McpGatewayRuntime {
         var allocation = sessions.findByNodeRunId(nodeRunId).orElse(null);
         if (allocation == null || allocation.turn() == null
                 || !turnId.equals(allocation.turn().id())
-                || allocation.turn().status() != AgentExecutionTurnStatus.ACTIVE
                 || allocation.session() == null || !sessionId.equals(allocation.session().id())) return null;
+        boolean starting = (session.status() == AgentExecutionSessionStatus.CREATING
+                || session.status() == AgentExecutionSessionStatus.RESUMING)
+                && allocation.turn().status() == AgentExecutionTurnStatus.STARTING;
+        boolean active = session.status() == AgentExecutionSessionStatus.ACTIVE
+                && allocation.turn().status() == AgentExecutionTurnStatus.ACTIVE;
+        if (!starting && !active) return null;
         return session;
     }
 
