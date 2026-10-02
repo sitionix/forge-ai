@@ -98,10 +98,19 @@ public class McpGatewayService implements McpGatewayRuntime {
         }
     }
 
+    public void activateForDispatch(AgentSessionExecutionClaim claim) {
+        if (claim == null) throw denied();
+        var session = executionSession(claim.sessionId(), claim.turnId(), claim.nodeRunId(),
+                claim.leaseOwnerId(), claim.leaseToken());
+        if (session == null || !sessions.lockCurrentLease(claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken()))
+            throw denied();
+        grants.activateForDispatch(claim.turnId());
+    }
+
     @Override public McpToolCallResult call(String token, UUID connectionId, String toolName,
                                   String fingerprint, String argumentsJson) {
         var grant = authorize(token, connectionId);
-        validateForToolCall(grant);
+        validateForToolCall(token, connectionId, grant);
         if (toolName == null || fingerprint == null
                 || !grant.tools().contains(new McpAllowedTool(toolName, fingerprint))) throw denied();
         var connection = connections.findById(grant.installationId(), connectionId)
@@ -112,12 +121,12 @@ public class McpGatewayService implements McpGatewayRuntime {
         byte[] plaintext = credentials.resolve(connection);
         long started = System.nanoTime();
         try {
-            validateForToolCall(grant);
+            validateForToolCall(token, connectionId, grant);
             var result = remote.call(grant.endpoint(), grant.authType().protocolType(), plaintext,
                     toolName, fingerprint, argumentsJson, () -> {
                         try {
-                            validateForToolCall(grant);
-                            return grants.admit(token, connectionId);
+                            validateForToolCall(token, connectionId, grant);
+                            return true;
                         } catch (McpGatewayAccessException denial) {
                             return false;
                         }
@@ -163,11 +172,9 @@ public class McpGatewayService implements McpGatewayRuntime {
             throw denied();
     }
 
-    private void validateForToolCall(McpRuntimeGrant grant) {
+    private void validateForToolCall(String token, UUID connectionId, McpRuntimeGrant grant) {
         validate(grant);
-        var session = executionSession(grant.sessionId(), grant.turnId(), grant.nodeRunId(),
-                grant.leaseOwnerId(), grant.leaseToken());
-        if (session == null || session.status() != AgentExecutionSessionStatus.ACTIVE) throw denied();
+        if (!grants.admit(token, connectionId)) throw denied();
     }
 
     private AgentExecutionSession executionSession(UUID sessionId, UUID turnId, UUID nodeRunId,
