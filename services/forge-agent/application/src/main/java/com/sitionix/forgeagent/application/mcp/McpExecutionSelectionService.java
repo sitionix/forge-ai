@@ -56,7 +56,8 @@ public final class McpExecutionSelectionService {
                             connection.displayName(), connection.allowedTools()));
                     tokens.put(alias, grant.token());
                 } catch (McpProbeException | McpToolCallException | McpGatewayAccessException unavailable) {
-                    diagnostics.add(new McpExecutionSelection.Diagnostic(connection.id(), "CONNECTION_UNAVAILABLE"));
+                    diagnostics.add(new McpExecutionSelection.Diagnostic(connection.id(),
+                            McpExecutionSelection.DiagnosticCode.CONNECTION_UNAVAILABLE));
                 }
             }
         } catch (RuntimeException failure) {

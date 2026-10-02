@@ -45,10 +45,7 @@ final class CodexAgentExecutionEventMapper {
 
     AgentExecutionEventCandidate mcpDiagnostic(final McpExecutionSelection.Diagnostic diagnostic,
                                                 final Instant observedAt) {
-        final String code = switch (diagnostic.code()) {
-            case "CONNECTION_UNAVAILABLE", "MCP_CONNECTION_UNAVAILABLE", "MCP_TOOL_UNAVAILABLE" -> diagnostic.code();
-            default -> "MCP_UNAVAILABLE";
-        };
+        final String code = diagnostic.code().name();
         final ObjectNode payload = this.objectMapper.createObjectNode();
         payload.put("connectionId", diagnostic.connectionId().toString());
         payload.put("code", code);
