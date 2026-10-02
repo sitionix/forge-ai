@@ -162,7 +162,7 @@ class NodeRunLifecycleTest {
     }
 
     @Test
-    void trackedNodeStartPreparesMcpBeforeTurnAndCallsOnlyAfterTurnPersistence() {
+    void trackedNodeStartPreparesMcpAndDispatchAuthorizationAllowsCallBeforeTurnPersistence() {
         this.nodeRuns.put(NODE_RUN_ID, this.trackedNodeRun(NodeRunStatus.PENDING));
         when(this.resolutionRepository.findConsumedByNodeRunId(NODE_RUN_ID)).thenReturn(List.of());
         when(this.inputContentPolicyRegistry.assemble(any())).thenReturn(new NodeExecutionInputContent(
@@ -229,7 +229,12 @@ class NodeRunLifecycleTest {
             return new McpRuntimeGrantHandle(issued[0].id(), "joined-grant");
         });
         when(grants.resolve("joined-grant", connectionId)).thenAnswer(ignored -> Optional.of(issued[0]));
-        when(grants.admit("joined-grant", connectionId)).thenReturn(true);
+        var dispatchAuthorized = new boolean[]{false};
+        org.mockito.Mockito.doAnswer(ignored -> {
+            dispatchAuthorized[0] = true;
+            return null;
+        }).when(grants).activateForDispatch(turnId);
+        when(grants.admit("joined-grant", connectionId)).thenAnswer(ignored -> dispatchAuthorized[0]);
         var credentials = new McpCredentialService(connections, identity, mock(McpCredentialCipher.class),
                 mock(McpOAuthCredentialCipher.class), mock(McpOAuthClient.class), grants, views, CLOCK);
         var gateway = new McpGatewayService(sessions, this.nodeRunRepository, this.workflowRunRepository,
@@ -256,9 +261,9 @@ class NodeRunLifecycleTest {
                 .isInstanceOf(McpGatewayAccessException.class);
         verifyNoInteractions(remote);
 
-        leases.persistTurn(claimed[0], "provider-turn");
-        assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.ACTIVE);
-        assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.ACTIVE);
+        gateway.activateForDispatch(claimed[0]);
+        assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.CREATING);
+        assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.STARTING);
         when(remote.call(org.mockito.ArgumentMatchers.eq(connection.endpoint()),
                 org.mockito.ArgumentMatchers.eq(McpAuthType.NONE), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq("read"), org.mockito.ArgumentMatchers.eq(approval.schemaFingerprint()),
@@ -266,6 +271,11 @@ class NodeRunLifecycleTest {
             assertThat(invocation.<java.util.function.BooleanSupplier>getArgument(6).getAsBoolean()).isTrue();
             return new McpToolCallResult(false, "[]", null);
         });
+        assertThat(gateway.call("joined-grant", connectionId, "read", approval.schemaFingerprint(), "{}").isError()).isFalse();
+
+        leases.persistTurn(claimed[0], "provider-turn");
+        assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.ACTIVE);
+        assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.ACTIVE);
         assertThat(gateway.call("joined-grant", connectionId, "read", approval.schemaFingerprint(), "{}").isError()).isFalse();
         leases.finish(claimed[0], AgentExecutionTurnStatus.SUCCEEDED, null, null, false);
         verify(grants).revokeExecution(turnId);
