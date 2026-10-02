@@ -162,7 +162,7 @@ final class CodexMcpInventoryVerifier {
                             Set<String> pendingConnections,
                             Set<String> missingServers) { }
 
-    private static CodexTransportException mismatch() { return new CodexTransportException(MISMATCH); }
+    private static CodexMcpExecutionException mismatch() { return new CodexMcpExecutionException(MISMATCH); }
 
     record Result(Map<String, Set<String>> effectiveTools, List<McpExecutionSelection.Diagnostic> diagnostics) { }
 }

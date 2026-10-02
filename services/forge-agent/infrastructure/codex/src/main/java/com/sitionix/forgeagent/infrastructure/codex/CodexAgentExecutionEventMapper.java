@@ -271,21 +271,30 @@ final class CodexAgentExecutionEventMapper {
     private Optional<AgentExecutionEventCandidate> diagnostic(final AgentExecutionEventType type,
                                                                final JsonNode params,
                                                                final Instant observedAt) {
+        final boolean retrying = type == AgentExecutionEventType.ERROR
+                && params.path("willRetry").isBoolean()
+                && params.path("willRetry").asBoolean();
+        final AgentExecutionEventStatus status = type == AgentExecutionEventType.ERROR && !retrying
+                ? AgentExecutionEventStatus.FAILED : null;
         if (this.mcpMode) {
             final ObjectNode payload = this.objectMapper.createObjectNode();
             payload.put("message", "Provider diagnostic during MCP-enabled execution.");
             payload.put("providerCode", ProviderDiagnosticCode.from(
                     params.path("error").path("codexErrorInfo")).name());
-            return Optional.of(this.event(type, type == AgentExecutionEventType.ERROR
-                    ? AgentExecutionEventStatus.FAILED : null, null, null, payload, observedAt));
+            if (type == AgentExecutionEventType.ERROR && params.path("willRetry").isBoolean()) {
+                payload.put("willRetry", retrying);
+            }
+            return Optional.of(this.event(type, status, null, null, payload, observedAt));
         }
         final String message = firstText(params.path("error"), "message");
         final String resolved = message == null ? firstText(params, "message", "summary") : message;
         if (resolved == null) return Optional.empty();
         final ObjectNode payload = this.objectMapper.createObjectNode();
         this.putBounded(payload, "message", resolved);
-        return Optional.of(this.event(type, type == AgentExecutionEventType.ERROR
-                ? AgentExecutionEventStatus.FAILED : null, null, null, payload, observedAt));
+        if (type == AgentExecutionEventType.ERROR && params.path("willRetry").isBoolean()) {
+            payload.put("willRetry", retrying);
+        }
+        return Optional.of(this.event(type, status, null, null, payload, observedAt));
     }
 
     private AgentExecutionEventCandidate event(final AgentExecutionEventType type,
