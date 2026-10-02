@@ -228,6 +228,20 @@ class McpGatewayServiceTest {
         verifyNoInteractions(views, remote);
     }
 
+    @Test void emptyToolApprovalAndExpiredExecutionDeadlineDenyBeforeDiscovery() {
+        var current = connection(true, McpProjectAccess.all());
+        when(connections.findById(installation, connectionId)).thenReturn(Optional.of(new McpConnection(
+                connectionId, installation, current.displayName(), current.endpoint(), current.authType(),
+                true, current.projectAccess(), Set.of(), current.credentialConfigured(), now, now,
+                null, null, null, null)));
+        assertThatThrownBy(() -> service.issue(claim, now.plusSeconds(120), connectionId))
+                .isInstanceOf(McpGatewayAccessException.class);
+        when(connections.findById(installation, connectionId)).thenReturn(Optional.of(current));
+        assertThatThrownBy(() -> service.issue(claim, now, connectionId))
+                .isInstanceOf(McpGatewayAccessException.class);
+        verifyNoInteractions(views, remote);
+    }
+
     @Test void disabledOrExpiredLeaseDeniesWithoutUpstreamCall() {
         when(connections.findById(installation, connectionId))
                 .thenReturn(Optional.of(connection(false, McpProjectAccess.all())));
@@ -284,6 +298,27 @@ class McpGatewayServiceTest {
         when(connections.findById(installation, connectionId))
                 .thenReturn(Optional.of(connection(true, McpProjectAccess.selected(Set.of()))));
         assertThatThrownBy(() -> service.authorize("synthetic-token", connectionId))
+                .isInstanceOf(McpGatewayAccessException.class);
+        verifyNoInteractions(remote);
+    }
+
+    @Test void changedEndpointOrAuthenticationDeniesBeforeRemoteCall() {
+        var grant = issuedGrant();
+        when(grants.resolve("synthetic-token", connectionId)).thenReturn(Optional.of(grant));
+        var current = connection(true, McpProjectAccess.all());
+        when(connections.findById(installation, connectionId)).thenReturn(Optional.of(new McpConnection(
+                connectionId, installation, current.displayName(), URI.create("https://other.example.org/mcp"),
+                current.authType(), true, current.projectAccess(), current.allowedTools(),
+                current.credentialConfigured(), now, now, null, null, null, null)));
+        assertThatThrownBy(() -> service.call("synthetic-token", connectionId,
+                tool.name(), tool.schemaFingerprint(), "{}"))
+                .isInstanceOf(McpGatewayAccessException.class);
+        when(connections.findById(installation, connectionId)).thenReturn(Optional.of(new McpConnection(
+                connectionId, installation, current.displayName(), current.endpoint(), McpAuthType.NONE,
+                true, current.projectAccess(), current.allowedTools(), false, now, now,
+                null, null, null, null)));
+        assertThatThrownBy(() -> service.call("synthetic-token", connectionId,
+                tool.name(), tool.schemaFingerprint(), "{}"))
                 .isInstanceOf(McpGatewayAccessException.class);
         verifyNoInteractions(remote);
     }
