@@ -168,6 +168,12 @@ class McpGatewayEndToEndHttpTest {
                 assertThat(client.callTool(new McpSchema.CallToolRequest("read", Map.of())).isError()).isTrue();
             } catch (RuntimeException denied) { /* Protocol-level denial may surface as an SDK exception. */ }
             assertThat(upstream.calls()).isZero();
+
+            runtime.activateForDispatch(claim);
+            assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.CREATING);
+            assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.STARTING);
+            assertThat(client.callTool(new McpSchema.CallToolRequest("read", Map.of())).isError()).isFalse();
+
             sessionState[0] = new AgentExecutionSession(sessionId, workflowId, session.sourceNodeId(),
                     session.sourceAgentId(), null, "codex", null, null, NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE,
                     AgentExecutionSessionStatus.ACTIVE, null, nodeId, "owner", 7L, now.plusSeconds(60),
@@ -176,7 +182,6 @@ class McpGatewayEndToEndHttpTest {
                     AgentExecutionTurnStatus.ACTIVE, null, null, null, null, null, now, null, now, now);
             assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.ACTIVE);
             assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.ACTIVE);
-            assertThat(client.callTool(new McpSchema.CallToolRequest("read", Map.of())).isError()).isFalse();
         }
         assertThat(upstream.calls()).isEqualTo(1);
 
@@ -202,6 +207,7 @@ class McpGatewayEndToEndHttpTest {
         assertThat(upstream.calls()).isEqualTo(1);
 
         var later = runtime.issue(claim, now.plusSeconds(50), connectionId);
+        runtime.activateForDispatch(claim);
         upstream.blockNextCall();
         try {
             var timedOut = post(connectionId, later.token(), "tools/call", "read", null);
