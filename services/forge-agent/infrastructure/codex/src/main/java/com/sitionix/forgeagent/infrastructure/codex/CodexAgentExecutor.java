@@ -133,7 +133,26 @@ public final class CodexAgentExecutor implements AgentExecutor {
                                 if (CodexAgentExecutor.this.dispatchGuard == null) {
                                     throw new IllegalStateException("Tracked execution requires a dispatch guard.");
                                 }
-                                CodexAgentExecutor.this.dispatchGuard.dispatch(claim.agentSessionClaim(), writeRequest);
+                                CodexAgentExecutor.this.dispatchGuard.dispatch(claim.agentSessionClaim(), () -> {
+                                    final boolean mcpActivated = prepared != null && !prepared.launchGrants().isEmpty();
+                                    if (mcpActivated) {
+                                        CodexAgentExecutor.this.mcpSelectionService.activateForDispatch(
+                                                claim.agentSessionClaim());
+                                    }
+                                    try {
+                                        writeRequest.run();
+                                    } catch (RuntimeException failure) {
+                                        if (mcpActivated) {
+                                            try {
+                                                CodexAgentExecutor.this.mcpSelectionService.revoke(
+                                                        claim.agentSessionClaim());
+                                            } catch (RuntimeException ignored) {
+                                                // The enclosing execution finally retries revocation.
+                                            }
+                                        }
+                                        throw failure;
+                                    }
+                                });
                             }
                             @Override public void executionEvent(
                                     com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate event) {
