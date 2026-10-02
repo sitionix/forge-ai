@@ -149,6 +149,7 @@ class McpSettingsAcceptanceHttpTest {
             var claim=trustedLease(projectId,now);
             var first=runtime.issue(claim,now.plusSeconds(180),id);
             var second=runtime.issue(claim,now.plusSeconds(180),id);
+            runtime.activateForDispatch(claim);
             assertThat(first.token()).isNotEqualTo(second.token());
             ProcessBuilder nativeCall=new ProcessBuilder("python3",root.resolve("scripts/runtime/tests/stage5_codex_fixture.py").toString());
             nativeCall.environment().put("FORGE_STAGE4_GATEWAY_BASE","http://127.0.0.1:"+agentPort);
@@ -192,6 +193,7 @@ class McpSettingsAcceptanceHttpTest {
             assertThat(connections.get(id).enabled()).isTrue();
             assertThatThrownBy(()->runtime.issue(claim,Instant.now().plusSeconds(180),id)).isInstanceOf(McpGatewayAccessException.class);
             var next=runtime.issue(otherClaim,Instant.now().plusSeconds(180),id);
+            runtime.activateForDispatch(otherClaim);
             var grant=runtime.authorize(next.token(),id);
             assertThat(grant.projectId()).isEqualTo(otherProject);assertThat(grant.tools()).isEqualTo(savedPolicy.allowedTools());
             assertThatThrownBy(()->runtime.call(next.token(),id,"echo",connection.allowedTools().iterator().next().schemaFingerprint(),"{}"))
@@ -228,6 +230,7 @@ class McpSettingsAcceptanceHttpTest {
                     new McpOAuthTokens(tokens.accessToken(),tokens.refreshToken(),Instant.now().minusSeconds(1),tokens.refreshExpiresAt(),tokens.grantedScopes()))));
         });
         var second=runtime.issue(claim,Instant.now().plusSeconds(180),id);
+        runtime.activateForDispatch(claim);
         ProcessBuilder nativeCall=new ProcessBuilder("python3",root.resolve("scripts/runtime/tests/stage5_codex_fixture.py").toString());
         nativeCall.environment().put("FORGE_STAGE4_GATEWAY_BASE","http://127.0.0.1:"+agentPort);
         nativeCall.environment().put("FORGE_STAGE5_CONNECTION_ID",id.toString());
