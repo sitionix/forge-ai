@@ -8,6 +8,8 @@ import com.sitionix.forgeagent.domain.model.McpRuntimeGrant;
 import com.sitionix.forgeagent.domain.model.McpToolCallResult;
 import com.sitionix.forgeagent.domain.port.McpGatewayRuntime;
 import com.sitionix.forgeagent.infrastructure.local.mcp.gateway.SdkMcpGatewayToolView;
+import com.sitionix.forgeagent.infrastructure.local.mcp.protocol.McpProtocolJson;
+import com.sitionix.forgeagent.infrastructure.local.mcp.protocol.McpRelaySchemaValidator;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
@@ -37,8 +39,8 @@ public final class McpGatewayProtocolAdapter {
             throw new IllegalArgumentException("Invalid MCP gateway timeout");
         this.runtime = runtime;
         this.views = views;
-        this.json = json;
-        this.protocolJson = new JacksonMcpJsonMapper(json.copy());
+        this.json = McpProtocolJson.copy(json);
+        this.protocolJson = new JacksonMcpJsonMapper(this.json.copy());
         this.timeout = timeout;
     }
 
@@ -77,6 +79,7 @@ public final class McpGatewayProtocolAdapter {
             var request = json.treeToValue(root, McpSchema.JSONRPCRequest.class);
             var transport = new HandlerTransport();
             var builder = McpServer.sync(transport).jsonMapper(protocolJson)
+                    .validateToolInputs(false).jsonSchemaValidator(new McpRelaySchemaValidator(protocolJson))
                     .serverInfo("Forge MCP Gateway", "1")
                     .capabilities(new McpSchema.ServerCapabilities(null, null, null, null, null,
                             new McpSchema.ServerCapabilities.ToolCapabilities(false)))

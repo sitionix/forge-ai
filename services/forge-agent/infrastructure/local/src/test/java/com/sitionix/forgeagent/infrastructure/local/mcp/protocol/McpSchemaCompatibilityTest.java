@@ -17,7 +17,8 @@ import org.junit.jupiter.api.Test;
 
 /** Exercises the wire boundary, including the schema exposed to native agents. */
 class McpSchemaCompatibilityTest {
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = new ObjectMapper()
+            .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
     private static final String SCHEMA = """
             {"type":"object","additionalProperties":{},
              "$schema":"https://json-schema.org/draft/2020-12/schema",
@@ -86,16 +87,65 @@ class McpSchemaCompatibilityTest {
         }
     }
 
+    @Test void exactDecimalConstraintsSurviveDiscoveryAndInvalidateApprovalWhenChanged() throws Exception {
+        for (boolean sse : new boolean[]{false, true}) {
+            String schema = """
+                    {"type":"object","properties":{"n":{"type":"number","maximum":0.123456789012345678901}},
+                     "x-null":null,"x-large-integer":123456789012345678901234567890}
+                    """;
+            try (var fixture = new Fixture(schema, sse)) {
+                String fingerprint = fixture.client.probe(fixture.endpoint, McpAuthType.NONE, null)
+                        .tools().getFirst().schemaFingerprint();
+                var tools = fixture.client.discoverApprovedTools(fixture.endpoint, McpAuthType.NONE, null,
+                        Set.of(new McpAllowedTool("search", fingerprint)));
+                var preserved = JSON.readTree(JSON.writeValueAsBytes(tools.getFirst())).get("inputSchema");
+                // Inspect serialized digits rather than parsing them through a second lossy mapper.
+                String wire = JSON.writeValueAsString(tools.getFirst());
+                assertThat(wire).contains("0.123456789012345678901", "123456789012345678901234567890");
+                assertThat(preserved.has("x-null")).isTrue();
+                assertThat(preserved.get("x-null").isNull()).isTrue();
+                fixture.schema = schema.replace("0.123456789012345678901", "0.123456789012345678902");
+                assertThatThrownBy(() -> fixture.client.call(fixture.endpoint, McpAuthType.NONE, null,
+                        "search", fingerprint, "{\"n\":0}"))
+                        .isInstanceOf(McpToolCallException.class).extracting("kind")
+                        .isEqualTo(McpToolCallException.Kind.SCHEMA_CHANGED);
+                assertThat(fixture.calls.get()).isZero();
+            }
+        }
+    }
+
+    @Test void remoteStructuredOutputWithProviderReferencesIsRelayedWithoutResolution() throws Exception {
+        try (var fixture = new Fixture("{\"type\":\"object\"}", false)) {
+            fixture.outputSchema = "{\"type\":\"object\",\"properties\":{\"q\":{\"$ref\":\""
+                    + fixture.endpoint.resolve("/schema") + "\"}}}";
+            fixture.toolResult = "{\"content\":[],\"structuredContent\":{\"q\":\"value\"},\"isError\":false}";
+            String fingerprint = fixture.client.probe(fixture.endpoint, McpAuthType.NONE, null)
+                    .tools().getFirst().schemaFingerprint();
+            var result = fixture.client.call(fixture.endpoint, McpAuthType.NONE, null,
+                    "search", fingerprint, "{}");
+            assertThat(result.isError()).isFalse();
+            assertThat(result.structuredContentJson()).isEqualTo("{\"q\":\"value\"}");
+            assertThat(fixture.calls.get()).isEqualTo(1);
+            assertThat(fixture.referenceFetches.get()).isZero();
+        }
+    }
+
     private static final class Fixture implements AutoCloseable {
         final HttpServer server;
         final URI endpoint;
         final SdkMcpRemoteClient client;
         final AtomicInteger calls = new AtomicInteger();
+        final AtomicInteger referenceFetches = new AtomicInteger();
         volatile String schema;
+        volatile String outputSchema;
+        volatile String toolResult = "{\"content\":[{\"type\":\"text\",\"text\":\"fixture-result\"}],\"isError\":false}";
 
         Fixture(String schema, boolean sse) throws Exception {
             this.schema = schema;
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/schema", exchange -> {
+                referenceFetches.incrementAndGet(); exchange.sendResponseHeaders(404, -1); exchange.close();
+            });
             server.createContext("/mcp", exchange -> {
                 try {
                     byte[] request = exchange.getRequestBody().readAllBytes();
@@ -107,10 +157,11 @@ class McpSchemaCompatibilityTest {
                     }
                     String result = switch (method) {
                         case "initialize" -> "{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"fixture\",\"version\":\"1\"}}";
-                        case "tools/list" -> "{\"tools\":[{\"name\":\"search\",\"inputSchema\":" + this.schema + "}]}";
+                        case "tools/list" -> "{\"tools\":[{\"name\":\"search\",\"inputSchema\":" + this.schema
+                                + (outputSchema == null ? "" : ",\"outputSchema\":" + outputSchema) + "}]}";
                         case "tools/call" -> {
                             calls.incrementAndGet();
-                            yield "{\"content\":[{\"type\":\"text\",\"text\":\"fixture-result\"}],\"isError\":false}";
+                            yield toolResult;
                         }
                         default -> throw new IllegalStateException("Unexpected method: " + method);
                     };

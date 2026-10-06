@@ -73,8 +73,8 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         this.maxTools = maxTools;
         this.endpointPolicy = new McpEndpointPolicy(allowedPrivateEndpoints);
         this.sslContext = sslContext;
-        this.canonical = objectMapper.copy().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
-        this.protocolJson = new JacksonMcpJsonMapper(objectMapper.copy());
+        this.canonical = McpProtocolJson.copy(objectMapper).enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+        this.protocolJson = new JacksonMcpJsonMapper(McpProtocolJson.copy(objectMapper));
     }
 
     @Override public McpProbeReport probe(URI endpoint, McpAuthType authType, byte[] credential) {
@@ -82,7 +82,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         var http = new McpHttpClientBuilder();
         var transport = transport(endpoint, authType, credential, http, requestTimeout);
         boolean initialized = false;
-        try (var client = McpClient.sync(transport).initializationTimeout(requestTimeout)
+        try (var client = McpClient.sync(transport).enableCallToolSchemaCaching(false).initializationTimeout(requestTimeout)
                 .requestTimeout(requestTimeout).build()) {
             String protocolVersion = initialize(client);
             initialized = true;
@@ -124,7 +124,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         var transport = transport(endpoint, authType, credential, http, toolCallTimeout);
         long deadline = System.nanoTime() + toolCallTimeout.toNanos();
         boolean initialized = false;
-        var client = McpClient.async(transport).initializationTimeout(toolCallTimeout)
+        var client = McpClient.async(transport).enableCallToolSchemaCaching(false).initializationTimeout(toolCallTimeout)
                 .requestTimeout(toolCallTimeout).build();
         try {
             var initialization = client.initialize().block(remaining(deadline));
@@ -185,7 +185,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         var http = new McpHttpClientBuilder();
         var transport = transport(endpoint, authType, credential, http, requestTimeout);
         boolean initialized = false;
-        try (var client = McpClient.sync(transport).initializationTimeout(requestTimeout)
+        try (var client = McpClient.sync(transport).enableCallToolSchemaCaching(false).initializationTimeout(requestTimeout)
                 .requestTimeout(requestTimeout).build()) {
             initialize(client);
             initialized = true;

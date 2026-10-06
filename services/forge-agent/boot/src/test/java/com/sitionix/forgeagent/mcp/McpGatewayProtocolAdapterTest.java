@@ -102,4 +102,51 @@ class McpGatewayProtocolAdapterTest {
                 .isEqualTo(json.readTree(schema));
         verifyNoInteractions(runtime);
     }
+
+    @Test void nativeToolsListAndCallPreserveExactDecimals() throws Exception {
+        var exactJson = new ObjectMapper().enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+        String schema = "{\"type\":\"object\",\"properties\":{\"n\":{\"type\":\"number\",\"maximum\":0.123456789012345678901}},\"x-null\":null}";
+        when(views.tools(grant.id())).thenReturn(List.of(McpSchema.Tool.builder()
+                .name("read").inputSchema(new JacksonMcpJsonMapper(exactJson), schema).build()));
+        var listed = adapter.process(grant, token,
+                request("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}"));
+        assertThat(new String(listed.body(), StandardCharsets.UTF_8))
+                .contains("0.123456789012345678901", "\"x-null\":null");
+        when(runtime.call(token, connectionId, "read", approval.schemaFingerprint(), "{\"n\":0.123456789012345678901}"))
+                .thenReturn(new McpToolCallResult(false, "[{\"type\":\"text\",\"text\":\"ok\"}]", null));
+        var called = adapter.process(grant, token,
+                request("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"read\",\"arguments\":{\"n\":0.123456789012345678901}}}"));
+        assertThat(json.readTree(called.body()).path("result").path("content").get(0).path("text").asText())
+                .isEqualTo("ok");
+        verify(runtime).call(token, connectionId, "read", approval.schemaFingerprint(), "{\"n\":0.123456789012345678901}");
+    }
+
+    @Test void providerReferenceSchemasAreRelayedWithoutLocalResolutionOrValidation() throws Exception {
+        var references = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        var fetches = new java.util.concurrent.atomic.AtomicInteger();
+        references.createContext("/schema", exchange -> {
+            fetches.incrementAndGet(); exchange.sendResponseHeaders(404, -1); exchange.close();
+        });
+        references.start();
+        try {
+            String reference = "http://127.0.0.1:" + references.getAddress().getPort() + "/schema";
+            String schema = "{\"type\":\"object\",\"properties\":{\"q\":{\"$ref\":\"" + reference + "\"}}}";
+            when(views.tools(grant.id())).thenReturn(List.of(McpSchema.Tool.builder()
+                    .name("read").inputSchema(new JacksonMcpJsonMapper(json), schema)
+                    .outputSchema(new JacksonMcpJsonMapper(json), schema).build()));
+            when(runtime.call(token, connectionId, "read", approval.schemaFingerprint(), "{\"q\":\"value\"}"))
+                    .thenReturn(new McpToolCallResult(false, "[]", "{\"q\":\"value\"}"));
+            var listed = adapter.process(grant, token,
+                    request("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}"));
+            assertThat(new String(listed.body(), StandardCharsets.UTF_8)).contains(reference);
+            var called = adapter.process(grant, token,
+                    request("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"read\",\"arguments\":{\"q\":\"value\"}}}"));
+            var result = json.readTree(called.body()).path("result");
+            assertThat(result.path("isError").asBoolean()).isFalse();
+            assertThat(result.path("structuredContent").path("q").asText()).isEqualTo("value");
+            assertThat(result.path("content").get(0).path("text").asText()).isEqualTo("{\"q\":\"value\"}");
+            verify(runtime).call(token, connectionId, "read", approval.schemaFingerprint(), "{\"q\":\"value\"}");
+            assertThat(fetches.get()).isZero();
+        } finally { references.stop(0); }
+    }
 }
