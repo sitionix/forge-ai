@@ -41,6 +41,7 @@ final class CodexSessionProtocol {
                     throw new CodexTransportException("Codex resume invocation is incomplete");
                 params.set(field, fresh.get(field).deepCopy());
             }
+            params.put("modelProvider", "openai");
         }
         final String resumedThreadId = requireThreadId(transport.request(CodexProtocol.THREAD_RESUME, params, timeout));
         if (!threadId.equals(resumedThreadId)) {

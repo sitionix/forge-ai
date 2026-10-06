@@ -46,7 +46,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 /** Real Codex native tool calls through the production Spring MCP gateway HTTP endpoint. */
 @EnabledIfSystemProperty(named = "forge.codex.stage4-e2e", matches = "true")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        classes = McpCodexRuntimeEndToEndHttpTest.TestApp.class, properties = "forge.mcp.enabled=true")
+        classes = McpCodexRuntimeEndToEndHttpTest.TestApp.class)
 class McpCodexRuntimeEndToEndHttpTest {
     private static final UUID CONNECTION = UUID.fromString("01234567-89ab-4cde-8012-3456789abcde");
     private static final String FINGERPRINT = "sha256:" + "a".repeat(64);

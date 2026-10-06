@@ -304,6 +304,13 @@ class AgentProxyApiMapperTest {
         ))));
     }
 
+    @Test void preserves_authorization_state_independently_from_runtime_status() {
+        var catalog = new AgentRuntimeCatalog(List.of(new AgentRuntimeProvider("codex", "Codex",
+                AgentRuntimeProviderStatus.READY, "1", List.of(), "CONNECTED")));
+        assertThat(mapper.toResponse(catalog).providers().getFirst().authState()).isEqualTo("CONNECTED");
+        assertThat(mapper.toResponse(catalog).providers().getFirst().status()).isEqualTo(AgentRuntimeProviderStatus.READY);
+    }
+
     @Test
     void mapsWorkflowRequestsAndResponses() {
         assertThat(this.mapper.toCommand(new AgentWorkflowRequest("Full Testing")))

@@ -8,6 +8,11 @@ public record AgentRuntimeProviderResponse(
         String displayName,
         AgentRuntimeProviderStatus status,
         String version,
-        List<AgentRuntimeModelResponse> models
+        List<AgentRuntimeModelResponse> models,
+        String authState
 ) {
+    public AgentRuntimeProviderResponse(String providerId, String displayName, AgentRuntimeProviderStatus status,
+            String version, List<AgentRuntimeModelResponse> models) {
+        this(providerId, displayName, status, version, models, "SIGNED_OUT");
+    }
 }

@@ -34,7 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /** Real PostgreSQL, HTTP commands, lifecycle, sessions and routing; only provider execution/workspace are deterministic. */
 @IntegrationTest
-class ForgeAgentManualFlowIT {
+class ForgeAgentManualFlowIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private WorkflowUseCases workflows;
     @Autowired private WorkflowRunUseCases runs;

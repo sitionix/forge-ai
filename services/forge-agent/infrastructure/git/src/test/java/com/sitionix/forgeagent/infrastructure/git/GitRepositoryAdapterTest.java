@@ -30,7 +30,7 @@ class GitRepositoryAdapterTest {
     @Test
     void inspectsReachableLocalRemote() throws Exception {
         final Path remote = this.createBareRepository("service-a.git");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         assertThat(adapter.inspectRemote(remote.toString()).name()).isEqualTo("service-a");
     }
@@ -65,7 +65,7 @@ class GitRepositoryAdapterTest {
     @Test
     void inspectsNormalRepositoryOnBranchAsClean() throws Exception {
         final Path repository = this.createRepositoryWithCommit("service-a");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -85,7 +85,7 @@ class GitRepositoryAdapterTest {
         final Path repository = this.createRepositoryWithCommit("service-a");
         final Path worktree = this.tempDir.resolve("service-a-worktree");
         this.runGit(repository, "git", "worktree", "add", "--detach", worktree.toString(), "HEAD");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(worktree);
 
@@ -101,7 +101,7 @@ class GitRepositoryAdapterTest {
     void inspectsModifiedTrackedFileAsDirty() throws Exception {
         final Path repository = this.createRepositoryWithCommit("service-a");
         Files.writeString(repository.resolve("README.md"), "changed\n");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -114,7 +114,7 @@ class GitRepositoryAdapterTest {
         final Path repository = this.createRepositoryWithCommit("service-a");
         Files.writeString(repository.resolve("README.md"), "changed\n");
         this.runGit(repository, "git", "add", "README.md");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -125,7 +125,7 @@ class GitRepositoryAdapterTest {
     void inspectsUntrackedFileAsDirty() throws Exception {
         final Path repository = this.createRepositoryWithCommit("service-a");
         Files.writeString(repository.resolve("new-file.txt"), "untracked\n");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -136,7 +136,7 @@ class GitRepositoryAdapterTest {
     void inspectsDetachedHeadExplicitly() throws Exception {
         final Path repository = this.createRepositoryWithCommit("service-a");
         this.runGit(repository, "git", "checkout", "--detach", "HEAD");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -152,7 +152,7 @@ class GitRepositoryAdapterTest {
     void inspectsInvalidNonGitDirectoryWithoutInfrastructureFailure() throws Exception {
         final Path repository = this.tempDir.resolve("not-a-repository");
         Files.createDirectories(repository);
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -166,7 +166,7 @@ class GitRepositoryAdapterTest {
         final Path repository = this.tempDir.resolve("malformed-git-file");
         Files.createDirectories(repository);
         Files.writeString(repository.resolve(".git"), "gitdir: missing\n");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -180,7 +180,7 @@ class GitRepositoryAdapterTest {
         final Path repository = this.tempDir.resolve("malformed-git-directory");
         Files.createDirectories(repository.resolve(".git"));
         Files.writeString(repository.resolve(".git").resolve("HEAD"), "ref: refs/heads/main\n");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -195,7 +195,7 @@ class GitRepositoryAdapterTest {
         final Path child = parent.resolve("forge-projects/project-id/service-a");
         Files.createDirectories(child.resolve(".git"));
         Files.writeString(child.resolve(".git").resolve("HEAD"), "ref: refs/heads/main\n");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(child);
 
@@ -209,7 +209,7 @@ class GitRepositoryAdapterTest {
         final Path parent = this.createRepositoryWithCommit("forge-source-parent");
         final Path child = parent.resolve("forge-projects/project-id/service-a");
         Files.createDirectories(child);
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(child);
 
@@ -221,7 +221,7 @@ class GitRepositoryAdapterTest {
     @Test
     void inspectsRepositoryPathWithSpacesAndSpecialCharacters() throws Exception {
         final Path repository = this.createRepositoryWithCommit("service a [special]");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -235,7 +235,7 @@ class GitRepositoryAdapterTest {
         final Path repository = this.tempDir.resolve("unborn");
         Files.createDirectories(repository);
         this.runGit(repository, "git", "init", "-b", "main");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repository);
 
@@ -253,7 +253,7 @@ class GitRepositoryAdapterTest {
         final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
         this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
         this.runGit(repositories.local(), "git", "fetch", "origin");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repositories.local());
         final var result = adapter.pullFastForward(repositories.local());
@@ -270,7 +270,7 @@ class GitRepositoryAdapterTest {
     void inspectLocalRepositoryReportsPullUnavailableWhenAlreadyUpToDate() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repositories.local());
         final var result = adapter.inspectLocalRepository(repositories.local());
@@ -283,7 +283,7 @@ class GitRepositoryAdapterTest {
     @Test
     void pullFastForwardBlocksWhenAlreadyUpToDate() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
                 .isInstanceOf(GitUnsafeRepositoryStateException.class);
@@ -293,7 +293,7 @@ class GitRepositoryAdapterTest {
     void localInspectionKeepsExistingTrackingStateUntilExplicitRefresh() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var localState = adapter.inspectLocalRepository(repositories.local());
         final var refreshedState = adapter.refreshRemoteState(repositories.local());
@@ -309,7 +309,7 @@ class GitRepositoryAdapterTest {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         Files.writeString(repositories.local().resolve("README.md"), "dirty\n");
         this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var refreshedState = adapter.refreshRemoteState(repositories.local());
 
@@ -322,7 +322,7 @@ class GitRepositoryAdapterTest {
     void configuredUpstreamWithMissingLocalTrackingRefIsRefreshedInternally() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         this.runGit(repositories.local(), "git", "update-ref", "-d", "refs/remotes/origin/main");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.refreshRemoteState(repositories.local());
 
@@ -335,7 +335,7 @@ class GitRepositoryAdapterTest {
     @Test
     void inspectLocalRepositoryDeletesStaleTrackingRefWhenConfiguredRemoteBranchWasDeleted() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
         this.runGit(repositories.remote(), "git", "update-ref", "-d", "refs/heads/main");
 
         final var result = adapter.refreshRemoteState(repositories.local());
@@ -351,7 +351,7 @@ class GitRepositoryAdapterTest {
     @Test
     void inspectLocalRepositoryRecreatesTrackingRefWhenDeletedConfiguredRemoteBranchReturns() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
         this.runGit(repositories.remote(), "git", "update-ref", "-d", "refs/heads/main");
         final var missing = adapter.refreshRemoteState(repositories.local());
         this.commitAndPush(repositories.writer(), "remote recreated\n", "Recreate remote branch");
@@ -409,7 +409,7 @@ class GitRepositoryAdapterTest {
     void explicitRefreshFailsWhenRemoteInspectionFails() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         this.runGit(repositories.local(), "git", "remote", "set-url", "origin", this.tempDir.resolve("missing.git").toString());
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         assertThatThrownBy(() -> adapter.refreshRemoteState(repositories.local()))
                 .isInstanceOf(GitExecutionException.class)
@@ -440,7 +440,7 @@ class GitRepositoryAdapterTest {
     void pullFastForwardBlocksDirtyRepositoryBeforeFetch() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         Files.writeString(repositories.local().resolve("README.md"), "dirty\n");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
                 .isInstanceOf(GitUnsafeRepositoryStateException.class);
@@ -453,7 +453,7 @@ class GitRepositoryAdapterTest {
         this.commitFile(repositories.local(), "CONFLICT.txt", "local\n", "Local add");
         this.runGit(repositories.local(), "git", "fetch", "origin");
         this.createUnmergedIndexEntry(repositories.local(), "CONFLICT.txt");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repositories.local());
 
@@ -468,7 +468,7 @@ class GitRepositoryAdapterTest {
     void pullFastForwardBlocksLocalAheadRepository() throws Exception {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service-a");
         this.commit(repositories.local(), "local\n", "Local update");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var state = adapter.inspectLocalRepository(repositories.local());
 
@@ -485,7 +485,7 @@ class GitRepositoryAdapterTest {
         this.commit(repositories.local(), "local\n", "Local update");
         this.runGit(repositories.local(), "git", "fetch", "origin");
         final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         assertThatThrownBy(() -> adapter.pullFastForward(repositories.local()))
                 .isInstanceOf(GitUnsafeRepositoryStateException.class);
@@ -504,7 +504,7 @@ class GitRepositoryAdapterTest {
         this.runGit(repositories.writer(), "git", "reset", "--hard", "HEAD~1");
         this.commitAndPushForce(repositories.writer(), "rewritten\n", "Rewritten update");
         final String before = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var result = adapter.inspectLocalRepository(repositories.local());
 
@@ -523,7 +523,7 @@ class GitRepositoryAdapterTest {
         final String mainBefore = this.runGitOutput(repositories.local(), "git", "rev-parse", "main");
         final String featureBefore = this.runGitOutput(repositories.local(), "git", "rev-parse", "HEAD");
         this.commitAndPushCurrentBranch(repositories.writer(), "feature advanced\n", "Feature update");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var checked = adapter.inspectLocalRepository(repositories.local());
         final var refreshed = adapter.refreshRemoteState(repositories.local());
@@ -546,7 +546,7 @@ class GitRepositoryAdapterTest {
         this.runGit(repositories.local(), "git", "fetch", "origin", "+refs/heads/feature/test:refs/remotes/origin/feature/test");
         this.runGit(repositories.local(), "git", "checkout", "-b", "feature/test", "--track", "origin/feature/test");
         this.runGit(repositories.remote(), "git", "update-ref", "-d", "refs/heads/feature/test");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var result = adapter.refreshRemoteState(repositories.local());
 
@@ -563,7 +563,7 @@ class GitRepositoryAdapterTest {
         final RemoteBackedRepository repositories = this.createRemoteBackedRepository("service a [special]");
         this.commitAndPush(repositories.writer(), "remote\n", "Remote update");
         this.runGit(repositories.local(), "git", "fetch", "origin");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
 
         final var result = adapter.pullFastForward(repositories.local());
 
@@ -642,7 +642,7 @@ class GitRepositoryAdapterTest {
     @Test
     void unfinishedGitOperationsAreDetectedWithoutResolvingThem() throws Exception {
         final Path repository = this.createRepositoryWithCommit("service-operation-state");
-        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter adapter = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
         final List<String> gitPaths = List.of("MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD", "REVERT_HEAD", "sequencer/todo");
         for (final String gitPath : gitPaths) {
             final Path rawMarker = Path.of(this.runGitOutput(repository, "git", "rev-parse", "--git-path", gitPath));
@@ -943,7 +943,7 @@ class GitRepositoryAdapterTest {
 
     private static final class MutatingGitCommandRunner implements GitCommandRunner {
 
-        private final DefaultGitCommandRunner delegate = new DefaultGitCommandRunner();
+        private final DefaultGitCommandRunner delegate = new DefaultGitCommandRunner(new GitFixtureProcesses());
         private final Path repositoryPath;
         private final RaceMutation mutation;
         private final List<List<String>> commands = new ArrayList<>();
@@ -1006,7 +1006,7 @@ class GitRepositoryAdapterTest {
 
     private static final class RecordingGitCommandRunner implements GitCommandRunner {
 
-        private final DefaultGitCommandRunner delegate = new DefaultGitCommandRunner();
+        private final DefaultGitCommandRunner delegate = new DefaultGitCommandRunner(new GitFixtureProcesses());
         private final List<List<String>> commands = new ArrayList<>();
 
         @Override

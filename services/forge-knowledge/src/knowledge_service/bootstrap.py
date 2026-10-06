@@ -23,9 +23,10 @@ from knowledge_service.ai_runtime_discovery import (
 from knowledge_service.analysis_client import ProviderBackedAnalysisClient
 from knowledge_service.analysis_service import AnalysisProvider, AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
-from knowledge_service.codex_app_server import CodexAppServerClient, CodexNotificationBufferPolicy, CodexRuntimeSettings
+from knowledge_service.codex_app_server import CodexNotificationBufferPolicy, CodexRuntimeSettings
 from knowledge_service.codex_usage import CodexLlmUsageSource
 from knowledge_service.config import AppConfig, ForgeSettings
+from knowledge_service.forge_codex_client import ForgeCodexClient
 from knowledge_service.generative_runtime import CodexGenerativeProvider, GenerativeProviderRegistry, OllamaGenerativeProvider
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
@@ -49,7 +50,7 @@ class KnowledgeDependencies:
     active_llm_runtime: ActiveLlmRuntime | None = None
     generative_registry: GenerativeProviderRegistry | None = None
     generative_provider: Any | None = None
-    codex_app_server_client: CodexAppServerClient | None = None
+    codex_app_server_client: ForgeCodexClient | None = None
     _codex_app_server_client_closed: bool = field(default=False, init=False, repr=False)
 
     async def aclose(self) -> None:
@@ -106,7 +107,7 @@ def build_dependencies(
         storage_operations.startup_maintenance()
         if config.analysis_enabled:
             analysis_store.mark_interrupted_jobs()
-    codex_client = CodexAppServerClient(settings=codex_runtime_settings(config))
+    codex_client = ForgeCodexClient(config.forge_codex_base_url, config.forge_codex_token_file)
     generative_registry, _startup_generative_provider = build_generative_runtime(config, codex_client=codex_client)
     active_profile_store = ActiveProfileStore(config.store_path)
     active_profile = active_profile_store.init(provider_id=config.analysis_provider, model_id=config.analysis_model)
@@ -156,7 +157,7 @@ def build_dependencies(
     )
 
 
-def build_generative_runtime(config: AppConfig, *, codex_client: CodexAppServerClient) -> tuple[GenerativeProviderRegistry, Any]:
+def build_generative_runtime(config: AppConfig, *, codex_client: ForgeCodexClient) -> tuple[GenerativeProviderRegistry, Any]:
     ollama_provider = OllamaGenerativeProvider(
         config.analysis_base_url,
         timeout_seconds=config.analysis_ai_call_timeout_seconds,
@@ -171,7 +172,7 @@ def build_generative_runtime(config: AppConfig, *, codex_client: CodexAppServerC
     return registry, registry.resolve(config.analysis_provider)
 
 
-def build_ai_runtime_discovery(config: AppConfig, *, codex_client: CodexAppServerClient) -> AiRuntimeDiscoveryService:
+def build_ai_runtime_discovery(config: AppConfig, *, codex_client: ForgeCodexClient) -> AiRuntimeDiscoveryService:
     codex_settings = codex_runtime_settings(config)
     timeout_seconds = min(float(config.analysis_ai_call_timeout_seconds), codex_settings.discovery_timeout_cap_seconds)
     registry = AiRuntimeDiscoveryRegistry()

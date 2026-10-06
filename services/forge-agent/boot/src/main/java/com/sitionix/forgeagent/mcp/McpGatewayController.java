@@ -5,7 +5,6 @@ import com.sitionix.forgeagent.application.mcp.McpGatewayAccessException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -16,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/internal/mcp/connections/{connectionId}")
-@ConditionalOnProperty(name = "forge.mcp.enabled", havingValue = "true")
+
 public final class McpGatewayController {
     private final McpGatewayRuntime runtime;
     private final McpGatewayProtocolAdapter protocol;

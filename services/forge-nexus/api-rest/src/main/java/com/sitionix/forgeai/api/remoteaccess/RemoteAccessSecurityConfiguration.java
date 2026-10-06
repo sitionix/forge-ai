@@ -15,32 +15,24 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
 public class RemoteAccessSecurityConfiguration {
     @Bean @Order(1)
     @ConditionalOnProperty(name="forge.remote-access.enabled",havingValue="true")
-    SecurityFilterChain remoteAccessSecurity(HttpSecurity http,RemoteAccessOperatorAuthentication authentication,
-            @org.springframework.beans.factory.annotation.Value("${forge.mcp.enabled:false}") boolean combined) throws Exception {
+    SecurityFilterChain remoteAccessSecurity(HttpSecurity http,RemoteAccessOperatorAuthentication authentication) throws Exception {
         String prefix="/api/v1/infrastructure/agents/remote-access";
         var mapper=new ObjectMapper();
         org.springframework.security.web.util.matcher.RequestMatcher login=request -> request.getMethod().equals("POST")
-                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/login")
-                    || combined && request.getMethod().equals("POST")
-                    && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals("/api/v1/operator/session");
+                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/login");
         org.springframework.security.web.util.matcher.RequestMatcher localSession=request -> request.getMethod().equals("GET")
-                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/session")
-                    || combined && request.getMethod().equals("GET")
-                    && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals("/api/v1/operator/session");
-        if (!combined) {
+                && com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request).equals(prefix+"/operator/session");
             var remotePath=org.springframework.web.util.pattern.PathPatternParser.defaultInstance.parse(prefix+"/{*path}");
             http.securityMatcher(request -> remotePath.matches(org.springframework.http.server.RequestPath.parse(
                     com.sitionix.forgeai.api.security.OperatorPublicRoutes.path(request),"").pathWithinApplication()));
-        }
         http.authorizeHttpRequests(auth -> {
-                if (combined) auth.requestMatchers(com.sitionix.forgeai.api.security.OperatorPublicRoutes::matches).permitAll();
                 auth.requestMatchers(login,localSession).permitAll().anyRequest().hasRole("REMOTE_ACCESS_OPERATOR");
             })
             .securityContext(context -> context.securityContextRepository(new HttpSessionSecurityContextRepository()))
             .csrf(csrf -> csrf.csrfTokenRepository(new HttpSessionCsrfTokenRepository()).csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
                 .ignoringRequestMatchers(login))
             .requestCache(cache -> cache.disable()).logout(logout -> logout.disable())
-            .addFilterBefore(new RemoteAccessBrowserFilter(authentication,mapper,combined),CsrfFilter.class)
+            .addFilterBefore(new RemoteAccessBrowserFilter(authentication,mapper),CsrfFilter.class)
             .exceptionHandling(errors -> errors
                 .authenticationEntryPoint((request,response,error) -> {
                     response.setStatus(401);response.setContentType("application/json");

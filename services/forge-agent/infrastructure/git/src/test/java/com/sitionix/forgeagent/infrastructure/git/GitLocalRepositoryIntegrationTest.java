@@ -30,9 +30,9 @@ class GitLocalRepositoryIntegrationTest {
     void realGitAdapterClonesLocalBareRemoteIntoLocalWorkspace() throws Exception {
         final Path forgeRoot = this.forgeRoot();
         final Path remote = this.createBareRepository("service-a.git");
-        final GitRepositoryAdapter git = new GitRepositoryAdapter(new DefaultGitCommandRunner());
+        final GitRepositoryAdapter git = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
         final LocalProjectWorkspaceAdapter local = new LocalProjectWorkspaceAdapter(
-                new ForgeRootResolver(forgeRoot.resolve("services/forge-agent"))
+                new ForgeRootResolver(forgeRoot.resolve("forge-projects"))
         );
 
         assertThat(git.inspectRemote(remote.toString()).name()).isEqualTo("service-a");
@@ -52,8 +52,8 @@ class GitLocalRepositoryIntegrationTest {
     @Test
     void realFailedCloneCanBeCleanedSoLocalStateIsNotCloned() throws Exception {
         final Path forgeRoot = this.forgeRoot();
-        final GitRepositoryAdapter git = new GitRepositoryAdapter(new DefaultGitCommandRunner());
-        final LocalProjectWorkspaceAdapter local = new LocalProjectWorkspaceAdapter(new ForgeRootResolver(forgeRoot));
+        final GitRepositoryAdapter git = new GitRepositoryAdapter(new DefaultGitCommandRunner(new GitFixtureProcesses()));
+        final LocalProjectWorkspaceAdapter local = new LocalProjectWorkspaceAdapter(new ForgeRootResolver(forgeRoot.resolve("forge-projects")));
         final ProjectRepositoryWorkspaceReference reference = new ProjectRepositoryWorkspaceReference(REPOSITORY_ID, "missing");
         final ProjectRepositoryCloneAttempt attempt = local.prepareCloneAttempt(PROJECT_ID, reference);
 
@@ -73,6 +73,8 @@ class GitLocalRepositoryIntegrationTest {
     private Path forgeRoot() throws IOException {
         final Path forgeRoot = this.tempDir.resolve(UUID.randomUUID().toString()).resolve("forge-ai");
         Files.createDirectories(forgeRoot.resolve(".git"));
+        Files.createDirectories(forgeRoot.resolve("forge-projects"));
+        Files.setAttribute(forgeRoot.resolve("forge-projects"), "unix:mode", 02750);
         return forgeRoot;
     }
 

@@ -44,30 +44,39 @@ import org.testcontainers.containers.PostgreSQLContainer;
  */
 @EnabledIfSystemProperty(named="forge.codex.stage5-e2e",matches="true")
 @SpringBootTest(classes=ForgeAgentApplication.class,webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties={"forge.mcp.enabled=true","server.address=127.0.0.1","forge.agent.worker.scheduling-enabled=false"})
+    properties={"server.address=127.0.0.1","forge.agent.worker.scheduling-enabled=false"})
 @DirtiesContext
 @ExtendWith(OutputCaptureExtension.class)
 class McpSettingsAcceptanceHttpTest {
     static final PostgreSQLContainer<?> DB=new PostgreSQLContainer<>("postgres:16-alpine");
-    static final String SERVICE=Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
-    static final String OPERATOR=Base64.getUrlEncoder().withoutPadding().encodeToString("synthetic-operator-stage5-fixture!".getBytes(StandardCharsets.UTF_8));
     static Path directory;
     static HttpServer upstream;
+    static McpOAuthProviderFixture provider;
+    static int nexusPort;
     static int toolCalls;
     static String lastTool;
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) throws Exception {
         DB.start();directory=Files.createTempDirectory("mcp-settings-acceptance-");
-        protectedFile("service",SERVICE);protectedFile("operator",OPERATOR);
+
         protectedFile("key","active=k1\nkey.k1="+Base64.getEncoder().encodeToString(new byte[32])+"\n");
         protectedFile("db",DB.getPassword());
         registry.add("spring.datasource.url",DB::getJdbcUrl);registry.add("spring.datasource.username",DB::getUsername);
-        registry.add("forge.mcp.service-credential-file",()->directory.resolve("service").toString());
         registry.add("forge.mcp.key-file",()->directory.resolve("key").toString());
         registry.add("forge.mcp.database-credential-file",()->directory.resolve("db").toString());
         upstream=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         upstream.createContext("/mcp",exchange->{
             try {
-                if(!exchange.getRequestMethod().equals("POST")) {exchange.sendResponseHeaders(405,-1);return;}
+                if(!exchange.getRequestMethod().equals("POST")) {
+                    if(exchange.getRequestURI().getPath().equals("/mcp-oauth")) {
+                        exchange.sendResponseHeaders(405,-1);
+                    } else exchange.sendResponseHeaders(200,-1);
+                    return;
+                }
+                if(exchange.getRequestURI().getPath().equals("/mcp-oauth") && !("Bearer "+McpOAuthProviderFixture.ACCESS).equals(exchange.getRequestHeaders().getFirst("Authorization")) && !("Bearer "+McpOAuthProviderFixture.ACCESS+"-rotated").equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+                    provider.preparations.add("post-challenge");
+                    exchange.getResponseHeaders().set("WWW-Authenticate","Bearer resource_metadata=\"http://127.0.0.1:"+upstream.getAddress().getPort()+"/.well-known/oauth-protected-resource/mcp-oauth\", scope=\"tools\"");
+                    exchange.sendResponseHeaders(401,-1);return;
+                }
                 var json=new ObjectMapper();var body=json.readTree(exchange.getRequestBody());
                 if(!body.has("id")) {exchange.sendResponseHeaders(202,-1);return;}
                 Object result=switch(body.path("method").asText()) {
@@ -83,14 +92,24 @@ class McpSettingsAcceptanceHttpTest {
                 byte[] response=json.writeValueAsBytes(Map.of("jsonrpc","2.0","id",body.get("id"),"result",result));
                 exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(200,response.length);exchange.getResponseBody().write(response);
             } finally {exchange.close();}
-        });upstream.start();
-        registry.add("forge.mcp.probe.allowed-private-endpoints",()->"127.0.0.1:"+upstream.getAddress().getPort());
+        });
+        upstream.createContext("/v0.1/servers",exchange->{byte[] body=new ObjectMapper().writeValueAsBytes(Map.of("servers",List.of(Map.of("server",Map.of("name","fixture/oauth","title","Catalog OAuth","description","Disposable OAuth catalog fixture","version","1","remotes",List.of(Map.of("type","streamable-http","url",provider.resource)))))));
+            exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);exchange.close();});
+        upstream.createContext("/.well-known/oauth-protected-resource/mcp-oauth",exchange->{provider.preparations.add("resource-metadata");byte[] body=new ObjectMapper().writeValueAsBytes(Map.of("resource",provider.resource,"authorization_servers",List.of(provider.issuer())));
+            exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);exchange.close();});
+        upstream.start();
+        try(var socket=new ServerSocket(0,1,InetAddress.getLoopbackAddress())){nexusPort=socket.getLocalPort();}
+        provider=new McpOAuthProviderFixture("http://127.0.0.1:"+nexusPort+"/fgaisox/api/v1/infrastructure/agents/integrations/mcp/oauth/callback",
+                "http://127.0.0.1:"+upstream.getAddress().getPort()+"/mcp-oauth");
+        registry.add("forge.mcp.oauth.callback-uri",()->provider.callback);
+        registry.add("forge.mcp.registry.base-url",()->"http://127.0.0.1:"+upstream.getAddress().getPort());
+        registry.add("forge.mcp.probe.allowed-private-endpoints",()->"127.0.0.1:"+upstream.getAddress().getPort()+",localhost:"+provider.server.getAddress().getPort());
     }
     static void protectedFile(String name,String value) throws Exception {
         Path file=directory.resolve(name);Files.writeString(file,value);Files.setPosixFilePermissions(file,PosixFilePermissions.fromString("rw-------"));
     }
     @AfterAll static void cleanup() throws Exception {
-        if(upstream!=null)upstream.stop(0);DB.stop();
+        if(upstream!=null)upstream.stop(0);if(provider!=null)provider.close();DB.stop();
         if(directory!=null)try(var files=Files.walk(directory)) {for(Path path:files.sorted(Comparator.reverseOrder()).toList())Files.deleteIfExists(path);}
     }
     @LocalServerPort int agentPort;
@@ -105,29 +124,32 @@ class McpSettingsAcceptanceHttpTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactions;
     @Autowired ObjectMapper json;
+    @Autowired McpOAuthCredentialCipher oauthCipher;
+    @Autowired com.sitionix.forgeagent.application.mcp.McpCredentialService credentials;
+    @Autowired McpConnectionRepository connectionRepository;
 
     @Test void browserPermissionsStayDisabledUntilExplicitEnableAndUseConfirmedPolicy(CapturedOutput output) throws Exception {
         Instant now=Instant.now();UUID projectId=UUID.randomUUID();
         projects.save(new Project(projectId,"Stage 5 Fixture","stage 5 fixture",now,now));
         Path root=repositoryRoot();Path nexusJar=root.resolve("services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar");
         assertThat(nexusJar).isRegularFile();
-        int nexusPort;try(var socket=new ServerSocket(0,1,InetAddress.getLoopbackAddress())) {nexusPort=socket.getLocalPort();}
         String origin="http://127.0.0.1:"+nexusPort;
         Process nexus=startNexus(nexusJar,origin,nexusPort);
         try {
             awaitNexus(nexus,origin);
             String browser=browser(root,origin,"connect",null);
-            assertThat(browser).contains("SETTINGS_BROWSER_ACTUAL_NEXUS_PASS").doesNotContain(OPERATOR,SERVICE);
+            assertThat(browser).contains("SETTINGS_BROWSER_ACTUAL_NEXUS_PASS");
             var connection=connections.list().getFirst();UUID id=connection.id();
             assertThat(connection.enabled()).isTrue();assertThat(connection.allowedTools()).extracting(McpAllowedTool::name).containsExactly("echo");
             assertThat(connection.projectAccess().projectIds()).containsExactly(projectId);
             assertThat(toolCalls).isZero();
-            var reloaded=new PostgresMcpConnectionRepository(jdbc,transactions).findById(
+            var reloaded=new PostgresMcpConnectionRepository(jdbc,transactions, new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules()).findById(
                     new PostgresForgeInstanceIdentityRepository(jdbc).getOrCreate(),id).orElseThrow();
             assertThat(reloaded).isEqualTo(connection);
             var claim=trustedLease(projectId,now);
             var first=runtime.issue(claim,now.plusSeconds(180),id);
             var second=runtime.issue(claim,now.plusSeconds(180),id);
+            runtime.activateForDispatch(claim);
             assertThat(first.token()).isNotEqualTo(second.token());
             ProcessBuilder nativeCall=new ProcessBuilder("python3",root.resolve("scripts/runtime/tests/stage5_codex_fixture.py").toString());
             nativeCall.environment().put("FORGE_STAGE4_GATEWAY_BASE","http://127.0.0.1:"+agentPort);
@@ -171,6 +193,7 @@ class McpSettingsAcceptanceHttpTest {
             assertThat(connections.get(id).enabled()).isTrue();
             assertThatThrownBy(()->runtime.issue(claim,Instant.now().plusSeconds(180),id)).isInstanceOf(McpGatewayAccessException.class);
             var next=runtime.issue(otherClaim,Instant.now().plusSeconds(180),id);
+            runtime.activateForDispatch(otherClaim);
             var grant=runtime.authorize(next.token(),id);
             assertThat(grant.projectId()).isEqualTo(otherProject);assertThat(grant.tools()).isEqualTo(savedPolicy.allowedTools());
             assertThatThrownBy(()->runtime.call(next.token(),id,"echo",connection.allowedTools().iterator().next().schemaFingerprint(),"{}"))
@@ -181,9 +204,84 @@ class McpSettingsAcceptanceHttpTest {
             assertThat(toolCalls).isEqualTo(3);assertThat(lastTool).isEqualTo("inspect");
             assertThat(output.getAll()).doesNotContain(next.token());
             assertThat(Files.readString(directory.resolve("nexus.log"))).doesNotContain(next.token());
-            assertThat(output.getAll()).doesNotContain(OPERATOR,SERVICE,first.token(),second.token());
-            assertThat(Files.readString(directory.resolve("nexus.log"))).doesNotContain(OPERATOR,SERVICE,first.token(),second.token());
+            assertThat(output.getAll()).doesNotContain(first.token(),second.token());
+            assertThat(Files.readString(directory.resolve("nexus.log"))).doesNotContain(first.token(),second.token());
+            verifyOAuth(root,origin,otherProject,output,nexus,nexusJar,nexusPort);
         } finally {stop(nexus);}
+    }
+    private void verifyOAuth(Path root,String origin,UUID projectId,CapturedOutput output,Process nexus,Path nexusJar,int nexusPort) throws Exception {
+        int before=toolCalls;
+        assertThat(browser(root,origin,"oauth",null,projectId)).contains("OAUTH_BROWSER_ACTUAL_NEXUS_PASS");
+        var connection=connections.list().stream().filter(c->c.displayName().equals("Stage 6 OAuth")).findFirst().orElseThrow();UUID id=connection.id();
+        assertThat(connection.authType()).isEqualTo(McpAuthType.OAUTH);assertThat(connection.credentialConfigured()).isTrue();assertThat(connection.enabled()).isFalse();
+        assertThat(provider.operations).containsExactly("exchange");assertThat(toolCalls).isEqualTo(before);
+        stop(nexus);Process restarted=startNexus(nexusJar,origin,nexusPort);
+        try {
+        awaitNexus(restarted,origin);
+        var claim=trustedLease(projectId,Instant.now());
+        assertThatThrownBy(()->runtime.issue(claim,Instant.now().plusSeconds(180),id)).isInstanceOf(McpGatewayAccessException.class);
+        assertThat(provider.operations).containsExactly("exchange");
+        assertThat(browser(root,origin,"enable",id)).contains("SETTINGS_ENABLE_CONFIRMED");
+        var handle=runtime.issue(claim,Instant.now().plusSeconds(180),id);var grant=runtime.authorize(handle.token(),id);
+        UUID authorization=connections.get(id).oauthAuthorizationId();
+        connectionRepository.change(connection.installationId(),id,state->{
+            var credentials=oauthCipher.decrypt(connection.installationId(),id,state.credential());var tokens=credentials.tokens();
+            return new McpConnectionState(state.connection(),oauthCipher.encrypt(connection.installationId(),id,new McpOAuthCredentials(credentials.clientSecret(),
+                    new McpOAuthTokens(tokens.accessToken(),tokens.refreshToken(),Instant.now().minusSeconds(1),tokens.refreshExpiresAt(),tokens.grantedScopes()))));
+        });
+        var second=runtime.issue(claim,Instant.now().plusSeconds(180),id);
+        runtime.activateForDispatch(claim);
+        ProcessBuilder nativeCall=new ProcessBuilder("python3",root.resolve("scripts/runtime/tests/stage5_codex_fixture.py").toString());
+        nativeCall.environment().put("FORGE_STAGE4_GATEWAY_BASE","http://127.0.0.1:"+agentPort);
+        nativeCall.environment().put("FORGE_STAGE5_CONNECTION_ID",id.toString());
+        nativeCall.environment().put("FORGE_STAGE5_GRANT_A",handle.token());nativeCall.environment().put("FORGE_STAGE5_GRANT_B",second.token());
+        assertThat(nativeCall.environment().values()).noneMatch(v->v.contains(McpOAuthProviderFixture.ACCESS)||v.contains(McpOAuthProviderFixture.REFRESH)||v.contains(McpOAuthProviderFixture.SECRET));
+        assertThat(run(nativeCall,Duration.ofMinutes(3))).contains("STAGE5_NATIVE_GATEWAY_PASS")
+            .doesNotContain(handle.token(),second.token(),McpOAuthProviderFixture.ACCESS,McpOAuthProviderFixture.REFRESH,McpOAuthProviderFixture.SECRET);
+        assertThat(provider.operations).containsExactly("exchange","refresh");assertThat(toolCalls).isEqualTo(before+2);
+        assertThat(runtime.authorize(handle.token(),id).credentialIdentity()).isEqualTo(authorization.toString());
+        var restored=new PostgresMcpConnectionRepository(jdbc,transactions,json).findById(connection.installationId(),id).orElseThrow();
+        assertThat(restored.oauthConfiguration()).isEqualTo(connection.oauthConfiguration());assertThat(restored.oauthAuthorizationId()).isEqualTo(authorization);
+        assertThat(grant.toString()).doesNotContain(McpOAuthProviderFixture.ACCESS,McpOAuthProviderFixture.REFRESH,McpOAuthProviderFixture.SECRET);
+        var previous=connections.get(id);
+        assertThat(browser(root,origin,"disable",id)).contains("SETTINGS_DISABLE_CONFIRMED");
+        assertThat(browser(root,origin,"oauth-reconnect",id,projectId)).contains("OAUTH_BROWSER_ACTUAL_NEXUS_PASS");
+        assertThat(connections.list().stream().filter(c->c.displayName().equals("Stage 6 OAuth"))).hasSize(1);
+        assertThat(connections.get(id).enabled()).isFalse();
+        assertThat(browser(root,origin,"enable",id)).contains("SETTINGS_ENABLE_CONFIRMED");
+        var fresh=runtime.issue(claim,Instant.now().plusSeconds(180),id);
+        var freshIdentity=runtime.authorize(fresh.token(),id).credentialIdentity();assertThat(freshIdentity).isNotEqualTo(authorization.toString());
+        credentials.authorizationFailed(previous);
+        assertThat(runtime.authorize(fresh.token(),id).credentialIdentity()).isEqualTo(freshIdentity);
+        assertThat(provider.operations).containsExactly("exchange","refresh","exchange");
+        connections.remove(id);assertThat(provider.operations).containsExactly("exchange","refresh","exchange","revoke");
+        assertThatThrownBy(()->runtime.authorize(fresh.token(),id)).isInstanceOf(McpGatewayAccessException.class);
+        assertThatThrownBy(()->runtime.authorize(handle.token(),id)).isInstanceOf(McpGatewayAccessException.class);
+        assertThat(toolCalls).isEqualTo(before+2);
+        assertThat(output.getAll()+Files.readString(directory.resolve("nexus.log"))).doesNotContain(McpOAuthProviderFixture.ACCESS,McpOAuthProviderFixture.REFRESH,McpOAuthProviderFixture.SECRET,handle.token());
+        String logs=output.getAll()+Files.readString(directory.resolve("nexus.log"));
+        try(var files=Files.list(directory.resolve("accesslogs"))) {
+            for(Path file:files.toList())logs+=Files.readString(file);
+        }
+        assertThat(logs).contains("settings.html");
+        for(String secret:provider.sensitive)assertThat(logs).doesNotContain(secret);
+        assertThat(logs).doesNotContain(McpOAuthProviderFixture.ACCESS,McpOAuthProviderFixture.REFRESH,McpOAuthProviderFixture.SECRET);
+        System.out.println("STAGE6_JOINED_OAUTH_GATEWAY_PASS");
+        try {assertThat(browser(root,origin,"catalog-oauth",null,projectId)).contains("CATALOG_OAUTH_ACTUAL_NEXUS_PASS");}
+        catch(AssertionError failed){throw new AssertionError("Catalog preparation phases: "+provider.preparations,failed);}
+        var catalogConnections=connections.list().stream().filter(c->c.displayName().equals("Catalog OAuth")).toList();
+        assertThat(catalogConnections).hasSize(2);
+        assertThat(catalogConnections.get(0).oauthAuthorizationId()).isNotEqualTo(catalogConnections.get(1).oauthAuthorizationId());
+        for(var saved:catalogConnections){
+            assertThat(saved.enabled()).isFalse();assertThat(saved.credentialConfigured()).isTrue();assertThat(saved.allowedTools()).isEmpty();assertThat(saved.projectAccess().projectIds()).isEmpty();
+            assertThatThrownBy(()->runtime.issue(claim,Instant.now().plusSeconds(180),saved.id())).isInstanceOf(McpGatewayAccessException.class);
+        }
+        assertThat(toolCalls).isEqualTo(before+2);
+        String catalogLogs=output.getAll()+Files.readString(directory.resolve("nexus.log"));
+        assertThat(catalogLogs).doesNotContain(McpOAuthProviderFixture.ACCESS,McpOAuthProviderFixture.REFRESH,McpOAuthProviderFixture.SECRET);
+        for(String secret:provider.sensitive)assertThat(catalogLogs).doesNotContain(secret);
+        System.out.println("STAGE7_JOINED_CATALOG_CONNECT_PASS");
+        } finally {stop(restarted);}
     }
     private AgentSessionExecutionClaim trustedLease(UUID projectId,Instant now) {
         UUID sessionId=UUID.randomUUID(),turnId=UUID.randomUUID(),nodeId=UUID.randomUUID(),workflowId=UUID.randomUUID();
@@ -202,10 +300,10 @@ class McpSettingsAcceptanceHttpTest {
         return new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-jar",jar.toString(),
             "--server.address=127.0.0.1","--server.port="+port,"--spring.config.import=","--spring.docker.compose.enabled=false",
             "--spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
-            "--forge.mcp.enabled=true","--forge.mcp.operator-origin="+origin,
-            "--forge.mcp.bootstrap-credential-file="+directory.resolve("operator"),"--forge.mcp.agent-service-credential-file="+directory.resolve("service"),
-            "--forge.ai.infrastructure.agent.base-url=http://127.0.0.1:"+agentPort)
-            .directory(directory.toFile()).redirectErrorStream(true).redirectOutput(directory.resolve("nexus.log").toFile()).start();
+            "--forge.ai.infrastructure.agent.base-url=http://127.0.0.1:"+agentPort,
+            "--forge.mcp.oauth.browser-origin="+origin,"--logging.level.org.springframework.web=TRACE",
+            "--server.tomcat.accesslog.enabled=true","--server.tomcat.accesslog.directory="+directory.resolve("accesslogs"),"--server.tomcat.accesslog.buffered=false")
+            .directory(directory.toFile()).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(directory.resolve("nexus.log").toFile())).start();
     }
     private static void awaitNexus(Process process,String origin) throws Exception {
         long deadline=System.nanoTime()+Duration.ofSeconds(45).toNanos();
@@ -223,8 +321,9 @@ class McpSettingsAcceptanceHttpTest {
     }
     private String browser(Path root,String origin,String action,UUID id,UUID projectId) throws Exception {
         var builder=new ProcessBuilder("node",root.resolve("services/forge-console/scripts/mcp-settings-browser-smoke.mjs").toString());
-        builder.environment().put("FORGE_SETTINGS_BASE_URL",origin+"/fgaisox");builder.environment().put("FORGE_SETTINGS_OPERATOR_SECRET",OPERATOR);
-        builder.environment().put("FORGE_SETTINGS_MCP_ENDPOINT","http://127.0.0.1:"+upstream.getAddress().getPort()+"/mcp");
+        builder.environment().put("FORGE_SETTINGS_BASE_URL",origin+"/fgaisox");
+        builder.environment().put("FORGE_SETTINGS_MCP_ENDPOINT","http://127.0.0.1:"+upstream.getAddress().getPort()+(action.contains("oauth")?"/mcp-oauth":"/mcp"));
+        if(action.contains("oauth"))builder.environment().put("FORGE_SETTINGS_OAUTH_ISSUER",provider.issuer());
         builder.environment().put("FORGE_SETTINGS_ACTION",action);if(id!=null)builder.environment().put("FORGE_SETTINGS_CONNECTION_ID",id.toString());
         if(projectId!=null) {
             builder.environment().put("FORGE_SETTINGS_PROJECT_ID",projectId.toString());

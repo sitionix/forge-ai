@@ -14,7 +14,7 @@ import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTranspor
 import io.modelcontextprotocol.spec.McpSchema;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
-import java.net.InetAddress;
+import com.sitionix.forgeagent.infrastructure.local.mcp.McpEndpointPolicy;
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.nio.charset.StandardCharsets;
@@ -33,7 +33,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
     private final int maxResponseBytes;
     private final int maxPages;
     private final int maxTools;
-    private final Set<String> allowedPrivateEndpoints;
+    private final McpEndpointPolicy endpointPolicy;
     private final SSLContext sslContext;
     private final ObjectMapper canonical;
     private final JacksonMcpJsonMapper protocolJson;
@@ -71,7 +71,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         this.maxResponseBytes = maxResponseBytes;
         this.maxPages = maxPages;
         this.maxTools = maxTools;
-        this.allowedPrivateEndpoints = Set.copyOf(allowedPrivateEndpoints);
+        this.endpointPolicy = new McpEndpointPolicy(allowedPrivateEndpoints);
         this.sslContext = sslContext;
         this.canonical = objectMapper.copy().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
         this.protocolJson = new JacksonMcpJsonMapper(objectMapper.copy());
@@ -278,34 +278,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         }
     }
 
-    private void validateEndpoint(URI endpoint) {
-        if (endpoint == null || endpoint.getHost() == null || endpoint.getRawUserInfo() != null
-                || endpoint.getRawQuery() != null || endpoint.getRawFragment() != null
-                || !("http".equalsIgnoreCase(endpoint.getScheme()) || "https".equalsIgnoreCase(endpoint.getScheme())))
-            throw new McpProbeException(McpProbeException.Reason.ENDPOINT_DENIED);
-        int port = endpoint.getPort() < 0 ? ("https".equalsIgnoreCase(endpoint.getScheme()) ? 443 : 80) : endpoint.getPort();
-        if (port < 1 || port > 65535) throw new McpProbeException(McpProbeException.Reason.ENDPOINT_DENIED);
-        try {
-            boolean allowed = allowedPrivateEndpoints.contains(endpoint.getHost().toLowerCase(Locale.ROOT) + ":" + port);
-            InetAddress[] addresses = InetAddress.getAllByName(endpoint.getHost());
-            if (addresses.length == 0) throw new McpProbeException(McpProbeException.Reason.ENDPOINT_DENIED);
-            for (InetAddress address : addresses) {
-                if (address.isAnyLocalAddress() || address.isLinkLocalAddress() || address.isMulticastAddress())
-                    throw new McpProbeException(McpProbeException.Reason.ENDPOINT_DENIED);
-                byte[] raw = address.getAddress();
-                if (raw.length == 16 && ((raw[0] & 0xfe) == 0xfc) && !allowed)
-                    throw new McpProbeException(McpProbeException.Reason.ENDPOINT_DENIED);
-                if (raw.length == 4 && (raw[0] & 0xff) == 100 && ((raw[1] & 0xc0) == 64) && !allowed)
-                    throw new McpProbeException(McpProbeException.Reason.ENDPOINT_DENIED);
-                if ((address.isLoopbackAddress() || address.isSiteLocalAddress()) && !allowed)
-                    throw new McpProbeException(McpProbeException.Reason.ENDPOINT_DENIED);
-            }
-        } catch (McpProbeException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new McpProbeException(McpProbeException.Reason.UNAVAILABLE);
-        }
-    }
+    private void validateEndpoint(URI endpoint) { endpointPolicy.validate(endpoint); }
 
     private static void addCredential(HttpRequest.Builder request, McpAuthType type, byte[] credential) {
         if (type == McpAuthType.NONE) return;

@@ -32,7 +32,7 @@ import org.springframework.test.context.TestPropertySource;
 
 @IntegrationTest
 @TestPropertySource(properties = "forge.agent.runtime.max-node-runs-per-workflow-run=1")
-class ForgeAgentRootBudgetIT {
+class ForgeAgentRootBudgetIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     private static final UUID A = UUID.fromString("95000000-0000-4000-8000-000000000001");
     private static final UUID B = UUID.fromString("95000000-0000-4000-8000-000000000002");

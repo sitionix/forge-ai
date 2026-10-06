@@ -5,8 +5,6 @@ import java.util.*;
 import java.util.function.UnaryOperator;
 
 public interface McpConnectionRepository {
-    /** Global storage signal for fail-closed downgrade; never reads credential bytes. */
-    boolean hasRetainedCredentials();
     Optional<McpConnection> findById(UUID installationId, UUID id);
     List<McpConnection> findAll(UUID installationId);
     Optional<McpEncryptedCredential> credential(UUID installationId, UUID id);
@@ -14,5 +12,6 @@ public interface McpConnectionRepository {
     void insert(McpConnectionState state);
     /** Locks the owner-scoped row, reads one state, then writes it atomically. Null result deletes it. */
     Optional<McpConnectionState> change(UUID installationId, UUID id, UnaryOperator<McpConnectionState> mutation);
-    void delete(UUID installationId, UUID id);
+    /** Removes under row lock and returns the last encrypted state after commit. */
+    Optional<McpConnectionState> delete(UUID installationId, UUID id);
 }

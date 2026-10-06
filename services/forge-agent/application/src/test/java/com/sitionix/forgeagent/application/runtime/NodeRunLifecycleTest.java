@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -11,6 +12,19 @@ import static org.mockito.Mockito.when;
 import com.sitionix.forgeagent.domain.exception.ConflictException;
 import com.sitionix.forgeagent.domain.model.AgentOutputSchema;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
+import com.sitionix.forgeagent.domain.model.AgentExecutionAllocation;
+import com.sitionix.forgeagent.domain.model.AgentExecutionSession;
+import com.sitionix.forgeagent.domain.model.AgentExecutionSessionStatus;
+import com.sitionix.forgeagent.domain.model.AgentExecutionTurn;
+import com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus;
+import com.sitionix.forgeagent.domain.model.McpAllowedTool;
+import com.sitionix.forgeagent.domain.model.McpAuthType;
+import com.sitionix.forgeagent.domain.model.McpConnection;
+import com.sitionix.forgeagent.domain.model.McpProjectAccess;
+import com.sitionix.forgeagent.domain.model.McpRuntimeGrant;
+import com.sitionix.forgeagent.domain.model.McpRuntimeGrantHandle;
+import com.sitionix.forgeagent.domain.model.McpToolCallResult;
+import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.NodeInputEnvelope;
 import com.sitionix.forgeagent.domain.model.NodeInputMode;
 import com.sitionix.forgeagent.domain.model.NodeContextMode;
@@ -23,12 +37,23 @@ import com.sitionix.forgeagent.domain.model.NodeRunStatus;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.port.ConnectionResolutionRepository;
+import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
+import com.sitionix.forgeagent.domain.port.ForgeInstanceIdentityRepository;
+import com.sitionix.forgeagent.domain.port.McpConnectionRepository;
+import com.sitionix.forgeagent.domain.port.McpCredentialCipher;
+import com.sitionix.forgeagent.domain.port.McpOAuthClient;
+import com.sitionix.forgeagent.domain.port.McpOAuthCredentialCipher;
+import com.sitionix.forgeagent.domain.port.McpRemoteToolClient;
+import com.sitionix.forgeagent.domain.port.McpRuntimeGrantRepository;
+import com.sitionix.forgeagent.domain.port.McpRuntimeToolView;
 import com.sitionix.forgeagent.domain.port.NodeRunRepository;
+import com.sitionix.forgeagent.domain.port.ProjectRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +64,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
+import com.sitionix.forgeagent.application.mcp.McpCredentialService;
+import com.sitionix.forgeagent.application.mcp.McpExecutionSelectionService;
+import com.sitionix.forgeagent.application.mcp.McpGatewayAccessException;
+import com.sitionix.forgeagent.application.mcp.McpGatewayService;
 
 @ExtendWith(MockitoExtension.class)
 class NodeRunLifecycleTest {
@@ -129,6 +159,126 @@ class NodeRunLifecycleTest {
             assertThat(execution.inputEnvelope().originalTask()).isEqualTo("Review auth changes.");
             assertThat(execution.inputEnvelope().contributions()).isEmpty();
         });
+    }
+
+    @Test
+    void trackedNodeStartPreparesMcpAndDispatchAuthorizationAllowsCallBeforeTurnPersistence() {
+        this.nodeRuns.put(NODE_RUN_ID, this.trackedNodeRun(NodeRunStatus.PENDING));
+        when(this.resolutionRepository.findConsumedByNodeRunId(NODE_RUN_ID)).thenReturn(List.of());
+        when(this.inputContentPolicyRegistry.assemble(any())).thenReturn(new NodeExecutionInputContent(
+                new NodeInputEnvelope("Read only MCP acceptance.", null, List.of())));
+
+        UUID sessionId = UUID.randomUUID(), turnId = UUID.randomUUID(), installation = UUID.randomUUID();
+        UUID connectionId = UUID.randomUUID();
+        var sessions = mock(AgentExecutionSessionRepository.class);
+        var projects = mock(ProjectRepository.class);
+        var connections = mock(McpConnectionRepository.class);
+        var grants = mock(McpRuntimeGrantRepository.class);
+        var views = mock(McpRuntimeToolView.class);
+        var remote = mock(McpRemoteToolClient.class);
+        ForgeInstanceIdentityRepository identity = () -> installation;
+        var approval = new McpAllowedTool("read", "sha256:" + "a".repeat(64));
+        var connection = new McpConnection(connectionId, installation, "fixture", URI.create("https://example.org/mcp"),
+                McpAuthType.NONE, true, McpProjectAccess.selected(java.util.Set.of(PROJECT_ID)),
+                java.util.Set.of(approval), false, NOW, NOW, null, null, null, null);
+        var sessionState = new AgentExecutionSession[1];
+        var turnState = new AgentExecutionTurn[1];
+        var claimed = new AgentSessionExecutionClaim[1];
+        when(sessions.acquire(org.mockito.ArgumentMatchers.eq(NODE_RUN_ID), any())).thenAnswer(invocation -> {
+            String owner = invocation.getArgument(1);
+            claimed[0] = new AgentSessionExecutionClaim(sessionId, turnId, NODE_RUN_ID, owner, 7L,
+                    NOW.plusSeconds(60), null, "codex");
+            sessionState[0] = new AgentExecutionSession(sessionId, WORKFLOW_RUN_ID, UUID.randomUUID(), AGENT_ID,
+                    null, "codex", null, null, NodeContextMode.FRESH_EACH_NODE_RUN,
+                    AgentExecutionSessionStatus.CREATING, null, NODE_RUN_ID, owner, 7L, NOW.plusSeconds(60),
+                    null, null, NOW, NOW, null, null);
+            turnState[0] = new AgentExecutionTurn(turnId, sessionId, NODE_RUN_ID, null, 1,
+                    AgentExecutionTurnStatus.STARTING, null, null, null, null, null, NOW, null, NOW, NOW);
+            this.nodeRuns.put(NODE_RUN_ID, this.trackedNodeRun(NodeRunStatus.RUNNING));
+            return Optional.of(claimed[0]);
+        });
+        when(sessions.findSession(sessionId)).thenAnswer(ignored -> Optional.of(sessionState[0]));
+        when(sessions.findByNodeRunId(NODE_RUN_ID)).thenAnswer(ignored -> Optional.of(
+                new AgentExecutionAllocation(sessionState[0], turnState[0])));
+        when(sessions.lockCurrentLease(org.mockito.ArgumentMatchers.eq(sessionId), any(),
+                org.mockito.ArgumentMatchers.eq(7L))).thenReturn(true);
+        when(sessions.persistProviderTurn(org.mockito.ArgumentMatchers.eq(sessionId),
+                org.mockito.ArgumentMatchers.eq(turnId), any(), org.mockito.ArgumentMatchers.eq(7L),
+                org.mockito.ArgumentMatchers.eq("provider-turn"))).thenAnswer(ignored -> {
+            var before = sessionState[0];
+            sessionState[0] = new AgentExecutionSession(sessionId, WORKFLOW_RUN_ID, before.sourceNodeId(), AGENT_ID,
+                    null, "codex", null, null, NodeContextMode.FRESH_EACH_NODE_RUN,
+                    AgentExecutionSessionStatus.ACTIVE, null, NODE_RUN_ID, before.leaseOwnerId(), 7L,
+                    NOW.plusSeconds(60), null, null, NOW, NOW, null, null);
+            turnState[0] = new AgentExecutionTurn(turnId, sessionId, NODE_RUN_ID, "provider-turn", 1,
+                    AgentExecutionTurnStatus.ACTIVE, null, null, null, null, null, NOW, null, NOW, NOW);
+            return true;
+        });
+        when(sessions.finish(org.mockito.ArgumentMatchers.eq(sessionId), org.mockito.ArgumentMatchers.eq(turnId),
+                any(), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq(AgentExecutionTurnStatus.SUCCEEDED),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq(false))).thenReturn(true);
+        when(this.nodeRunRepository.findById(NODE_RUN_ID)).thenAnswer(ignored -> Optional.of(this.nodeRuns.get(NODE_RUN_ID)));
+        when(this.workflowRunRepository.findById(WORKFLOW_RUN_ID)).thenAnswer(ignored -> Optional.of(this.workflowRun));
+        when(projects.findById(PROJECT_ID)).thenReturn(Optional.of(new Project(PROJECT_ID, "fixture", "fixture", NOW, NOW)));
+        when(connections.findAll(installation)).thenReturn(List.of(connection));
+        when(connections.findById(installation, connectionId)).thenReturn(Optional.of(connection));
+        var issued = new McpRuntimeGrant[1];
+        when(grants.issue(any())).thenAnswer(invocation -> {
+            issued[0] = invocation.getArgument(0);
+            return new McpRuntimeGrantHandle(issued[0].id(), "joined-grant");
+        });
+        when(grants.resolve("joined-grant", connectionId)).thenAnswer(ignored -> Optional.of(issued[0]));
+        var dispatchAuthorized = new boolean[]{false};
+        org.mockito.Mockito.doAnswer(ignored -> {
+            dispatchAuthorized[0] = true;
+            return null;
+        }).when(grants).activateForDispatch(turnId);
+        when(grants.admit("joined-grant", connectionId)).thenAnswer(ignored -> dispatchAuthorized[0]);
+        var credentials = new McpCredentialService(connections, identity, mock(McpCredentialCipher.class),
+                mock(McpOAuthCredentialCipher.class), mock(McpOAuthClient.class), grants, views, CLOCK);
+        var gateway = new McpGatewayService(sessions, this.nodeRunRepository, this.workflowRunRepository,
+                projects, connections, identity, grants, views, credentials, remote, CLOCK);
+        @SuppressWarnings("unchecked") ObjectProvider<McpGatewayService> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(gateway);
+        var leases = new AgentSessionLeaseService(sessions, provider);
+        var joined = new NodeRunLifecycle(this.nodeRunRepository, this.workflowRunRepository,
+                this.resolutionRepository, this.inputContentPolicyRegistry, this.coordinator,
+                this.completionPolicy, CLOCK, new NodeRunCompletionPersistence(this.nodeRunRepository,
+                this.workflowRunRepository, this.completionPolicy, this.coordinator, CLOCK, leases),
+                this.completionProcessor, this.executionWorkspaceResolver, this.graphRepository, leases);
+
+        var execution = joined.tryStart(NODE_RUN_ID).orElseThrow();
+        assertThat(this.nodeRuns.get(NODE_RUN_ID).status()).isEqualTo(NodeRunStatus.RUNNING);
+        assertThat(this.workflowRun.status()).isEqualTo(WorkflowRunStatus.RUNNING);
+        assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.CREATING);
+        assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.STARTING);
+        var prepared = new McpExecutionSelectionService(this.workflowRunRepository, connections, identity, gateway)
+                .prepare(execution, NOW.plusSeconds(90));
+        assertThat(prepared.selection().entries()).hasSize(1);
+        assertThat(gateway.authorize("joined-grant", connectionId)).isEqualTo(issued[0]);
+        assertThatThrownBy(() -> gateway.call("joined-grant", connectionId, "read", approval.schemaFingerprint(), "{}"))
+                .isInstanceOf(McpGatewayAccessException.class);
+        verifyNoInteractions(remote);
+
+        gateway.activateForDispatch(claimed[0]);
+        assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.CREATING);
+        assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.STARTING);
+        when(remote.call(org.mockito.ArgumentMatchers.eq(connection.endpoint()),
+                org.mockito.ArgumentMatchers.eq(McpAuthType.NONE), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq("read"), org.mockito.ArgumentMatchers.eq(approval.schemaFingerprint()),
+                org.mockito.ArgumentMatchers.eq("{}"), any())).thenAnswer(invocation -> {
+            assertThat(invocation.<java.util.function.BooleanSupplier>getArgument(6).getAsBoolean()).isTrue();
+            return new McpToolCallResult(false, "[]", null);
+        });
+        assertThat(gateway.call("joined-grant", connectionId, "read", approval.schemaFingerprint(), "{}").isError()).isFalse();
+
+        leases.persistTurn(claimed[0], "provider-turn");
+        assertThat(sessionState[0].status()).isEqualTo(AgentExecutionSessionStatus.ACTIVE);
+        assertThat(turnState[0].status()).isEqualTo(AgentExecutionTurnStatus.ACTIVE);
+        assertThat(gateway.call("joined-grant", connectionId, "read", approval.schemaFingerprint(), "{}").isError()).isFalse();
+        leases.finish(claimed[0], AgentExecutionTurnStatus.SUCCEEDED, null, null, false);
+        verify(grants).revokeExecution(turnId);
     }
 
     @Test

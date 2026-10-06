@@ -5509,6 +5509,82 @@ describe('Agent projects page', () => {
     expect(effort.disabled).toBe(true);
   });
 
+  it('authorization change refreshes runtime and open model picker while preserving the unsaved selection', async () => {
+    const fakeApi=api();const {dom,page}=await openedProject(fakeApi);await page.openAgentModal();
+    selectValue(dom,'agentsV2AgentProvider','codex');selectValue(dom,'agentsV2AgentModel','discovered-model');
+    const selected={...page.state.agentModelSelection};const next=runtime();next.providers[0]!.models.push({modelId:'new-model',displayName:'New Model',description:'New',efforts:[]});
+    fakeApi.getRuntime.mockResolvedValue(next);dom.window.dispatchEvent(new dom.window.CustomEvent('forge:llm-authorization-changed',{detail:{providerId:'codex'}}));await flushAsync();
+    expect(dom.window.document.getElementById('agentsV2AgentModel')?.textContent).toContain('New Model');expect(page.state.agentModelSelection).toEqual(selected);
+    expect((dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement).value).toBe('discovered-model');page.dispose();
+  });
+
+  it('focus refresh deduplicates in-flight authorization reads and keeps CONNECTED separate from runtime READY', async () => {
+    const fakeApi=api();const {dom,page}=await openedProject(fakeApi);await page.openAgentModal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const pending=deferred<any>();fakeApi.getRuntime.mockReturnValueOnce(pending.promise);
+    dom.window.dispatchEvent(new dom.window.Event('focus'));dom.window.dispatchEvent(new dom.window.Event('focus'));dom.window.dispatchEvent(new dom.window.CustomEvent('forge:llm-authorization-changed'));
+    await flushAsync();expect(fakeApi.getRuntime).toHaveBeenCalledTimes(3);
+    pending.resolve({providers:[{...unavailableCodexRuntime().providers[0],authState:'CONNECTED'}]});await flushAsync();
+    expect((dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement).disabled).toBe(true);expect(page.state.runtime.providers[0].authState).toBe('CONNECTED');
+    expect(dom.window.document.getElementById('agentsV2AgentRuntimeState')?.textContent).toContain('runtime unavailable');page.dispose();
+  });
+
+  it('authorization refresh ignores stale project responses and detaches listeners on disposal', async () => {
+    const fakeApi=api();const {dom,page}=await openedProject(fakeApi);const pending=deferred<any>();fakeApi.getRuntime.mockReturnValueOnce(pending.promise);
+    dom.window.dispatchEvent(new dom.window.Event('focus'));await flushAsync();expect(fakeApi.getRuntime).toHaveBeenCalledTimes(2);page.showProjectsIndex();const previous=page.state.runtime;
+    pending.resolve(unavailableCodexRuntime());await flushAsync();expect(page.state.runtime).toBe(previous);const calls=fakeApi.getRuntime.mock.calls.length;
+    page.dispose();dom.window.dispatchEvent(new dom.window.Event('focus'));dom.window.dispatchEvent(new dom.window.CustomEvent('forge:llm-authorization-changed'));await flushAsync();expect(fakeApi.getRuntime).toHaveBeenCalledTimes(calls);
+  });
+
+  it('authorization refresh preserves a new Agent draft model visibly after sign-out removes its models', async () => {
+    const fakeApi=api();const {dom,page}=await openedProject(fakeApi);await page.openAgentModal();selectValue(dom,'agentsV2AgentProvider','codex');selectValue(dom,'agentsV2AgentModel','discovered-model');
+    const selected={...page.state.agentModelSelection};const unavailable=runtime();unavailable.providers[0]!.status='UNAVAILABLE';unavailable.providers[0]!.models=[];
+    fakeApi.getRuntime.mockResolvedValue(unavailable);dom.window.dispatchEvent(new dom.window.Event('focus'));await flushAsync();
+    expect(page.state.agentModelSelection).toEqual(selected);expect((dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement).value).toBe('discovered-model');expect((dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement).disabled).toBe(true);page.dispose();
+  });
+
+  it('superseded modal runtime continuation never resets a draft selected after newer authorization refresh', async () => {
+    const fakeApi=api();const {dom,page}=await openedProject(fakeApi);await page.openAgentModal();
+    const oldRead=deferred<any>(),newRead=deferred<any>();fakeApi.getRuntime.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise);
+    const modalLoad=page.loadRuntimeForAgentModal();dom.window.dispatchEvent(new dom.window.Event('focus'));await flushAsync();
+    newRead.resolve(runtime());await flushAsync();selectValue(dom,'agentsV2AgentProvider','codex');selectValue(dom,'agentsV2AgentModel','discovered-model');
+    const draft={...page.state.agentModelSelection};oldRead.resolve(runtime());await modalLoad;await flushAsync();
+    expect(page.state.agentModelSelection).toEqual(draft);expect((dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement).value).toBe('discovered-model');page.dispose();
+  });
+
+  it.each([
+    {agentId:null,order:'newer first'},
+    {agentId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',order:'newer first'},
+    {agentId:null,order:'older first'},
+    {agentId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',order:'older first'}
+  ])('initial Agent modal opens using the newer authorization catalog ($agentId, $order)', async ({agentId,order}) => {
+    const fakeApi=api();const {dom,page}=await openedProject(fakeApi);const oldRead=deferred<any>(),newRead=deferred<any>();
+    fakeApi.getRuntime.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise);
+    const opening=page.openAgentModal(agentId);await flushAsync();dom.window.dispatchEvent(new dom.window.Event('focus'));await flushAsync();
+    const newer=runtime();newer.providers[0]!.models.push({modelId:'new-model',displayName:'New Model',description:'New',efforts:[]});
+    if(order==='newer first'){newRead.resolve(newer);await flushAsync();oldRead.resolve(unavailableCodexRuntime());}
+    else {oldRead.resolve(unavailableCodexRuntime());await flushAsync();expect((dom.window.document.getElementById('agentsV2AgentDialog') as HTMLDialogElement).open).toBe(false);newRead.resolve(newer);}
+    await opening;await flushAsync();expect((dom.window.document.getElementById('agentsV2AgentDialog') as HTMLDialogElement).open).toBe(true);
+    expect(page.state.runtime.providers[0].status).toBe('READY');const provider=dom.window.document.getElementById('agentsV2AgentProvider') as HTMLSelectElement;expect(provider.disabled).toBe(false);
+    if(agentId){expect(provider.value).toBe('codex');expect((dom.window.document.getElementById('agentsV2AgentModel') as HTMLSelectElement).value).toBe('discovered-model');}
+    else {expect(provider.value).toBe('');selectValue(dom,'agentsV2AgentProvider','codex');}
+    expect(dom.window.document.getElementById('agentsV2AgentModel')?.textContent).toContain('New Model');page.dispose();
+  });
+
+  it.each(['closed','project changed','disposed'])('pending modal runtime does not apply or reopen after modal is %s', async state => {
+    const fakeApi=api();const {dom,page}=await openedProject(fakeApi);const pending=deferred<any>();fakeApi.getRuntime.mockReturnValueOnce(pending.promise);
+    const opening=page.openAgentModal();await flushAsync();
+    if(state==='closed')page.closeDialog('agentsV2AgentDialog');else if(state==='project changed')page.showProjectsIndex();else page.dispose();
+    const draft={providerId:'draft-provider',modelId:'draft-model',effortId:null};page.state.agentModelSelection=draft;
+    pending.resolve(runtime());await opening;await flushAsync();expect(page.state.agentModelSelection).toEqual(draft);expect((dom.window.document.getElementById('agentsV2AgentDialog') as HTMLDialogElement).open).toBe(false);page.dispose();
+  });
+
+  it('older Agent modal read cannot apply or reopen after another modal identity completes', async () => {
+    const fakeApi=api();const {dom,page}=await openedProject(fakeApi);const pending=deferred<any>();fakeApi.getRuntime.mockReturnValueOnce(pending.promise);
+    const first=page.openAgentModal();await flushAsync();await page.openAgentModal('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const draft={...page.state.agentModelSelection};page.closeDialog('agentsV2AgentDialog');pending.resolve(runtime());await first;await flushAsync();
+    expect(page.state.agentModelSelection).toEqual(draft);expect((dom.window.document.getElementById('agentsV2AgentDialog') as HTMLDialogElement).open).toBe(false);page.dispose();
+  });
+
   it('effort picker renders effort id before description after explicit model selection', async () => {
     const fakeApi = api({
       getRuntime: vi.fn(() => Promise.resolve({

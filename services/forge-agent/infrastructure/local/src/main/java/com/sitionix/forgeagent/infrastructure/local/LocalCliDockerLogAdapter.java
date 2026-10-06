@@ -5,27 +5,18 @@ import com.sitionix.forgeagent.domain.model.*;
 import com.sitionix.forgeagent.domain.port.*;
 import java.nio.file.*;
 import java.util.*;
-import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryProperties;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
 public class LocalCliDockerLogAdapter implements DockerLogPort {
   private final TypedProcessExecutor executor;
-  private final RuntimeBoundaryProperties boundary;
 
   public LocalCliDockerLogAdapter(TypedProcessExecutor executor) {
-    this(executor, RuntimeBoundaryProperties.disabled());
-  }
-
-  @Autowired
-  public LocalCliDockerLogAdapter(TypedProcessExecutor executor, RuntimeBoundaryProperties boundary) {
     this.executor = executor;
-    this.boundary = boundary;
   }
 
   private void requireLocalComposeAllowed(SshConnection ssh) {
-    if (boundary.enabled() && ssh == null)
+    if (ssh == null)
       throw new ValidationException("Local Compose is unavailable with runtime isolation enabled");
   }
 

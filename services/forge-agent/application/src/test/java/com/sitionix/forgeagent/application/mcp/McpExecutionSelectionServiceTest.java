@@ -4,21 +4,45 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.any;
 
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
+import com.sitionix.forgeagent.domain.model.AgentExecutionAllocation;
+import com.sitionix.forgeagent.domain.model.AgentExecutionSession;
+import com.sitionix.forgeagent.domain.model.AgentExecutionSessionStatus;
+import com.sitionix.forgeagent.domain.model.AgentExecutionTurn;
+import com.sitionix.forgeagent.domain.model.AgentExecutionTurnStatus;
 import com.sitionix.forgeagent.domain.model.McpAllowedTool;
 import com.sitionix.forgeagent.domain.model.McpAuthType;
 import com.sitionix.forgeagent.domain.model.McpConnection;
 import com.sitionix.forgeagent.domain.model.McpProjectAccess;
 import com.sitionix.forgeagent.domain.model.McpRuntimeGrantHandle;
+import com.sitionix.forgeagent.domain.model.NodeContextMode;
+import com.sitionix.forgeagent.domain.model.NodeInputMode;
+import com.sitionix.forgeagent.domain.model.NodePosition;
+import com.sitionix.forgeagent.domain.model.NodeRun;
+import com.sitionix.forgeagent.domain.model.NodeRunStatus;
+import com.sitionix.forgeagent.domain.model.Project;
 import com.sitionix.forgeagent.domain.model.WorkflowRun;
 import com.sitionix.forgeagent.domain.model.WorkflowRunStatus;
 import com.sitionix.forgeagent.domain.exception.McpProbeException;
 import com.sitionix.forgeagent.domain.port.McpConnectionRepository;
+import com.sitionix.forgeagent.domain.port.AgentExecutionSessionRepository;
+import com.sitionix.forgeagent.domain.port.NodeRunRepository;
+import com.sitionix.forgeagent.domain.port.ProjectRepository;
+import com.sitionix.forgeagent.domain.port.McpRuntimeGrantRepository;
+import com.sitionix.forgeagent.domain.port.McpRuntimeToolView;
+import com.sitionix.forgeagent.domain.port.McpCredentialCipher;
+import com.sitionix.forgeagent.domain.port.McpOAuthCredentialCipher;
+import com.sitionix.forgeagent.domain.port.McpOAuthClient;
+import com.sitionix.forgeagent.domain.port.McpRemoteToolClient;
 import com.sitionix.forgeagent.domain.port.WorkflowRunRepository;
 import java.net.URI;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -71,6 +95,38 @@ class McpExecutionSelectionServiceTest {
                 .hasMessage("MCP execution requires a tracked session");
     }
 
+    @Test void connectedLlmAccountDoesNotGrantForeignProjectsOrUnapprovedTools() {
+        var provider = mock(com.sitionix.forgeagent.domain.port.LlmAuthorizationGateway.Session.class);
+        when(provider.healthy()).thenReturn(true);
+        when(provider.drainEvents()).thenReturn(List.of());
+        when(provider.readAccount(org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(
+                new com.sitionix.forgeagent.domain.port.LlmAuthorizationGateway.Account(true, "forge@example.test", "plus"));
+        try (var auth = new com.sitionix.forgeagent.application.llm.LlmAuthorizationService(() -> provider, Clock.systemUTC())) {
+            var gate = new com.sitionix.forgeagent.application.llm.ForgeCodexAuthorizationGate(auth);
+            var lease = gate.requireAuthorized();
+            var allowed = connection(UUID.randomUUID(), true, McpProjectAccess.selected(Set.of(projectId)), true);
+            var foreign = connection(UUID.randomUUID(), true, McpProjectAccess.selected(Set.of(otherProjectId)), true);
+            var unapproved = connection(UUID.randomUUID(), true, McpProjectAccess.selected(Set.of(projectId)), false);
+            when(workflows.findById(workflowId)).thenReturn(Optional.of(workflow(projectId)));
+            when(connections.findAll(installation)).thenReturn(List.of(allowed, foreign, unapproved));
+            when(gateway.issue(session, NOW.plusSeconds(90), allowed.id()))
+                    .thenReturn(new McpRuntimeGrantHandle(UUID.randomUUID(), "synthetic-grant"));
+
+            var prepared = service.prepare(claim(session), NOW.plusSeconds(90));
+
+            assertThat(prepared.selection().entries()).extracting(entry -> entry.connectionId()).containsExactly(allowed.id());
+            assertThat(prepared.selection().entries().getFirst().tools()).isEqualTo(allowed.allowedTools());
+            verify(gateway, Mockito.never()).issue(any(), any(), org.mockito.ArgumentMatchers.eq(foreign.id()));
+            verify(gateway, Mockito.never()).issue(any(), any(), org.mockito.ArgumentMatchers.eq(unapproved.id()));
+            gate.release(lease);
+            when(provider.readAccount(false)).thenReturn(new com.sitionix.forgeagent.domain.port.LlmAuthorizationGateway.Account(false, null, null));
+            auth.logout();
+            // LLM logout cannot edit MCP configuration or revoke its independent OAuth credentials.
+            verify(connections).findAll(installation);
+            Mockito.verifyNoMoreInteractions(connections);
+        }
+    }
+
     @Test void unavailableConnectionDoesNotHideAnotherApprovedConnection() {
         var broken = connection(UUID.fromString("00000000-0000-4000-8000-000000000001"), true,
                 McpProjectAccess.all(), true);
@@ -89,6 +145,33 @@ class McpExecutionSelectionServiceTest {
                 .containsExactly(working.id());
         assertThat(prepared.selection().diagnostics()).extracting(diagnostic -> diagnostic.connectionId())
                 .containsExactly(broken.id());
+    }
+
+    @Test void oauthReconnectAndRefreshOutageDoNotHideHealthyApprovedConnection() {
+        for (var failure : List.of(
+                com.sitionix.forgeagent.domain.exception.McpOAuthException.reconnect(),
+                com.sitionix.forgeagent.domain.exception.McpOAuthException.unavailable())) {
+            var broken = connection(UUID.fromString("00000000-0000-4000-8000-000000000001"), true,
+                    McpProjectAccess.all(), true);
+            var working = connection(UUID.fromString("00000000-0000-4000-8000-000000000002"), true,
+                    McpProjectAccess.all(), true);
+            when(workflows.findById(workflowId)).thenReturn(Optional.of(workflow(projectId)));
+            when(connections.findAll(installation)).thenReturn(List.of(working, broken));
+            org.mockito.Mockito.doThrow(failure).when(gateway)
+                    .issue(session, NOW.plusSeconds(90), broken.id());
+            when(gateway.issue(session, NOW.plusSeconds(90), working.id()))
+                    .thenReturn(new McpRuntimeGrantHandle(UUID.randomUUID(), "healthy-oauth-grant"));
+
+            var prepared = service.prepare(claim(session), NOW.plusSeconds(90));
+
+            assertThat(prepared.selection().entries()).extracting(entry -> entry.connectionId())
+                    .containsExactly(working.id());
+            assertThat(prepared.selection().diagnostics()).extracting(diagnostic -> diagnostic.connectionId())
+                    .containsExactly(broken.id());
+            assertThat(prepared.launchGrants().tokens())
+                    .containsOnlyKeys("forge_" + working.id().toString().replace("-", ""));
+        }
+        org.mockito.Mockito.verify(gateway, org.mockito.Mockito.never()).revokeExecution(session.turnId());
     }
 
     @Test void unexpectedIssuanceFailureRevokesAlreadyIssuedGrantWithoutLeakingCause() {
@@ -148,6 +231,54 @@ class McpExecutionSelectionServiceTest {
         assertThat(prepared.launchGrants().isEmpty()).isTrue();
     }
 
+    @Test void realGatewayPreparesFreshAndResumingTrackedClaimsBeforeProviderTurnStarts() {
+        for (var status : List.of(AgentExecutionSessionStatus.CREATING, AgentExecutionSessionStatus.RESUMING)) {
+            var allowed = connection(UUID.randomUUID(), true, McpProjectAccess.selected(Set.of(projectId)), true);
+            var sessionRepository = mock(AgentExecutionSessionRepository.class);
+            var nodeRepository = mock(NodeRunRepository.class);
+            var projectRepository = mock(ProjectRepository.class);
+            var grants = mock(McpRuntimeGrantRepository.class);
+            var views = mock(McpRuntimeToolView.class);
+            var remote = mock(McpRemoteToolClient.class);
+            var clock = Clock.fixed(NOW, ZoneOffset.UTC);
+            var tracked = new AgentExecutionSession(session.sessionId(), workflowId, UUID.randomUUID(),
+                    UUID.randomUUID(), null, "codex", null, null, NodeContextMode.FRESH_EACH_NODE_RUN,
+                    status, null, nodeId, session.leaseOwnerId(), session.leaseToken(), NOW.plusSeconds(60),
+                    null, null, NOW, NOW, null, null);
+            var turn = new AgentExecutionTurn(session.turnId(), session.sessionId(), nodeId, null, 1,
+                    AgentExecutionTurnStatus.STARTING, null, null, null, null, null, NOW, null, NOW, NOW);
+            when(sessionRepository.findSession(session.sessionId())).thenReturn(Optional.of(tracked));
+            when(sessionRepository.findByNodeRunId(nodeId)).thenReturn(Optional.of(new AgentExecutionAllocation(tracked, turn)));
+            when(sessionRepository.lockCurrentLease(session.sessionId(), session.leaseOwnerId(), session.leaseToken()))
+                    .thenReturn(true);
+            when(nodeRepository.findById(nodeId)).thenReturn(Optional.of(new NodeRun(nodeId, workflowId,
+                    UUID.randomUUID(), UUID.randomUUID(), "agent", "instructions", null,
+                    NodeInputMode.DEPENDENCIES_ONLY, new NodePosition(1, 1), UUID.randomUUID(),
+                    null, null, null, null, NodeRunStatus.RUNNING, null, null, null, NOW, NOW, null, null)));
+            when(workflows.findById(workflowId)).thenReturn(Optional.of(workflow(projectId)));
+            when(projectRepository.findById(projectId)).thenReturn(Optional.of(new Project(projectId, "fixture", "fixture", NOW, NOW)));
+            when(connections.findAll(installation)).thenReturn(List.of(allowed));
+            when(connections.findById(installation, allowed.id())).thenReturn(Optional.of(allowed));
+            when(grants.issue(any())).thenAnswer(invocation ->
+                    new McpRuntimeGrantHandle(invocation.<com.sitionix.forgeagent.domain.model.McpRuntimeGrant>getArgument(0).id(),
+                            "pre-turn-grant"));
+            var credentials = new McpCredentialService(connections, () -> installation,
+                    mock(McpCredentialCipher.class), mock(McpOAuthCredentialCipher.class),
+                    mock(McpOAuthClient.class), grants, views, clock);
+            var realGateway = new McpGatewayService(sessionRepository, nodeRepository, workflows,
+                    projectRepository, connections, () -> installation, grants, views, credentials, remote, clock);
+
+            assertThat(tracked.status()).isEqualTo(status);
+            assertThat(turn.status()).isEqualTo(AgentExecutionTurnStatus.STARTING);
+            var prepared = new McpExecutionSelectionService(workflows, connections, () -> installation, realGateway)
+                    .prepare(claim(session), NOW.plusSeconds(90));
+            assertThat(prepared.selection().entries()).extracting(entry -> entry.connectionId())
+                    .containsExactly(allowed.id());
+            assertThat(prepared.launchGrants().tokens().values()).containsExactly("pre-turn-grant");
+            verify(views).prepare(any(), org.mockito.ArgumentMatchers.isNull());
+        }
+    }
+
     private NodeExecutionClaim claim(AgentSessionExecutionClaim sessionClaim) {
         return new NodeExecutionClaim(workflowId, nodeId, UUID.randomUUID(), null, null, null,
                 null, null, null, List.of(), null, sessionClaim);
@@ -163,6 +294,6 @@ class McpExecutionSelectionServiceTest {
         return new McpConnection(id, installation, "fixture", URI.create("https://example.org/mcp"),
                 McpAuthType.NONE, enabled, access,
                 withTool ? Set.of(new McpAllowedTool("echo", "sha256:" + "a".repeat(64))) : Set.of(),
-                false, NOW, NOW, null, null);
+                false, NOW, NOW, null, null, null, null);
     }
 }

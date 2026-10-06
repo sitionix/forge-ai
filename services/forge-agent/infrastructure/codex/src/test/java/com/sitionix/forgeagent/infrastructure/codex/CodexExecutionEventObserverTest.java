@@ -25,13 +25,13 @@ class CodexExecutionEventObserverTest {
         var observer = new CodexExecutionEventObserver(new CodexAgentExecutionEventMapper(json), callbacks);
         var connectionId = UUID.fromString("01234567-89ab-4cde-8012-3456789abcde");
         observer.mcpDiagnostics(List.of(new McpExecutionSelection.Diagnostic(
-                connectionId, "synthetic-secret-canary")));
+                connectionId, McpExecutionSelection.DiagnosticCode.MCP_CONNECTION_UNAVAILABLE)));
         observer.activate("turn-1");
 
         assertThat(callbacks.events).extracting(AgentExecutionEventCandidate::type)
                 .containsExactly(AgentExecutionEventType.TURN, AgentExecutionEventType.WARNING);
         assertThat(callbacks.events.get(1).payload()).contains(connectionId.toString())
-                .doesNotContain("synthetic-secret-canary");
+                .contains("MCP_CONNECTION_UNAVAILABLE");
     }
 
     @Test

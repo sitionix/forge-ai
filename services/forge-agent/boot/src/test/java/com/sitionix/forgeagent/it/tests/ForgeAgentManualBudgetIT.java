@@ -30,7 +30,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @IntegrationTest
 @TestPropertySource(properties = "forge.agent.runtime.max-node-runs-per-workflow-run=3")
-class ForgeAgentManualBudgetIT {
+class ForgeAgentManualBudgetIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     @Autowired private ForgeAgentTestManager forgeIt;
     @Autowired private WorkflowUseCases workflows;
     @Autowired private WorkflowRunUseCases runs;

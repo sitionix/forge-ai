@@ -5,8 +5,6 @@ import static org.mockito.Mockito.*;
 
 import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessAccessorPairing;
 import com.sitionix.forgeagent.application.remoteaccess.RemoteAccessGrantorPairing;
-import com.sitionix.forgeagent.api.security.McpManagementProperties;
-import com.sitionix.forgeagent.domain.port.McpConnectionRepository;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -26,10 +24,6 @@ class RemoteAccessPairingReconciliationTest {
         var unrelatedTick = new CountDownLatch(1);
         var accessor = mock(RemoteAccessAccessorPairing.class);
         var grantor = mock(RemoteAccessGrantorPairing.class);
-        var mcpRepository = mock(McpConnectionRepository.class);
-        var downgradeGuard = new McpDowngradeGuard(new McpManagementProperties(), mcpRepository);
-        downgradeGuard.check();
-        verify(mcpRepository).hasRetainedCredentials();
         doAnswer(call -> {
             entered.countDown();
             release.await(10, TimeUnit.SECONDS);
@@ -39,12 +33,12 @@ class RemoteAccessPairingReconciliationTest {
             context.register(Scheduling.class);
             context.registerBean(RemoteAccessAccessorPairing.class, () -> accessor);
             context.registerBean(RemoteAccessGrantorPairing.class, () -> grantor);
-            context.registerBean("mcpDowngradeGuard", McpDowngradeGuard.class, () -> downgradeGuard);
             context.registerBean(Ticker.class, () -> new Ticker(entered, unrelatedTick));
             context.registerBean(com.sitionix.forgeagent.application.remoteaccess.RemoteAccessAccessorExecution.class,
                     () -> mock(com.sitionix.forgeagent.application.remoteaccess.RemoteAccessAccessorExecution.class));
             context.register(RemoteAccessPairingReconciliation.class);
             context.refresh();
+            context.getBean(RemoteAccessPairingReconciliation.class).start();
             try {
                 assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
                 assertThat(unrelatedTick.await(1, TimeUnit.SECONDS))

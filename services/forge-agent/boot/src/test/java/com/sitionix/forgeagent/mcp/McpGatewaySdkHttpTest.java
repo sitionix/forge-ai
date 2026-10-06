@@ -39,7 +39,7 @@ import org.springframework.context.annotation.Import;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         classes = McpGatewaySdkHttpTest.TestApp.class,
-        properties = {"forge.mcp.enabled=true", "forge.mcp.gateway.max-request-bytes=1024"})
+        properties = { "forge.mcp.gateway.max-request-bytes=1024"})
 class McpGatewaySdkHttpTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class,

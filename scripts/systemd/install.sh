@@ -37,6 +37,14 @@ run_privileged() {
   fi
 }
 
+# Ubuntu 22.04 uses Python 3.10, before TOML parsing joined the standard library.
+# The isolated root helper can use only a system-installed backport.
+if ! /usr/bin/python3 -I -c 'import tomllib' >/dev/null 2>&1 \
+    && ! /usr/bin/python3 -I -c 'import tomli' >/dev/null 2>&1; then
+  run_privileged /usr/bin/apt-get install -y python3-tomli
+  /usr/bin/python3 -I -c 'import tomli'
+fi
+
 tmp_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "${tmp_dir}"
@@ -47,6 +55,38 @@ trap cleanup EXIT
 /usr/bin/python3 -I "${FORGE_AI_HOME}/scripts/remote-access/prepare_enable.py" manifest "${FORGE_AI_HOME}" "${tmp_dir}/enable.json" "${AGENT_JAR}"
 
 run_privileged install -d -m 0755 "${UNIT_DIR}" "${ENV_DIR}" "${BOOTSTRAP_BIN_DIR}"
+# Provision the main runtime before replacing its old environment or restarting it.
+# An optional caller-supplied DB credential travels through an owner-only file only.
+/usr/bin/python3 -I - "${tmp_dir}/database-input" <<'PYDB'
+import os, pathlib
+path = pathlib.Path(__import__('sys').argv[1])
+fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+with os.fdopen(fd, 'wb') as stream:
+    os.fchmod(stream.fileno(), 0o600)
+    stream.write(os.environ.get('FORGE_AGENT_DB_PASSWORD', '').encode())
+PYDB
+codex_source="$(/usr/bin/python3 -I - "$(command -v codex)" <<'PYCODEX'
+import pathlib, platform, sys
+cli = pathlib.Path(sys.argv[1]).resolve()
+architecture = {'x86_64': ('x64', 'x86_64'), 'aarch64': ('arm64', 'aarch64')}[platform.machine()]
+package, cpu = architecture
+triple = cpu + '-unknown-linux-musl'
+root = cli.parent.parent
+candidates = [root / 'node_modules' / '@openai' / ('codex-linux-' + package) / 'vendor' / triple,
+              root / 'vendor' / triple, root]
+for candidate in candidates:
+    if (candidate / 'bin/codex').is_file() and (candidate / 'codex-resources/bwrap').is_file():
+        print(candidate)
+        break
+else:
+    raise SystemExit('Installed native Codex/resources are required')
+PYCODEX
+)"
+run_privileged /usr/bin/python3 -I "${FORGE_AI_HOME}/scripts/runtime/install_mcp.py" \
+  "${FORGE_AI_HOME}" "${FORGE_SYSTEMD_USER:-$(id -un)}" "${codex_source}" "${tmp_dir}/database-input" \
+  --material-root "${FORGE_MCP_MATERIAL_DIR:-${ENV_DIR}/mcp}" \
+  --workspace-root "${FORGE_AGENT_WORKSPACE_ROOT:-/srv/forge/workspaces/forge-projects}" \
+  --existing-environment "${ENV_FILE}"
 run_privileged install -m 0600 "${tmp_dir}/forge-ai.env" "${ENV_FILE}"
 run_privileged install -m 0600 "${tmp_dir}/enable.json" "${BOOTSTRAP_MANIFEST}"
 run_privileged install -m 0755 "${FORGE_AI_HOME}/scripts/remote-access/bootstrap.py" "${BOOTSTRAP_BIN_DIR}/bootstrap.py"

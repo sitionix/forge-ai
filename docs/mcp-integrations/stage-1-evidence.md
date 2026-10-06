@@ -1,5 +1,10 @@
 # MCP Integrations Stage 1 — evidence / PR #148 corrections
 
+> Historical evidence: the 2026-09-28 normal-runtime amendment removes Forge
+> operator login/session and internal Nexus → Agent bearer. Earlier auth assertions
+> below describe the previous implementation, not current operating prerequisites.
+> See [current normal-runtime evidence](normal-runtime-evidence.md).
+
 ## PR #148 — Codex lifecycle та Nexus error boundary (2026-09-24)
 
 **Root cause:** `CodexJsonRpcTransport` запускав stdout reader до присвоєння обох reader references. Ранній EOF міг викликати `invalidate → closeManagedProcess → completeCleanup → joinReader`, поки `stderrReaderThread` був `null`. Join падав, owned stop уже виконувався, але `cleanupComplete` залишався `false`. Новий deterministic `stdoutEofDuringConstructionWaitsForBothReadersBeforeConfirmingCleanup` керує цим порядком через latches і bounded joins: на старій реалізації **RED** (7 tests, 1 failure, expected cleanupComplete=true); після створення обох unstarted readers та їх запуску під `lifecycleLock` **GREEN**. Інші lifecycle сценарії (звичайний close, EOF за живого pipe, уже завершений pipe, response timeout, blocked stdin, retry невдалого stop, recovery) залишилися в focused suite. Три повторні focused runs: по **27 tests, 0 failures/errors/skips**, `BUILD SUCCESS`.

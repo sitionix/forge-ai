@@ -41,7 +41,7 @@ public final class UnreadCodexDispatchFixture implements AutoCloseable {
         final var mapper = new ObjectMapper();
         this.client = new CodexAppServerClient(mapper,
                 cwd -> new StartedCodexAppServer(this.process, List.of("unread-provider"), Instant.now()),
-                properties, new CodexRuntimeWorkspace(properties));
+                properties, new CodexRuntimeWorkspace(properties), null, BootCodexAuthorizationFixture.approvedGate());
         this.executor = new CodexAgentExecutor(mapper, this.client, leases, null, (claim, write) -> {
             try {
                 guard.dispatch(claim, () -> {

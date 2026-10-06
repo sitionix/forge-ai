@@ -8,6 +8,11 @@ public record CodexRuntimeProviderResponse(
         String displayName,
         RuntimeProviderStatus status,
         String version,
-        List<CodexRuntimeModelResponse> models
+        List<CodexRuntimeModelResponse> models,
+        String authState
 ) {
+    public CodexRuntimeProviderResponse(String providerId, String displayName, RuntimeProviderStatus status,
+            String version, List<CodexRuntimeModelResponse> models) {
+        this(providerId, displayName, status, version, models, "SIGNED_OUT");
+    }
 }

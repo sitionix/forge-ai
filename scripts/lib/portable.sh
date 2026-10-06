@@ -38,3 +38,22 @@ forge_file_size() {
   [[ -f "${path}" ]] || return 1
   wc -c < "${path}" | tr -d ' '
 }
+
+forge_java_command() {
+  if [[ -n "${FORGE_JAVA_COMMAND:-}" ]]; then
+    printf '%s\n' "${FORGE_JAVA_COMMAND}"
+    return
+  fi
+  if [[ -n "${JAVA_HOME:-}" && -x "${JAVA_HOME}/bin/java" ]]; then
+    printf '%s\n' "${JAVA_HOME}/bin/java"
+    return
+  fi
+  if [[ -x "${HOME:?HOME is required}/.sdkman/candidates/java/current/bin/java" ]]; then
+    printf '%s\n' "${HOME}/.sdkman/candidates/java/current/bin/java"
+    return
+  fi
+  command -v java 2>/dev/null || {
+    echo "Java is required to run Forge Agent and Nexus." >&2
+    return 1
+  }
+}

@@ -45,10 +45,7 @@ final class CodexAgentExecutionEventMapper {
 
     AgentExecutionEventCandidate mcpDiagnostic(final McpExecutionSelection.Diagnostic diagnostic,
                                                 final Instant observedAt) {
-        final String code = switch (diagnostic.code()) {
-            case "CONNECTION_UNAVAILABLE", "MCP_CONNECTION_UNAVAILABLE", "MCP_TOOL_UNAVAILABLE" -> diagnostic.code();
-            default -> "MCP_UNAVAILABLE";
-        };
+        final String code = diagnostic.code().name();
         final ObjectNode payload = this.objectMapper.createObjectNode();
         payload.put("connectionId", diagnostic.connectionId().toString());
         payload.put("code", code);
@@ -274,19 +271,30 @@ final class CodexAgentExecutionEventMapper {
     private Optional<AgentExecutionEventCandidate> diagnostic(final AgentExecutionEventType type,
                                                                final JsonNode params,
                                                                final Instant observedAt) {
+        final boolean retrying = type == AgentExecutionEventType.ERROR
+                && params.path("willRetry").isBoolean()
+                && params.path("willRetry").asBoolean();
+        final AgentExecutionEventStatus status = type == AgentExecutionEventType.ERROR && !retrying
+                ? AgentExecutionEventStatus.FAILED : null;
         if (this.mcpMode) {
             final ObjectNode payload = this.objectMapper.createObjectNode();
-            payload.put("message", "MCP provider diagnostic.");
-            return Optional.of(this.event(type, type == AgentExecutionEventType.ERROR
-                    ? AgentExecutionEventStatus.FAILED : null, null, null, payload, observedAt));
+            payload.put("message", "Provider diagnostic during MCP-enabled execution.");
+            payload.put("providerCode", ProviderDiagnosticCode.from(
+                    params.path("error").path("codexErrorInfo")).name());
+            if (type == AgentExecutionEventType.ERROR && params.path("willRetry").isBoolean()) {
+                payload.put("willRetry", retrying);
+            }
+            return Optional.of(this.event(type, status, null, null, payload, observedAt));
         }
         final String message = firstText(params.path("error"), "message");
         final String resolved = message == null ? firstText(params, "message", "summary") : message;
         if (resolved == null) return Optional.empty();
         final ObjectNode payload = this.objectMapper.createObjectNode();
         this.putBounded(payload, "message", resolved);
-        return Optional.of(this.event(type, type == AgentExecutionEventType.ERROR
-                ? AgentExecutionEventStatus.FAILED : null, null, null, payload, observedAt));
+        if (type == AgentExecutionEventType.ERROR && params.path("willRetry").isBoolean()) {
+            payload.put("willRetry", retrying);
+        }
+        return Optional.of(this.event(type, status, null, null, payload, observedAt));
     }
 
     private AgentExecutionEventCandidate event(final AgentExecutionEventType type,
@@ -354,6 +362,51 @@ final class CodexAgentExecutionEventMapper {
                 target.set(targetField, value.deepCopy());
                 return;
             }
+        }
+    }
+
+    private enum ProviderDiagnosticCode {
+        CONTEXT_WINDOW_EXCEEDED("contextWindowExceeded"),
+        SESSION_BUDGET_EXCEEDED("sessionBudgetExceeded"),
+        USAGE_LIMIT_EXCEEDED("usageLimitExceeded"),
+        RATE_LIMIT_EXCEEDED("rateLimitExceeded"),
+        FLEX_UNAVAILABLE("flexUnavailable"),
+        SERVER_OVERLOADED("serverOverloaded"),
+        CYBER_POLICY("cyberPolicy"),
+        MISALIGNMENT_POLICY_VIOLATION("misalignmentPolicyViolation"),
+        TOO_MANY_DENIALS("tooManyDenials"),
+        INTERNAL_SERVER_ERROR("internalServerError"),
+        UNAUTHORIZED("unauthorized"),
+        BAD_REQUEST("badRequest"),
+        THREAD_ROLLBACK_FAILED("threadRollbackFailed"),
+        SANDBOX_ERROR("sandboxError"),
+        OTHER("other"),
+        HTTP_CONNECTION_FAILED("httpConnectionFailed"),
+        RESPONSE_STREAM_CONNECTION_FAILED("responseStreamConnectionFailed"),
+        RESPONSE_STREAM_DISCONNECTED("responseStreamDisconnected"),
+        RESPONSE_TOO_MANY_FAILED_ATTEMPTS("responseTooManyFailedAttempts"),
+        ACTIVE_TURN_NOT_STEERABLE("activeTurnNotSteerable"),
+        UNKNOWN(null);
+
+        private final String wireValue;
+
+        ProviderDiagnosticCode(final String wireValue) {
+            this.wireValue = wireValue;
+        }
+
+        static ProviderDiagnosticCode from(final JsonNode value) {
+            if (value != null && value.isTextual()) {
+                for (final ProviderDiagnosticCode code : values()) {
+                    if (code.wireValue != null && code.wireValue.equals(value.asText())) return code;
+                }
+                return UNKNOWN;
+            }
+            if (value != null && value.isObject()) {
+                for (final ProviderDiagnosticCode code : values()) {
+                    if (code.wireValue != null && value.has(code.wireValue)) return code;
+                }
+            }
+            return UNKNOWN;
         }
     }
 

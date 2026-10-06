@@ -15,10 +15,9 @@ import org.springframework.core.Ordered;
 @ConditionalOnProperty(name="forge.remote-access.enabled",havingValue="true")
 public class RemoteAccessOperatorConfiguration {
     /** Let the servlet container apply its canonical path mapping before the security firewall. */
-    @Bean org.springframework.boot.web.servlet.DelegatingFilterProxyRegistrationBean remoteAccessSecurityRegistration(@Value("${forge.mcp.enabled:false}") boolean combined) {
+    @Bean org.springframework.boot.web.servlet.DelegatingFilterProxyRegistrationBean remoteAccessSecurityRegistration() {
         var registration=new org.springframework.boot.web.servlet.DelegatingFilterProxyRegistrationBean("springSecurityFilterChain");
         registration.setUrlPatterns(java.util.List.of("/api/v1/infrastructure/agents/remote-access", "/api/v1/infrastructure/agents/remote-access/*"));
-        if (combined) registration.setUrlPatterns(java.util.List.of("/*"));
         registration.setDispatcherTypes(java.util.EnumSet.allOf(jakarta.servlet.DispatcherType.class));
         registration.setAsyncSupported(true);
         registration.setOrder(-100);
@@ -34,12 +33,10 @@ public class RemoteAccessOperatorConfiguration {
     }
     @Bean OperatorBind operatorBind(RemoteAccessOperatorAuthentication authentication,
             @Value("${server.servlet.context-path:}") String contextPath,
-            @Value("${server.forward-headers-strategy:none}") String forwarding,
-            @Value("${forge.mcp.enabled:false}") boolean combined) { return new OperatorBind(authentication,contextPath,forwarding,combined); }
+            @Value("${server.forward-headers-strategy:none}") String forwarding) { return new OperatorBind(authentication,contextPath,forwarding); }
     static final class OperatorBind implements WebServerFactoryCustomizer<TomcatServletWebServerFactory>,Ordered {
-        private final RemoteAccessOperatorAuthentication authentication;private final String contextPath; private final String forwarding; private final boolean combined;
-        OperatorBind(RemoteAccessOperatorAuthentication authentication,String contextPath,String forwarding) { this(authentication,contextPath,forwarding,false); }
-        OperatorBind(RemoteAccessOperatorAuthentication authentication,String contextPath,String forwarding,boolean combined) { this.authentication=authentication;this.contextPath=contextPath;this.forwarding=forwarding;this.combined=combined; }
+        private final RemoteAccessOperatorAuthentication authentication;private final String contextPath; private final String forwarding;
+        OperatorBind(RemoteAccessOperatorAuthentication authentication,String contextPath,String forwarding) { this.authentication=authentication;this.contextPath=contextPath;this.forwarding=forwarding; }
         public int getOrder() { return Ordered.LOWEST_PRECEDENCE; }
         public void customize(TomcatServletWebServerFactory factory) {
             if (!"none".equalsIgnoreCase(forwarding)) throw new IllegalStateException("Remote Access must not trust forwarded headers");
@@ -49,7 +46,7 @@ public class RemoteAccessOperatorConfiguration {
             factory.getSession().getCookie().setSecure("https".equals(authentication.origin().getScheme()));
             factory.getSession().getCookie().setSameSite(org.springframework.boot.web.server.Cookie.SameSite.STRICT);
             factory.getSession().getCookie().setName("FORGE_REMOTE_OPERATOR");
-            factory.getSession().getCookie().setPath(combined?(contextPath.isEmpty()?"/":contextPath):contextPath+"/api/v1/infrastructure/agents/remote-access");
+            factory.getSession().getCookie().setPath(contextPath+"/api/v1/infrastructure/agents/remote-access");
         }
     }
 }

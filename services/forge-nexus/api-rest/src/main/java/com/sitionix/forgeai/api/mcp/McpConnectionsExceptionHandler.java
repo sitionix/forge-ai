@@ -26,7 +26,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 @Slf4j
 @RequiredArgsConstructor
 @Order(Ordered.HIGHEST_PRECEDENCE)
-@RestControllerAdvice(assignableTypes={ForgeAiMcpConnectionsController.class,ForgeAiMcpAvailableController.class})
+@RestControllerAdvice(assignableTypes={ForgeAiMcpConnectionsController.class,ForgeAiMcpAvailableController.class,ForgeAiMcpOAuthController.class})
 public class McpConnectionsExceptionHandler {
     private final ObjectMapper objectMapper;
 
@@ -36,6 +36,10 @@ public class McpConnectionsExceptionHandler {
         return response(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "MCP request is invalid.");
     }
 
+    @ExceptionHandler(McpOAuthBrowserDeniedException.class)
+    public ResponseEntity<InfrastructureErrorResponse> oauthBrowserDenied(){
+        return response(HttpStatus.FORBIDDEN,"MCP_OAUTH_BROWSER_DENIED","OAuth browser request was rejected.");
+    }
     @ExceptionHandler(NoSuchElementException.class)
     public ResponseEntity<InfrastructureErrorResponse> missing() {
         return response(HttpStatus.NOT_FOUND, "NOT_FOUND", "MCP connection not found.");

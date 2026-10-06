@@ -55,6 +55,6 @@ class CodexMcpConfigurationTest {
     @Test void rejectsNonLoopbackGateway() {
         assertThatThrownBy(() -> configuration.apply(json.createObjectNode(),
                 new McpExecutionSelection(List.of(), List.of()), URI.create("http://example.org:8080"),
-                Path.of("/tmp/work"))).isInstanceOf(CodexTransportException.class);
+                Path.of("/tmp/work"))).isInstanceOf(CodexMcpExecutionException.class);
     }
 }

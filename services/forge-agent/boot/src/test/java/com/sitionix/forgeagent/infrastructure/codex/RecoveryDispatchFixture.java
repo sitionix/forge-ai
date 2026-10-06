@@ -40,7 +40,7 @@ public final class RecoveryDispatchFixture implements AutoCloseable {
         properties.setTurnTimeout(Duration.ofSeconds(10));
         this.client = new CodexAppServerClient(this.mapper,
                 cwd -> new StartedCodexAppServer(this.process, List.of("fake-codex"), Instant.now()),
-                properties, new CodexRuntimeWorkspace(properties));
+                properties, new CodexRuntimeWorkspace(properties), null, BootCodexAuthorizationFixture.approvedGate());
         final var proxy = new ProxyFactory(leases);
         proxy.setProxyTargetClass(true);
         proxy.addAdvice((org.aopalliance.intercept.MethodInterceptor) invocation -> {

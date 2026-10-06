@@ -7,7 +7,6 @@ import java.time.Instant;
 import java.util.List;
 import com.sitionix.forgeagent.domain.model.McpRuntimeLaunchGrants;
 import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeProcessLauncher;
-import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -16,10 +15,6 @@ final class DefaultCodexAppServerProcessStarter implements CodexAppServerProcess
 
     private final CodexAppServerProperties properties;
     private final RuntimeProcessLauncher launcher;
-
-    DefaultCodexAppServerProcessStarter(CodexAppServerProperties properties) {
-        this(properties, new RuntimeProcessLauncher(RuntimeBoundaryProperties.disabled()));
-    }
 
     @Autowired
     DefaultCodexAppServerProcessStarter(CodexAppServerProperties properties, RuntimeProcessLauncher launcher) {
@@ -45,17 +40,10 @@ final class DefaultCodexAppServerProcessStarter implements CodexAppServerProcess
             throw new CodexTransportException("Codex app-server working directory is unavailable");
         }
         try {
-            if (this.launcher.enabled()) {
-                return new StartedCodexAppServer(grants == null
-                        ? this.launcher.startCodex(launchDirectory)
-                        : this.launcher.startCodex(launchDirectory, grants.environment()),
+            return new StartedCodexAppServer(grants == null
+                    ? this.launcher.startCodex(launchDirectory)
+                    : this.launcher.startCodex(launchDirectory, grants.environment()),
                     List.of("codex", "app-server", "--stdio"), Instant.now());
-            }
-            if (grants != null) throw new CodexTransportException("Isolated Codex runtime is unavailable");
-            final ProcessBuilder builder = new ProcessBuilder(command);
-            builder.directory(launchDirectory.toFile());
-            final Process process = builder.start();
-            return new StartedCodexAppServer(process, command, Instant.now());
         } catch (final IOException | IllegalStateException e) {
             throw new CodexTransportException("Failed to start Codex app-server", e);
         }

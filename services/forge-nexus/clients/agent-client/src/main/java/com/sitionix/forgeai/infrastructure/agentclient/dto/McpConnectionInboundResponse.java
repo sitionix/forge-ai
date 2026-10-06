@@ -7,7 +7,7 @@ import java.util.UUID;
 
 public record McpConnectionInboundResponse(UUID id,String displayName,URI endpoint,String transport,
         String authType,boolean enabled,ProjectAccess projectAccess,Set<AllowedTool> allowedTools,
-        boolean credentialConfigured,Instant createdAt,Instant updatedAt,Instant checkedAt,String safeDiagnostic) {
+        boolean credentialConfigured,Instant createdAt,Instant updatedAt,Instant checkedAt,String safeDiagnostic,com.sitionix.forgeai.domain.model.mcp.McpOAuthConfiguration oauthConfiguration) {
     public record ProjectAccess(String scope,Set<UUID> projectIds){}
     public record AllowedTool(String name,String schemaFingerprint){}
 }

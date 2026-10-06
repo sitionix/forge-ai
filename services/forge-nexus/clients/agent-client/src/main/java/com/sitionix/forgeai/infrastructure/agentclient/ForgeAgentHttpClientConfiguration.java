@@ -1,16 +1,13 @@
 package com.sitionix.forgeai.infrastructure.agentclient;
 
 import java.net.http.HttpClient;
-import java.nio.file.Path;
-import org.springframework.beans.factory.ObjectProvider;
+import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Condition;
-import org.springframework.context.annotation.ConditionContext;
-import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.support.RestClientAdapter;
@@ -21,32 +18,21 @@ import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 class ForgeAgentHttpClientConfiguration {
 
   @Bean
-  @Conditional(McpEnabled.class)
-  AgentServiceCredential agentServiceCredential(
-      @Value("${forge.mcp.agent-service-credential-file}") final Path file,
-      final ForgeAgentClientProperties properties) {
-    return new AgentServiceCredential(file, properties.getBaseUrl());
-  }
-
-  @Bean
   ForgeAgentHttpClient forgeAgentHttpClient(
       final ForgeAgentClientProperties properties, final RestClient.Builder restClientBuilder,
-      final ObjectProvider<AgentServiceCredential> credentialProvider,
-      @Value("${forge.mcp.enabled:false}") final boolean enabled) {
-    final AgentServiceCredential credential = enabled ? credentialProvider.getObject() : null;
-    if (credential != null) {
-      restClientBuilder.requestInterceptor((request, body, execution) -> {
-        request.getHeaders().set(org.springframework.http.HttpHeaders.AUTHORIZATION,
-            credential.authorization());
-        return execution.execute(request, body);
-      });
-    }
+      @Value("${forge.mcp.catalog.agent-read-timeout:55s}") final Duration catalogReadTimeout) {
     final RestClient restClient =
         restClientBuilder
             .baseUrl(properties.getBaseUrl().toString())
-            .requestFactory(this.requestFactory(properties))
+            .requestFactory(this.requestFactory(properties, catalogReadTimeout))
             .build();
     return HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient))
+        .customArgumentResolver((argument, parameter, values) -> {
+          if (parameter.getParameterType() != com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingHeader.class) return false;
+          var binding = (com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingHeader) argument;
+          values.addHeader("X-Forge-Browser-Binding", binding.value());
+          return true;
+        })
         .build()
         .createClient(ForgeAgentHttpClient.class);
   }
@@ -54,20 +40,18 @@ class ForgeAgentHttpClientConfiguration {
   @Bean
   ForgeAgentLogStreamingHttpClient forgeAgentLogStreamingHttpClient(
       final ForgeAgentClientProperties properties,
-      final ForgeAgentClientCallExecutor callExecutor,
-      final ObjectProvider<AgentServiceCredential> credentialProvider,
-      @Value("${forge.mcp.enabled:false}") final boolean enabled) {
-    final AgentServiceCredential credential = enabled ? credentialProvider.getObject() : null;
+      final ForgeAgentClientCallExecutor callExecutor) {
     final HttpClient httpClient =
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(properties.getConnectTimeout())
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
-    return new ForgeAgentLogStreamingHttpClient(httpClient, properties, callExecutor, credential);
+    return new ForgeAgentLogStreamingHttpClient(httpClient, properties, callExecutor);
   }
 
-  private JdkClientHttpRequestFactory requestFactory(final ForgeAgentClientProperties properties) {
+  private ClientHttpRequestFactory requestFactory(
+      final ForgeAgentClientProperties properties, final Duration catalogReadTimeout) {
     final HttpClient httpClient =
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
@@ -76,13 +60,13 @@ class ForgeAgentHttpClientConfiguration {
             .build();
     final JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
     requestFactory.setReadTimeout(properties.getReadTimeout());
-    return requestFactory;
+    final JdkClientHttpRequestFactory catalogFactory = new JdkClientHttpRequestFactory(httpClient);
+    catalogFactory.setReadTimeout(catalogReadTimeout);
+    return (uri, method) -> {
+      final boolean catalog = method == HttpMethod.GET
+          && uri.getPath().endsWith("/api/v1/integrations/mcp/available");
+      return (catalog ? catalogFactory : requestFactory).createRequest(uri, method);
+    };
   }
 
-  static final class McpEnabled implements Condition {
-    @Override
-    public boolean matches(final ConditionContext context, final AnnotatedTypeMetadata metadata) {
-      return Boolean.parseBoolean(context.getEnvironment().getProperty("forge.mcp.enabled", "false"));
-    }
-  }
 }

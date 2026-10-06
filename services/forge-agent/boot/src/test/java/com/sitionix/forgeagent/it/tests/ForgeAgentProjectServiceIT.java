@@ -20,7 +20,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.test.web.servlet.MockMvc;
 
 @IntegrationTest
-class ForgeAgentProjectServiceIT {
+class ForgeAgentProjectServiceIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     private static final UUID PROJECT_ID = UUID.fromString("90000000-0000-4000-8000-000000000001");
     private static final UUID OTHER_PROJECT_ID = UUID.fromString("10000000-0000-4000-8000-000000000002");
     private static final UUID SEEDED_SERVICE_ID = UUID.fromString("90000000-0000-4000-8000-000000000010");

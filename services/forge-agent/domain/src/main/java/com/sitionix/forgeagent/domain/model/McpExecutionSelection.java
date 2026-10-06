@@ -19,9 +19,15 @@ public record McpExecutionSelection(List<Entry> entries, List<Diagnostic> diagno
         }
     }
 
-    public record Diagnostic(UUID connectionId, String code) {
+    public enum DiagnosticCode {
+        CONNECTION_UNAVAILABLE,
+        MCP_CONNECTION_UNAVAILABLE,
+        MCP_TOOL_UNAVAILABLE
+    }
+
+    public record Diagnostic(UUID connectionId, DiagnosticCode code) {
         public Diagnostic {
-            if (connectionId == null || code == null || code.isBlank())
+            if (connectionId == null || code == null)
                 throw new IllegalArgumentException("Invalid MCP execution diagnostic");
         }
     }

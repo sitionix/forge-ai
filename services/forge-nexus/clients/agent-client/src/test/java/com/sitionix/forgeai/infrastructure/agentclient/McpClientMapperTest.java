@@ -27,7 +27,7 @@ class McpClientMapperTest {
         var inbound = new McpAvailablePageInbound(List.of(
                 new McpAvailablePageInbound.McpAvailableServerInbound(
                         "io.example/search", "Search", "Find records", "1.0.0",
-                        "https://{tenant_id}.example.org/mcp")), "next");
+                        "https://{tenant_id}.example.org/mcp", "https://images.example.org/search.png")), "next");
 
         var page = mapper.toDomain(inbound);
 
@@ -37,6 +37,7 @@ class McpClientMapperTest {
         assertThat(page.servers().getFirst().title()).isEqualTo("Search");
         assertThat(page.servers().getFirst().description()).isEqualTo("Find records");
         assertThat(page.servers().getFirst().version()).isEqualTo("1.0.0");
+        assertThat(page.servers().getFirst().iconUrl()).isEqualTo("https://images.example.org/search.png");
         assertThat(page.servers().getFirst().endpoint())
                 .isEqualTo("https://{tenant_id}.example.org/mcp");
     }

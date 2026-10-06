@@ -15,6 +15,18 @@ class CodexRuntimeAdapterTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Test void model_catalog_is_not_authentication() throws Exception {
+        var client = new FakeClient("codex 1.2.3");
+        client.add("{\"data\":[],\"nextCursor\":null}");
+        var authorization = new ForgeAuthorizationFixture(false);
+        var provider = new CodexRuntimeAdapter(objectMapper, client, new CodexAppServerProperties(),
+                authorization.service).getModels();
+        assertThat(provider.status()).isEqualTo(RuntimeProviderStatus.READY);
+        assertThat(provider.authState()).isEqualTo("SIGNED_OUT");
+        org.assertj.core.api.Assertions.assertThatThrownBy(authorization.gate::requireAuthorized)
+                .hasMessage("CODEX_AUTH_REQUIRED");
+    }
+
     @Test
     void mapsVisibleModelsAndReasoningEffortsFromModelList() throws Exception {
         final FakeClient client = new FakeClient("codex 1.2.3");
@@ -91,7 +103,7 @@ class CodexRuntimeAdapterTest {
         final CodexAppServerProperties properties = new CodexAppServerProperties();
         properties.setModelListMaxPages(1);
 
-        final var provider = new CodexRuntimeAdapter(this.objectMapper, client, properties).getModels();
+        final var provider = new CodexRuntimeAdapter(this.objectMapper, client, properties, new ForgeAuthorizationFixture(false).service).getModels();
 
         assertThat(provider.status()).isEqualTo(RuntimeProviderStatus.DEGRADED);
         assertThat(provider.models()).isEmpty();
@@ -166,7 +178,7 @@ class CodexRuntimeAdapterTest {
     }
 
     private CodexRuntimeAdapter adapter(final FakeClient client) {
-        return new CodexRuntimeAdapter(this.objectMapper, client, new CodexAppServerProperties());
+        return new CodexRuntimeAdapter(this.objectMapper, client, new CodexAppServerProperties(), new ForgeAuthorizationFixture(false).service);
     }
 
     private final class FakeClient implements CodexClient {

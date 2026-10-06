@@ -1,6 +1,6 @@
-import type {McpApi,McpConnection,McpTool,McpProject} from './mcp-api.js';
+import type {McpApi,McpConnection,McpTool,McpProject,McpAvailableServer} from './mcp-api.js';
 export class McpConnectionForm {
-  constructor(options:{document:Document;window:Window;api:McpApi;onConfirmed:(id:string)=>void;onError?:(error:unknown)=>void});
+  constructor(options:{document:Document;window:Window;api:McpApi;onConfirmed:(id:string)=>void;onError?:(error:unknown)=>void;onClose?:(saved:McpConnection|null)=>void});
   openCreate(projects:McpProject[]):void;
   openEdit(connection:McpConnection,inventory:McpTool[],projects:McpProject[]):void;
   close():void;

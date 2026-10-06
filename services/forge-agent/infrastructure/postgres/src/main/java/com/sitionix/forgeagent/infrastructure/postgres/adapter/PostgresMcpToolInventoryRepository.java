@@ -31,12 +31,14 @@ public class PostgresMcpToolInventoryRepository implements McpToolInventoryRepos
     }
 
     @Override public void replace(UUID installation, UUID id, URI endpoint, McpAuthType authType,
-                                  McpEncryptedCredential credential, List<McpToolSummary> tools) {
+                                  McpEncryptedCredential credential, List<McpToolSummary> tools, UUID oauthAuthorizationId) {
         if (tools == null) throw new IllegalArgumentException("Invalid MCP inventory");
         transactions.executeWithoutResult(status -> {
             McpConnection current = lock(installation, id);
             if (!current.endpoint().equals(endpoint) || current.authType() != authType
-                    || !Objects.equals(connections.credential(installation, id).orElse(null), credential))
+                    || (authType == McpAuthType.OAUTH
+                        ? oauthAuthorizationId == null || !oauthAuthorizationId.equals(current.oauthAuthorizationId())
+                        : !Objects.equals(connections.credential(installation, id).orElse(null), credential)))
                 throw new IllegalStateException("MCP connection changed during probe");
             jdbc.update("DELETE FROM mcp_discovered_tools WHERE connection_id=?", id);
             for (McpToolSummary tool : tools)

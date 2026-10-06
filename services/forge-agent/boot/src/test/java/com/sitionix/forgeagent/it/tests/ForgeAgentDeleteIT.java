@@ -46,7 +46,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 
 @IntegrationTest
-class ForgeAgentDeleteIT {
+class ForgeAgentDeleteIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     @Autowired
     private ForgeAgentTestManager forgeIt;

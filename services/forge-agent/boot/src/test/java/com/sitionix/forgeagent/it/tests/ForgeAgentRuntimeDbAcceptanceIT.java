@@ -12,7 +12,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @IntegrationTest
-class ForgeAgentRuntimeDbAcceptanceIT {
+class ForgeAgentRuntimeDbAcceptanceIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
 
     // ForgeIT discovers the test contract from a non-static ForgeIT-typed field.
     @Autowired

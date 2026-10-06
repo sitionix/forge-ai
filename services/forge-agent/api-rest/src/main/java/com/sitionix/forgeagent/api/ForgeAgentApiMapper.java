@@ -622,7 +622,8 @@ class ForgeAgentApiMapper {
                 provider.displayName(),
                 provider.status(),
                 provider.version(),
-                provider.models().stream().map(this::toResponse).toList()
+                provider.models().stream().map(this::toResponse).toList(),
+                provider.authState()
         );
     }
 

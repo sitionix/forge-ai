@@ -35,31 +35,10 @@ class LocalCliDockerLogAdapterTest {
   }
 
   @Test
-  void composeDiscoveryUsesResolvedConfigAndReturnsTheFile(@TempDir Path repository)
-      throws Exception {
-    Files.writeString(repository.resolve("compose.yaml"), "services: {}\n");
-    var executor = new FakeExecutor(List.of("web", "worker"));
-    var result = new LocalCliDockerLogAdapter(executor).discoverComposeServices(repository, null);
-    assertThat(executor.command)
-        .containsExactly(
-            "docker",
-            "compose",
-            "-f",
-            repository.resolve("compose.yaml").toString(),
-            "config",
-            "--services");
-    assertThat(result).extracting(LogTargetCandidate::id).containsExactly("web", "worker");
-    assertThat(result)
-        .allMatch(c -> repository.resolve("compose.yaml").toString().equals(c.composeFile()));
-  }
-
-  @Test
-  void enabledModeRefusesEveryLocalComposeEntryBeforeExecutor(@TempDir Path repository) throws Exception {
+  void isolatedRuntimeRefusesEveryLocalComposeEntryBeforeExecutor(@TempDir Path repository) throws Exception {
     Files.writeString(repository.resolve("compose.yaml"), "services: {}\n");
     var executor = new FakeExecutor(List.of());
-    var adapter = new LocalCliDockerLogAdapter(executor,
-        new com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryProperties(true,
-            "/usr/local/libexec/forge-runtime-launcher"));
+    var adapter = new LocalCliDockerLogAdapter(executor);
     assertThatThrownBy(() -> adapter.discoverComposeServices(repository, null))
         .hasMessage("Local Compose is unavailable with runtime isolation enabled");
     assertThatThrownBy(() -> adapter.validate(null, "web", "compose.yaml", null))

@@ -23,6 +23,17 @@ class ForgeAgentExceptionHandlerTest {
 
     private ForgeAgentExceptionHandler handler;
 
+    @Test void authorization_errors_return_safe_distinct_codes() {
+        for (String code : java.util.List.of("CODEX_AUTH_REQUIRED", "CODEX_LOGOUT_REQUIRED", "CODEX_AUTH_CLEANUP_FAILED")) {
+            var response = this.handler.handleRuntime(new IllegalStateException("private provider details",
+                    new com.sitionix.forgeagent.domain.exception.LlmAuthorizationException(code)), this.request());
+            assertThat(response.getStatusCode()).isEqualTo(code.equals("CODEX_AUTH_REQUIRED")
+                    ? HttpStatus.CONFLICT : HttpStatus.SERVICE_UNAVAILABLE);
+            assertThat(response.getBody().code()).isEqualTo(code);
+            assertThat(response.getBody().message()).isEqualTo(code);
+        }
+    }
+
     @BeforeEach
     void setUp() {
         this.handler = new ForgeAgentExceptionHandler();

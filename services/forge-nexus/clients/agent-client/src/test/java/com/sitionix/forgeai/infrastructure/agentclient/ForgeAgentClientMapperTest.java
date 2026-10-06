@@ -101,6 +101,16 @@ class ForgeAgentClientMapperTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ForgeAgentClientMapper mapper = new ForgeAgentClientMapper(this.objectMapper);
 
+    @Test void runtime_authorization_is_preserved_independently_of_process_status() {
+        var response = new com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeResponse(List.of(
+                new com.sitionix.forgeai.infrastructure.agentclient.dto.AgentRuntimeProviderResponse(
+                        "codex", "Codex", com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus.READY,
+                        "0.160.0", List.of(), "SIGNED_OUT")));
+        var provider = this.mapper.toDomain(response).providers().getFirst();
+        assertThat(provider.status()).isEqualTo(com.sitionix.forgeai.domain.model.agentproxy.AgentRuntimeProviderStatus.READY);
+        assertThat(provider.authState()).isEqualTo("SIGNED_OUT");
+    }
+
     @Test
     void workingRepositoriesSurviveClientRequestAndResponseMapping() {
         final var ids = List.of(UUID.randomUUID(), UUID.randomUUID());

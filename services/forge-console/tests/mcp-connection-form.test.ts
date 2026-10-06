@@ -1,4 +1,4 @@
-import {describe,it,expect,vi,beforeEach} from 'vitest';
+import {describe,it,expect,vi,beforeEach,afterEach} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {McpConnectionForm} from '../src/operator/mcp-connection-form.js';
 import type {McpConnection,McpApi} from '../src/operator/mcp-api.js';
@@ -15,7 +15,55 @@ beforeEach(()=>{
  document.documentElement.innerHTML=readFileSync('src/operator/settings.html','utf8');
  HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};
 });
+afterEach(()=>vi.unstubAllGlobals());
 describe('Custom MCP form',()=>{
+ it('Reconnect keeps registered client credentials when metadata property order differs',async()=>{
+ const {form,api}=setup();
+ const cfg={issuer:'https://provider.example',authorizationEndpoint:'https://provider.example/authorize',tokenEndpoint:'https://provider.example/token',
+  revocationEndpoint:null,clientId:'registered',clientAuthenticationMethod:'client_secret_post' as const,scopes:['tools'],resource:base.endpoint};
+ const saved={...base,authType:'OAUTH' as const,oauthConfiguration:cfg,credentialConfigured:true};api.update.mockResolvedValue(saved);
+ const oauthApi=api as typeof api & {startOAuth:ReturnType<typeof vi.fn>;cancelOAuth:ReturnType<typeof vi.fn>};
+ oauthApi.startOAuth=vi.fn().mockResolvedValue({transactionId:'88888888-8888-4888-8888-888888888888',connectionId:base.id,authorizationUrl:'https://provider.example/authorize'});
+ oauthApi.cancelOAuth=vi.fn().mockResolvedValue(undefined);vi.stubGlobal('BroadcastChannel',class {close(){}});const open=vi.spyOn(window,'open').mockReturnValue(null);
+ form.openEdit(saved,[],[]);click('mcpSaveTest');await tick();
+ expect(api.update).toHaveBeenCalledWith(base.id,expect.objectContaining({credentialChange:'KEEP',oauthConfiguration:cfg}),expect.any(AbortSignal));
+ expect(oauthApi.startOAuth).toHaveBeenCalledTimes(1);expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();open.mockRestore();
+ });
+
+ it('one OAuth Connect saves once, awaits consent, then reads and tests without enabling',async()=>{
+ const {form,api}=setup();const tx='88888888-8888-4888-8888-888888888888';
+ const saved={...base,authType:'OAUTH' as const};api.create.mockResolvedValue(saved);api.get.mockResolvedValue({...saved,credentialConfigured:true,checkedAt:'now'});
+ const oauthApi=api as typeof api & {startOAuth:ReturnType<typeof vi.fn>;cancelOAuth:ReturnType<typeof vi.fn>};
+ oauthApi.startOAuth=vi.fn().mockResolvedValue({transactionId:tx,connectionId:base.id,authorizationUrl:'https://provider.example/authorize'});
+ oauthApi.cancelOAuth=vi.fn().mockResolvedValue(undefined);
+ const channel={onmessage:null as null|((event:{data:unknown})=>unknown),close:vi.fn()};
+ vi.stubGlobal('BroadcastChannel',class {constructor(){return channel;}});
+ const popup={opener:{},closed:false,location:{replace:vi.fn()},close:vi.fn()};vi.spyOn(window,'open').mockReturnValue(popup as unknown as Window);
+ form.openCreate([]);input('mcpName','OAuth');input('mcpEndpoint',base.endpoint);input('mcpAuthType','OAUTH');
+ document.getElementById('mcpAuthType')!.dispatchEvent(new Event('change'));
+ input('mcpOAuthClientId','registered-client');input('mcpOAuthIssuer','https://provider.example');
+ input('mcpOAuthAuthorization','https://provider.example/authorize');input('mcpOAuthToken','https://provider.example/token');
+ click('mcpSaveTest');expect(window.open).toHaveBeenCalledTimes(1);await tick();
+ expect(api.create).toHaveBeenCalledTimes(1);expect(oauthApi.startOAuth).toHaveBeenCalledTimes(1);expect(api.test).not.toHaveBeenCalled();
+ expect((document.getElementById('mcpOAuthCancel') as HTMLButtonElement).disabled).toBe(false);
+ await channel.onmessage?.({data:{transactionId:tx,connectionId:base.id,result:'connected'}});await tick();
+ expect(api.get).toHaveBeenCalled();expect(api.test).toHaveBeenCalledWith(base.id,expect.any(AbortSignal));
+ expect(api.get.mock.invocationCallOrder[0]).toBeLessThan(api.test.mock.invocationCallOrder[0]!);
+ expect(api.setEnabled).not.toHaveBeenCalled();expect((document.getElementById('mcpOAuthClientSecret') as HTMLInputElement).value).toBe('');
+ expect(localStorage.length).toBe(0);expect(sessionStorage.length).toBe(0);form.dispose();
+ });
+
+ it('OAuth has one Connect action, hides bearer controls and requires explicit Disable for reconnect',()=>{
+ const {form,api}=setup();form.openEdit({...base,authType:'OAUTH',enabled:true},[],[]);
+ expect(document.querySelector('#mcpSaveTest')?.textContent).toBe('Reconnect');
+ expect((document.getElementById('mcpSaveTest') as HTMLButtonElement).disabled).toBe(true);
+ expect((document.getElementById('mcpBearerFields') as HTMLElement).hidden).toBe(true);
+ expect((document.getElementById('mcpCredentialActionFields') as HTMLElement).hidden).toBe(true);
+ expect(document.querySelector('#mcpOAuthEnabledGuard')?.textContent).toContain('Disable');
+ expect((document.getElementById('mcpOAuthAdvanced') as HTMLDetailsElement).open).toBe(false);
+ click('mcpSaveTest');expect(api.create).not.toHaveBeenCalled();expect(api.update).not.toHaveBeenCalled();expect(api.setEnabled).not.toHaveBeenCalled();form.dispose();
+ });
+
  it('creates once disabled with deny-all policy, tests saved ID and explicitly saves access',async()=>{
  const {form,api}=setup();form.openCreate([{id:'project',name:'P'}]);input('mcpName','Echo');input('mcpEndpoint',base.endpoint);click('mcpSaveTest');click('mcpSaveTest');await tick();
  expect(api.create).toHaveBeenCalledTimes(1);expect(api.create.mock.calls[0]![0]).toMatchObject({projectAccess:{scope:'SELECTED',projectIds:[]},allowedTools:[],transport:'STREAMABLE_HTTP'});expect(api.create.mock.calls[0]![0]).not.toHaveProperty('credentialChange');expect(api.test).toHaveBeenCalledWith('saved',expect.any(AbortSignal));

@@ -65,13 +65,32 @@ class CodexAgentExecutorTest {
             this.client
     );
 
+    @Test void authorization_failure_survives_wrapped_context_and_mcp_failure() {
+        var codex = mock(CodexClient.class);
+        var failure = new com.sitionix.forgeagent.domain.exception.LlmAuthorizationException("CODEX_AUTH_REQUIRED");
+        when(codex.executeDurable(any(), any(), any(), any()))
+                .thenThrow(new CodexExecutionException(CodexExecutionFailurePhase.THREAD_RESUME,
+                        "private provider details", failure))
+                .thenThrow(new CodexMcpExecutionException("private provider details", failure));
+        var executor = new CodexAgentExecutor(objectMapper, codex);
+        assertThatThrownBy(() -> executor.execute(this.trackedClaim("thread-existing")))
+                .isSameAs(failure).hasMessage("CODEX_AUTH_REQUIRED");
+        assertThatThrownBy(() -> executor.execute(this.trackedClaim("thread-existing")))
+                .isSameAs(failure).hasMessage("CODEX_AUTH_REQUIRED");
+    }
+
     @Test
     void selectedMcpGrantsArePassedOnlyToLaunchAndRevokedAfterSuccessOrFailure() {
         var selectionService = mock(McpExecutionSelectionService.class);
         var codex = mock(CodexClient.class);
         var claim = this.trackedClaim("thread-existing");
-        var selection = new McpExecutionSelection(List.of(), List.of());
-        var grants = new McpRuntimeLaunchGrants(Map.of());
+        var alias = "forge_0123456789ab4cde80123456789abcde";
+        var selection = new McpExecutionSelection(List.of(
+                new McpExecutionSelection.Entry(alias,
+                        UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"),
+                        "fixture", java.util.Set.of(new com.sitionix.forgeagent.domain.model.McpAllowedTool(
+                        "search", "sha256:" + "a".repeat(64))))), List.of());
+        var grants = new McpRuntimeLaunchGrants(Map.of(alias, "synthetic-grant"));
         when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
                 .thenReturn(new McpExecutionPreparation(selection, grants));
         when(codex.executeDurable(any(), any(), any(), any(McpRuntimeLaunchGrants.class), any()))
@@ -88,6 +107,124 @@ class CodexAgentExecutorTest {
         assertThatThrownBy(() -> executor.execute(claim))
                 .hasMessageNotContaining("synthetic-secret-canary");
         verify(selectionService, org.mockito.Mockito.times(2)).revoke(claim.agentSessionClaim());
+    }
+
+    @Test
+    void emptyMcpSelectionUsesTheLegacyCodexPath() {
+        var selectionService = mock(McpExecutionSelectionService.class);
+        var codex = mock(CodexClient.class);
+        var claim = this.trackedClaim("thread-existing");
+        when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
+                .thenReturn(new McpExecutionPreparation(
+                        new McpExecutionSelection(List.of(), List.of()),
+                        new McpRuntimeLaunchGrants(Map.of())));
+        when(codex.executeDurable(any(), org.mockito.ArgumentMatchers.eq("thread-existing"), any(), any()))
+                .thenReturn("{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}");
+        var executor = new CodexAgentExecutor(this.objectMapper, codex, null, null, null,
+                selectionService, new CodexAppServerProperties());
+
+        executor.execute(claim);
+
+        verify(codex).executeDurable(argThat(request -> request.mcpSelection() == null),
+                org.mockito.ArgumentMatchers.eq("thread-existing"), any(), any());
+        verify(codex, never()).executeDurable(any(), any(), any(),
+                any(McpRuntimeLaunchGrants.class), any());
+        verify(selectionService, never()).revoke(any());
+    }
+
+    @Test
+    void mcpEnabledProviderFailureKeepsNormalFailureSemanticsAndHidesProviderText() {
+        var selectionService = mock(McpExecutionSelectionService.class);
+        var codex = mock(CodexClient.class);
+        var claim = this.trackedClaim("thread-existing");
+        var alias = "forge_0123456789ab4cde80123456789abcde";
+        var selection = new McpExecutionSelection(List.of(
+                new McpExecutionSelection.Entry(alias,
+                        UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"),
+                        "fixture", java.util.Set.of(new com.sitionix.forgeagent.domain.model.McpAllowedTool(
+                        "search", "sha256:" + "a".repeat(64))))), List.of());
+        var grants = new McpRuntimeLaunchGrants(Map.of(alias, "synthetic-grant"));
+        when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
+                .thenReturn(new McpExecutionPreparation(selection, grants));
+        when(codex.executeDurable(any(), any(), any(), any(McpRuntimeLaunchGrants.class), any()))
+                .thenThrow(new CodexExecutionException(
+                        CodexExecutionFailurePhase.TURN_EXECUTION, "synthetic-secret-canary"));
+        var executor = new CodexAgentExecutor(this.objectMapper, codex, null, null, null,
+                selectionService, new CodexAppServerProperties());
+
+        assertThatThrownBy(() -> executor.execute(claim))
+                .isInstanceOf(CodexTransportException.class)
+                .isNotInstanceOf(com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException.class)
+                .hasMessage("Codex execution failed.")
+                .hasMessageNotContaining("synthetic-secret-canary");
+        verify(selectionService).revoke(claim.agentSessionClaim());
+    }
+
+    @Test
+    void typedMcpBoundaryFailureMapsToMcpExecutionFailure() {
+        var selectionService = mock(McpExecutionSelectionService.class);
+        var codex = mock(CodexClient.class);
+        var claim = this.trackedClaim("thread-existing");
+        var alias = "forge_0123456789ab4cde80123456789abcde";
+        var selection = new McpExecutionSelection(List.of(
+                new McpExecutionSelection.Entry(alias,
+                        UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"),
+                        "fixture", java.util.Set.of(new com.sitionix.forgeagent.domain.model.McpAllowedTool(
+                        "search", "sha256:" + "a".repeat(64))))), List.of());
+        var grants = new McpRuntimeLaunchGrants(Map.of(alias, "synthetic-grant"));
+        when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
+                .thenReturn(new McpExecutionPreparation(selection, grants));
+        when(codex.executeDurable(any(), any(), any(), any(McpRuntimeLaunchGrants.class), any()))
+                .thenThrow(new CodexMcpExecutionException("synthetic-secret-canary"));
+        var executor = new CodexAgentExecutor(this.objectMapper, codex, null, null, null,
+                selectionService, new CodexAppServerProperties());
+
+        assertThatThrownBy(() -> executor.execute(claim))
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException.class)
+                .hasMessage("MCP execution failed.")
+                .hasMessageNotContaining("synthetic-secret-canary");
+        verify(selectionService).revoke(claim.agentSessionClaim());
+    }
+
+    @Test
+    void mcpGrantActivationHappensInsideDispatchFenceBeforeTurnWrite() {
+        var selectionService = mock(McpExecutionSelectionService.class);
+        var codex = mock(CodexClient.class);
+        var leases = mock(AgentSessionLeaseService.class);
+        var dispatch = mock(com.sitionix.forgeagent.domain.port.AgentExecutionDispatchGuard.class);
+        var claim = this.trackedClaim("thread-existing");
+        var selection = new McpExecutionSelection(List.of(
+                new McpExecutionSelection.Entry("forge_0123456789ab4cde80123456789abcde",
+                        UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"), "fixture",
+                        java.util.Set.of(new com.sitionix.forgeagent.domain.model.McpAllowedTool(
+                                "search", "sha256:" + "a".repeat(64))))), List.of());
+        var grants = new McpRuntimeLaunchGrants(Map.of(
+                "forge_0123456789ab4cde80123456789abcde", "synthetic-grant"));
+        when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
+                .thenReturn(new McpExecutionPreparation(selection, grants));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(1).run();
+            return null;
+        }).when(dispatch).dispatch(org.mockito.ArgumentMatchers.eq(claim.agentSessionClaim()), any());
+        var activated = new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(ignored -> {
+            activated.set(true);
+            return null;
+        }).when(selectionService).activateForDispatch(claim.agentSessionClaim());
+        when(codex.executeDurable(any(), any(), any(), any(McpRuntimeLaunchGrants.class), any()))
+                .thenAnswer(invocation -> {
+                    var callbacks = invocation.<CodexExecutionIdentityCallbacks>getArgument(4);
+                    callbacks.dispatchTurnStart(() -> assertThat(activated).isTrue());
+                    return "{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}";
+                });
+        var executor = new CodexAgentExecutor(this.objectMapper, codex, leases, null, dispatch,
+                selectionService, new CodexAppServerProperties());
+
+        executor.execute(claim);
+
+        verify(dispatch).dispatch(org.mockito.ArgumentMatchers.eq(claim.agentSessionClaim()), any());
+        verify(selectionService).activateForDispatch(claim.agentSessionClaim());
+        verify(selectionService).revoke(claim.agentSessionClaim());
     }
 
     @Test

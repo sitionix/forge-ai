@@ -40,6 +40,16 @@ import org.springframework.web.service.annotation.PutExchange;
 import org.springframework.web.bind.annotation.RequestBody;
 
 public interface ForgeAgentHttpClient {
+    @GetExchange("/api/v1/integrations/llm/providers")
+    List<com.sitionix.forgeai.infrastructure.agentclient.dto.LlmProviderInbound> llmProviders();
+    @PostExchange(value="/api/v1/integrations/llm/codex/login",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.LlmLoginInbound startLlmLogin(@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingOutbound request);
+    @GetExchange("/api/v1/integrations/llm/codex/logins/{id}")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.LlmLoginInbound readLlmLogin(@PathVariable UUID id,com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingHeader binding);
+    @DeleteExchange(value="/api/v1/integrations/llm/codex/logins/{id}",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.LlmLoginInbound cancelLlmLogin(@PathVariable UUID id,@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingOutbound request);
+    @PostExchange(value="/api/v1/integrations/llm/codex/logout",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.LlmProviderInbound logoutLlm(@RequestBody java.util.Map<String,Object> empty);
     @GetExchange("/api/v1/integrations/mcp/available")
     com.sitionix.forgeai.infrastructure.agentclient.dto.McpAvailablePageInbound listAvailableMcp(
             @RequestParam(required = false) String search,
@@ -234,4 +244,16 @@ public interface ForgeAgentHttpClient {
     com.sitionix.forgeai.infrastructure.agentclient.dto.ServiceProcessMetricsResponse getProjectSshConnectionServiceProcesses(
         @PathVariable UUID projectId, @PathVariable UUID connectionId, @PathVariable String unit,
         @org.springframework.web.bind.annotation.RequestParam String sort);
+    @PostExchange(value="/api/v1/integrations/mcp/connect",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectInbound connectMcp(
+            @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.McpConnectOutbound request);
+    @PostExchange(value="/api/v1/integrations/mcp/connections/{id}/oauth/start",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthStartInbound startMcpOAuth(@PathVariable UUID id,
+            @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound request);
+    @DeleteExchange(value="/api/v1/integrations/mcp/connections/{id}/oauth/transactions/{transactionId}",contentType=MediaType.APPLICATION_JSON_VALUE)
+    void cancelMcpOAuth(@PathVariable UUID id,@PathVariable UUID transactionId,
+            @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthBindingOutbound request);
+    @PostExchange(value="/api/v1/integrations/mcp/oauth/callback",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCompletionInbound completeMcpOAuth(
+            @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCallbackOutbound request);
 }

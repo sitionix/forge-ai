@@ -7,6 +7,11 @@ public record AgentRuntimeProvider(
         String displayName,
         AgentRuntimeProviderStatus status,
         String version,
-        List<AgentRuntimeModel> models
+        List<AgentRuntimeModel> models,
+        String authState
 ) {
+    public AgentRuntimeProvider(String providerId, String displayName, AgentRuntimeProviderStatus status,
+            String version, List<AgentRuntimeModel> models) {
+        this(providerId, displayName, status, version, models, "SIGNED_OUT");
+    }
 }

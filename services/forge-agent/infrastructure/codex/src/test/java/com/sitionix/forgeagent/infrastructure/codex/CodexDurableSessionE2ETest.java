@@ -47,7 +47,7 @@ class CodexDurableSessionE2ETest {
         }
 
         assertThat(firstOutput).contains("answer");
-        assertThat(versionOne.get()).isEqualTo("0.157.0");
+        assertThat(versionOne.get()).isIn("0.157.0", "0.160.0");
         assertThat(threadOne.get()).isNotBlank();
         assertThat(turnOne.get()).isNotBlank();
 
@@ -81,9 +81,9 @@ class CodexDurableSessionE2ETest {
     private CodexAppServerClient client(final CodexAppServerProperties properties) {
         return new CodexAppServerClient(
                 this.objectMapper,
-                new DefaultCodexAppServerProcessStarter(properties),
+                new DefaultCodexAppServerProcessStarter(properties, CodexFixtureProcesses.launcher(properties)),
                 properties,
-                new CodexRuntimeWorkspace(properties)
+                new CodexRuntimeWorkspace(properties), null, new ForgeAuthorizationFixture(true).gate
         );
     }
 

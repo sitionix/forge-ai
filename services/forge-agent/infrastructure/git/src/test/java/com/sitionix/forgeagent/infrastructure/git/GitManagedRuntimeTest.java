@@ -27,7 +27,7 @@ class GitManagedRuntimeTest {
         final AtomicInteger stops = new AtomicInteger();
         List<String> arguments;
         FixtureLauncher(List<String> fixture) {
-            super(new RuntimeBoundaryProperties(true, "/missing-unused-fixture-helper"));
+            super(new RuntimeBoundaryProperties( "/missing-unused-fixture-helper"));
             this.fixture = fixture;
         }
         @Override public ManagedRuntimeProcess startGit(List<String> command) throws IOException {

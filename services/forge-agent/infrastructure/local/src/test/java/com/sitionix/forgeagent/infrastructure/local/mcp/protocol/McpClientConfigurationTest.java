@@ -11,29 +11,26 @@ import org.springframework.core.env.MapPropertySource;
 
 class McpClientConfigurationTest {
     @Test void defaultConfigurationCreatesBoundedProbeWithoutPrivateAllowance() {
-        try (var context = context(Map.of("forge.mcp.enabled", "true"))) {
+        try (var context = context(Map.of())) {
             assertThat(context.getBean(McpRemoteProbe.class)).isInstanceOf(SdkMcpRemoteClient.class);
             assertThat(context.getBean(McpRemoteToolClient.class)).isSameAs(context.getBean(McpRemoteProbe.class));
         }
     }
 
     @Test void oversizedBudgetFailsStartupInsteadOfOutlivingNexusRequest() {
-        assertThatThrownBy(() -> context(Map.of("forge.mcp.enabled", "true",
-                "forge.mcp.probe.request-timeout", "10s", "forge.mcp.probe.max-pages", "5")))
+        assertThatThrownBy(() -> context(Map.of("forge.mcp.probe.request-timeout", "10s", "forge.mcp.probe.max-pages", "5")))
                 .hasRootCauseMessage("MCP probe duration exceeds the Nexus management HTTP budget");
     }
 
     @Test void positiveToolCallTimeoutAboveFiveMinutesIsAccepted() {
-        try (var context = context(Map.of("forge.mcp.enabled", "true",
-                "forge.mcp.tool-call-timeout", "6m"))) {
+        try (var context = context(Map.of("forge.mcp.tool-call-timeout", "6m"))) {
             assertThat(context.getBean(McpRemoteToolClient.class)).isInstanceOf(SdkMcpRemoteClient.class);
         }
     }
 
     @Test void zeroAndNegativeToolCallTimeoutsFailStartup() {
         for (String timeout : new String[] {"0s", "-1s"})
-            assertThatThrownBy(() -> context(Map.of("forge.mcp.enabled", "true",
-                    "forge.mcp.tool-call-timeout", timeout)))
+            assertThatThrownBy(() -> context(Map.of(    "forge.mcp.tool-call-timeout", timeout)))
                     .hasRootCauseMessage("Invalid MCP client configuration");
     }
 

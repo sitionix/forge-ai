@@ -78,20 +78,40 @@ class InMemoryMcpRuntimeGrantRepositoryTest {
         assertThat(store.resolve(secondToken, connection)).contains(second);
     }
 
-    @Test void admissionAndRevocationAreOrderedAndLaterCallsAreDenied() {
+    @Test void admissionRequiresDispatchActivationAndRevocationStillDeniesLaterCalls() {
         var store = store(10);
         var grant = grant(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
         String token = store.issue(grant).token();
+        assertThat(store.resolve(token, grant.connectionId())).contains(grant);
+        assertThat(store.admit(token, grant.connectionId())).isFalse();
+
+        store.activateForDispatch(grant.turnId());
         assertThat(store.admit(token, grant.connectionId())).isTrue();
+
         store.revokeConnection(grant.connectionId());
         assertThat(store.admit(token, grant.connectionId())).isFalse();
         assertThat(store.admit(token, UUID.randomUUID())).isFalse();
+    }
+
+    @Test void dispatchActivationIsScopedToOneTurn() {
+        var store = store(10);
+        UUID connection = UUID.randomUUID();
+        var first = grant(connection, UUID.randomUUID(), UUID.randomUUID());
+        var second = grant(connection, UUID.randomUUID(), UUID.randomUUID());
+        String firstToken = store.issue(first).token();
+        String secondToken = store.issue(second).token();
+
+        store.activateForDispatch(first.turnId());
+
+        assertThat(store.admit(firstToken, connection)).isTrue();
+        assertThat(store.admit(secondToken, connection)).isFalse();
     }
 
     @Test void concurrentRevokeCannotAdmitASecondCallAfterFirstWasAdmitted() throws Exception {
         var store = store(10);
         var grant = grant(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
         String token = store.issue(grant).token();
+        store.activateForDispatch(grant.turnId());
         var firstAdmitted = new CountDownLatch(1);
         var finishFirst = new CountDownLatch(1);
         try (var worker = Executors.newSingleThreadExecutor()) {

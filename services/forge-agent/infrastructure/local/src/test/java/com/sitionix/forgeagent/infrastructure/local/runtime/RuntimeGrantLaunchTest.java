@@ -20,8 +20,8 @@ class RuntimeGrantLaunchTest {
                 Map.of("PATH", "synthetic-grant"))).hasMessage("Runtime boundary unavailable");
     }
 
-    @Test void disabledBoundaryNeverFallsBackToUnisolatedCodexForGrant() {
-        var launcher = new RuntimeProcessLauncher(RuntimeBoundaryProperties.disabled());
+    @Test void unreadyBoundaryNeverFallsBackToUnisolatedCodexForGrant() {
+        var launcher = new RuntimeProcessLauncher(new RuntimeBoundaryProperties("/missing-forge-helper"));
         assertThatThrownBy(() -> launcher.startCodex(Path.of("/tmp"), Map.of(
                 "FORGE_MCP_GRANT_0123456789ABCDEF0123456789ABCDEF", "synthetic-grant")))
                 .hasMessage("Runtime boundary unavailable");

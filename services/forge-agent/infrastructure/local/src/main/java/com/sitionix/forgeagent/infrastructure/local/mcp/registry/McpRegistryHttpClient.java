@@ -19,7 +19,11 @@ public interface McpRegistryHttpClient {
     record Entry(Server server) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Server(String name, String title, String description, String version, List<Remote> remotes) {}
+    record Server(String name, String title, String description, String version, List<Remote> remotes,
+                  List<Icon> icons) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record Icon(String src) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record Remote(String type, String url) {}

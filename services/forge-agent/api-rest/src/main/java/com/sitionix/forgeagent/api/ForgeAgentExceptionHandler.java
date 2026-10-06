@@ -66,6 +66,11 @@ public class ForgeAgentExceptionHandler {
     @ExceptionHandler(RuntimeException.class)
     ResponseEntity<ForgeAgentErrorResponse> handleRuntime(final RuntimeException exception,
                                                           final HttpServletRequest request) {
+        var authorization = com.sitionix.forgeagent.domain.exception.LlmAuthorizationException.find(exception);
+        if (authorization != null) {
+            return this.response("CODEX_AUTH_REQUIRED".equals(authorization.code())
+                    ? HttpStatus.CONFLICT : HttpStatus.SERVICE_UNAVAILABLE, authorization, request);
+        }
         log.error("Forge Agent request failed unexpectedly", exception);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ForgeAgentErrorResponse("INTERNAL_ERROR", "Forge Agent request failed.", this.correlationId(request)));

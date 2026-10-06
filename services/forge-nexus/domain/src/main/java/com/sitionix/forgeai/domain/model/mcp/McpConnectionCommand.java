@@ -12,14 +12,16 @@ public final class McpConnectionCommand {
     private final McpConnection.ProjectAccess projectAccess;
     private final Set<String> allowedTools;
     private final McpConnection.CredentialChange credentialChange;
+    private final McpOAuthConfiguration oauthConfiguration;
+    private final String clientSecret;
     private final String bearer;
     private final Map<String,String> headers;
     public McpConnectionCommand(String displayName,URI endpoint,McpConnection.Transport transport,McpConnection.AuthType authType,
             McpConnection.ProjectAccess projectAccess,Set<String> allowedTools,McpConnection.CredentialChange credentialChange,
-            String bearer,Map<String,String> headers) {
+            String bearer,Map<String,String> headers,McpOAuthConfiguration oauthConfiguration,String clientSecret) {
         this.displayName=displayName;this.endpoint=endpoint;this.transport=transport;this.authType=authType;
         this.projectAccess=projectAccess;this.allowedTools=allowedTools;this.credentialChange=credentialChange;
-        this.bearer=bearer;this.headers=headers;
+        this.bearer=bearer;this.headers=headers;this.oauthConfiguration=oauthConfiguration;this.clientSecret=clientSecret;
     }
     public String displayName(){return displayName;}
     public URI endpoint(){return endpoint;}
@@ -28,6 +30,8 @@ public final class McpConnectionCommand {
     public McpConnection.ProjectAccess projectAccess(){return projectAccess;}
     public Set<String> allowedTools(){return allowedTools;}
     public McpConnection.CredentialChange credentialChange(){return credentialChange;}
+    public McpOAuthConfiguration oauthConfiguration(){return oauthConfiguration;}
+    public String clientSecret(){return clientSecret;}
     public String bearer(){return bearer;}
     public Map<String,String> headers(){return headers;}
     @Override public String toString(){return "McpConnectionCommand[redacted]";}

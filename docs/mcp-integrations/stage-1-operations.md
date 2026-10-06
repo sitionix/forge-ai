@@ -1,22 +1,21 @@
-# Stage 1 — operator prerequisites and runtime boundary
+# MCP storage prerequisites and runtime boundary
 
-Default: `FORGE_MCP_ENABLED=false`. Runtime and management-auth prerequisites have
-passed scoped code review and synthetic tests. The reviewed disposable runtime
-probe passed18 assertions with cleanup; see stage-1-evidence.md and raw result.
-This does not prove installed sudo routing or production Java deployment, which
-remain **NOT_VERIFIED**. No host installation is performed by these source changes.
+MCP is part of normal Forge. On Ubuntu/systemd, `just start` provisions persistent
+protected material and the isolated runtime before restarting main Agent/Nexus.
+There is no global activation switch. Existing valid keys and credentials are
+preserved; unsafe or conflicting files fail preparation instead of being rotated.
 
 ## Runtime contract
 
-With `forge.mcp.enabled=true`, Codex app-server and every local Git invocation use
+Codex app-server and every local Git invocation use
 `RuntimeProcessLauncher`, never the old same-UID ProcessBuilder branch. Spring
-injects the enabled launcher explicitly; legacy constructors preserve off-mode
-unit fixtures. A `SmartInitializingSingleton` runs the actual helper probe before
+injects the managed launcher explicitly; unit fixtures inject synthetic process
+dependencies and do not prove OS isolation. A `SmartInitializingSingleton` runs the actual helper probe before
 the launcher becomes ready. Missing/unsafe helper, same UID, unavailable systemd,
 probe denial failure, or unconfirmed cleanup fail startup with a generic error.
 
 `RuntimeBoundaryVerifier.verifyProtectedPaths(List<Path>)` is the Task 2b entry
-point for key/DB/operator/service credential files. It validates regular files,
+point for the encryption key/database files (and scoped Remote Access files when present). It validates regular files,
 owner-only mode, one hard link, non-writable trusted ancestors and no symlinks,
 then asks the real runtime UID to try read/write access. It never reads or returns
 credential contents. Startup without those paths proves the runtime/config boundary,
@@ -45,7 +44,7 @@ the boundary is runtime UID and service containment, not disabled hooks.
 
 ## Packaged artifacts and prerequisites
 
-Review these artifacts; this document is not authorization to install them:
+Normal systemd installation uses these security artifacts:
 
 - `scripts/runtime/forge-runtime-launcher.py`: root-owned executable, mode 0755,
   installed as `/usr/local/libexec/forge-runtime-launcher`; fixed
@@ -56,11 +55,10 @@ Review these artifacts; this document is not authorization to install them:
   managed roots and Agent unit. Install as `/etc/forge/runtime-launcher.json`,
   root:root 0600, trusted ancestors. Example IDs are placeholders, not provisioning.
 - `config/sudoers/forge-runtime.in`: render control account, validate with
-  `visudo -cf`, install root:root 0440 through separately approved deployment.
+  `visudo -cf`, install root:root 0440 through the normal systemd installer.
   Grant only the exact helper; never Python, shell, systemd-run or systemctl.
-- `config/systemd/forge-agent-mcp-isolation.conf.in`: explicit opt-in drop-in for
-  the narrow sudo route. It changes Agent `NoNewPrivileges` to false. The default
-  Agent unit is unchanged; runtime transient units always retain NNP=true.
+- The main Agent unit uses the narrow runtime sudo route. Runtime transient units
+  always retain `NoNewPrivileges=yes`; no opt-in isolation drop-in is required.
 
 Use distinct non-root control/runtime accounts. Runtime must have no supplementary
 or privileged primary groups and must not share the control primary GID. No Docker
@@ -70,24 +68,12 @@ HOME/CODEX_HOME, PATH, LANG and noninteractive Git, drop capabilities, protect t
 system/cgroup filesystem and control /proc visibility, and stop their whole cgroup.
 The helper does not turn on Codex shell network access.
 
-When MCP management is enabled, provision three distinct protected Agent files:
-the AES key ring (`active=<id>` and `key.<id>=<base64-32-byte-key>` lines), the
-service bearer, and the database password. Nexus uses separate protected operator
-bootstrap and Agent service bearer files. Bearers contain at least 32 random bytes
-encoded as unpadded base64url. Configure file paths only; do not put credential
-values in environment variables, process arguments, URLs, or application YAML.
-The Nexus bootstrap and Agent service bearer values must differ.
-
-With MCP enabled alone, an operator sends the bootstrap secret in the JSON body of
-`POST /api/v1/operator/session` from the configured browser origin with its exact
-`Origin` and `Host` headers. Nexus returns a host-only `FG_SESSION` HttpOnly,
-SameSite Strict cookie and a `csrfToken`; the browser sends that cookie on later
-requests and `X-Forge-CSRF` plus exact `Origin` for mutations. `GET` on the same
-session route returns the current session-bound CSRF value; `DELETE` logs out and clears the cookie.
-Sessions expire on the server and restart invalidates them. HTTPS origins set the
-Secure cookie flag; plain HTTP is accepted only on a loopback origin. Nexus sends
-its separate service bearer to the configured Agent origin for typed REST and log
-streaming calls. Do not supply the operator bootstrap or browser cookie to Agent.
+Normal startup provisions the protected AES-GCM key ring and database password.
+Existing valid material is preserved without rotation. Nexus requires no MCP
+operator or Agent-service secret. Settings and management APIs work directly,
+without a Forge login, cookie, CSRF token or internal service bearer. External
+provider credentials remain write-only and encrypted. Configure protected file
+paths only; no key/database credential values in arguments, URLs, logs or YAML.
 
 MCP connection metadata is managed at Nexus
 `/api/v1/infrastructure/agents/integrations/mcp/connections` and Agent
@@ -104,66 +90,25 @@ For key rotation, put a new 32-byte AES key in the protected Agent key file as
 a restart is recommended to rerun startup verification after controlled
 provisioning, but is not required for key lookup. Verify protected-file mode and
 runtime read denial before rotation. Existing ciphertext remains under its old key until rotated.
-For each credential-bearing connection, an authenticated operator sends
-`POST /api/v1/infrastructure/agents/integrations/mcp/connections/{id}/reencrypt`
-with exact `Origin`/`Host` and the active mode's session/CSRF: `FG_SESSION` plus
-`X-Forge-CSRF` for MCP-only, or `FORGE_REMOTE_OPERATOR` plus `X-CSRF-TOKEN`
-in combined mode (see below). HTTP 204 confirms
+For each credential-bearing connection, send
+`POST /api/v1/infrastructure/agents/integrations/mcp/connections/{id}/reencrypt`.
+HTTP 204 confirms
 that single record was reencrypted to the active key; no plaintext is returned.
 Verify all retained rows have the new key ID through controlled database metadata
 inspection before removing the old key from the protected file and restarting.
 If an old key is missing or wrong, the action fails safely and leaves that record
 unchanged. Do not remove an old key while any retained ciphertext still needs it.
 
-To pause integrations while retaining credentials, keep `forge.mcp.enabled=true`
-on Agent and Nexus and set each connection's `enabled=false`. The global flag may
-be changed to false only after an explicitly authorized deprovision: remove MCP
-credentials and their metadata, retire protected key/bootstrap/service files and
-configured paths, and account for backups. Agent refuses off-mode startup if any
-credential row or `credential_configured` flag remains anywhere in its database,
-or if a protected Agent path remains configured. Nexus refuses off-mode startup if
-its protected credential paths remain configured. A query failure also refuses
-Agent startup. No startup path deletes stored credentials. These guards cannot
-discover orphan files whose paths were deliberately removed from configuration or
-protect an older binary without the guard; rollback and backup deprovision need
-separate operator control.
-
-Runtime home must be a stable runtime-owned 0700 directory under a trusted
-root-owned parent, e.g. `/srv/forge-runtime/home`. Workspace roots must be disjoint
-from it. Provision its dedicated `.codex` child as a runtime-owned 0700 directory
-before starting Codex; leave it empty until separately authorized provider setup.
-Configured executable paths must resolve to regular canonical files on the target
-host: a symlink such as this host's `/usr/bin/env` is rejected by the launcher.
-Install the reviewed Codex package with its root-owned adjacent
-`codex-resources/bwrap` ELF resource; copying only the Codex binary is insufficient
-for `workspaceWrite` execution. The disposable proof pins Codex 0.156.1 and bwrap
-SHA256 `77360cb751ccedc5971391444ac86a8a33c15b04d6b4a6fe45f5d25496e62c4c`.
-Review the installed package version and resource hash again before a new rollout.
-Configured paths and Codex working directories use ordinary absolute
-ASCII path components (letters/digits, underscore, dot, dash); spaces, percent
-specifiers and symlink paths are rejected in enabled mode.
-
-Provision `<forge-root>/forge-projects` before enabling the launcher. Its ancestors
-must be root-owned/trusted for helper validation; the managed root itself is
-control-owned, runtime-group, mode 2750. Control must be a member of the runtime
-primary group for shared checkout contents. Runtime cannot change parent entries.
-The enabled workspace adapter creates control-owned setgid project/attempt parents
-2750 and staging checkout directories 2770. Runtime's umask 0007 makes created
-files accessible to that shared group. It does not chmod control HOME/config or
-make project parents runtime-writable. Existing repositories require explicit
-operator ownership/permission verification; no automatic recursive migration runs.
-
-Enabled cleanup uses `SecureDirectoryStream` relative operations with
-`NOFOLLOW_LINKS`. A filesystem provider without secure directory descriptors fails
-closed. Runtime renaming a nested directory and replacing its pathname with a
-control-tree symlink cannot redirect already-open descriptor operations.
+To pause an integration while retaining its credential, explicitly Disable that
+connection. The per-connection state revokes runtime access; it does not remove
+MCP management or rotate protected installation material.
 
 ## Deliberate limitations
 
-Local Compose discovery, validation and streaming are unavailable in enabled mode,
+Local Compose discovery, validation and streaming are unavailable with the mandatory isolated launcher,
 rejected with a controlled ValidationException before Docker CLI parsing. Container
 ID operations and remote SSH Compose paths retain their existing behavior; their
-HTTP authentication belongs to Task 2b. The control process must not parse local
+Forge management authentication was removed by the normal-runtime amendment. The control process must not parse local
 runtime-controlled Compose YAML. Ordinary off-mode behavior remains unchanged.
 
 Dedicated HOME preserves future provider auth/history but does not migrate existing
@@ -213,40 +158,22 @@ python3 -m unittest discover -s docs/mcp-integrations/probes/stage1-boundary/tes
 mvn -q -pl services/forge-agent/infrastructure/local,services/forge-agent/infrastructure/git,services/forge-agent/infrastructure/codex -am test
 ```
 
-These tests cover implementation contracts and off-mode regression. Mocked systemd
+These tests cover implementation contracts and runtime regression. Mocked systemd
 assertions are never actual isolation evidence. The final Task 2a ledger records
 exact completed commands, counts, source hashes, privileged result and remaining
 limits before Stage 1 acceptance can be considered.
 
-## Combined Remote Access and MCP management
+## Current MCP management contract
 
-With both features enabled, configure the existing Remote Access operator secret
-file and explicit loopback origin once (`forge.remote-access.operator-secret-file`,
-`forge.remote-access.operator-origin`). MCP bootstrap/origin settings are optional;
-if supplied they must resolve to that same operator file and equivalent origin.
-`forge.mcp.session-ttl` is inactive in combined mode: the existing Remote Access
-15-minute absolute session lifetime applies.
+The user's normal-runtime amendment removes Forge operator login/session and the
+internal Nexus → Agent bearer. Settings and typed MCP management APIs work directly;
+there is no MCP operator/service credential file or browser login prerequisite.
+Provider credentials remain encrypted, and runtime grants/policy remain enforced.
+Remote Access retains its own scoped existing login/service credentials and does
+not control MCP availability. Historical Stage 1 auth assumptions are obsolete;
+see [normal runtime evidence](normal-runtime-evidence.md).
 
-Use only `POST /api/v1/infrastructure/agents/remote-access/operator/login` with
-`{"secret":"<bootstrap>"}`. Its `FORGE_REMOTE_OPERATOR` HttpOnly/SameSite Strict cookie
-covers the Nexus context root (Secure for HTTPS). The returned `csrfToken` goes in
-`X-CSRF-TOKEN` for both RA and MCP mutations, together with the exact Origin.
-The existing RA `/operator/session` and `/operator/logout` endpoints manage this
-single session. `/api/v1/operator/session` does not create a combined-mode session.
-MCP-only retains `FG_SESSION`, `X-Forge-CSRF`, and its existing login endpoint,
-including HTTPS non-loopback origins; RA-only retains its scoped cookie.
-
-The existing two service files remain distinct: MCP uses
-`forge.mcp.agent-service-credential-file` on Nexus and
-`forge.mcp.service-credential-file` on Agent; RA uses
-`forge.remote-access.service-secret-file` on Nexus and
-`forge.agent.remote-access.service-secret-file` on Agent. Operator bootstrap and
-both service credential values must all differ. Combined Agent validates the two
-service audiences independently and routes RA requests only to the RA guard.
-Other control routes remain protected by the MCP service guard. Both combined
-listeners retain the RA loopback bind and no forwarded-header trust requirements.
-
-Agent startup passes the active RA service file to the runtime protected-path
-verifier alongside the three MCP files. This does not prove runtime denial of
-Nexus-side files: deployment verification of all active Nexus secrets, process
-and descriptor aliases remains **NOT_VERIFIED** without an actual runtime probe.
+OAuth registered-client setup, Connect/Reconnect and refresh behavior are documented
+in [Stage 6 operations](stage-6-operations.md). The old Stage 1-only inventory
+restriction above is historical; current tools/policy continue through Test and
+explicit disabled-only approvals.

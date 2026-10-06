@@ -148,7 +148,7 @@ class CodexAppServerClientTest {
         final FakeStarter starter = new FakeStarter(process);
         final CodexAppServerProperties properties = this.properties();
         final CodexAppServerClient client = this.client(starter, properties);
-        final CodexRuntimeAdapter adapter = new CodexRuntimeAdapter(this.objectMapper, client, properties);
+        final CodexRuntimeAdapter adapter = new CodexRuntimeAdapter(this.objectMapper, client, properties, new ForgeAuthorizationFixture(false).service);
 
         final CompletableFuture<RuntimeProviderStatus> firstStatus = CompletableFuture.supplyAsync(() -> adapter.getModels().status());
         final JsonNode initialize = this.readRequest(process);
@@ -178,7 +178,7 @@ class CodexAppServerClientTest {
         final CodexAppServerClient client = this.client(starter, properties);
         this.initialize(client, first, "codex/1", "1");
 
-        final CompletableFuture<JsonNode> timeout = CompletableFuture.supplyAsync(() -> client.request("slow", null));
+        final CompletableFuture<JsonNode> timeout = CompletableFuture.supplyAsync(() -> client.request("model/list", null));
         this.readRequest(first);
         assertThatThrownBy(() -> timeout.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
 
@@ -195,10 +195,11 @@ class CodexAppServerClientTest {
     @Test
     void defaultStarterLaunchesProcessInResolvedWorkingDirectory() throws Exception {
         final CodexAppServerProperties properties = this.properties();
-        final Path runtimeCwd = Files.createDirectories(
-                Files.createTempDirectory("forge-agent-codex-starter").resolve("runtime"));
+        final Path managedRoot = Files.createTempDirectory("forge-agent-codex-starter");
+        properties.setRuntimeCwd(managedRoot.resolve(".forge-codex-runtime").toString());
+        final Path runtimeCwd = new CodexRuntimeWorkspace(properties).routingWorkspace().cwd();
         properties.setCommand(List.of("pwd"));
-        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties);
+        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties, CodexFixtureProcesses.launcher(properties));
 
         final StartedCodexAppServer started = starter.start(runtimeCwd);
 
@@ -212,7 +213,7 @@ class CodexAppServerClientTest {
         final CodexAppServerProperties properties = this.properties();
         properties.setCommand(List.of("pwd"));
         final Path missing = Files.createTempDirectory("forge-agent-codex-missing").resolve("absent");
-        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties);
+        final DefaultCodexAppServerProcessStarter starter = new DefaultCodexAppServerProcessStarter(properties, CodexFixtureProcesses.launcher(properties));
 
         assertThatThrownBy(() -> starter.start(missing))
                 .isInstanceOf(CodexTransportException.class)
@@ -229,7 +230,7 @@ class CodexAppServerClientTest {
         final CodexAppServerClient client = this.client(starter, properties);
         this.initialize(client, process, "codex/1", "1");
 
-        final CompletableFuture<JsonNode> timeout = CompletableFuture.supplyAsync(() -> client.request("slow", null));
+        final CompletableFuture<JsonNode> timeout = CompletableFuture.supplyAsync(() -> client.request("model/list", null));
         this.readRequest(process);
         assertThatThrownBy(() -> timeout.get(1, TimeUnit.SECONDS)).hasCauseInstanceOf(CodexTransportException.class);
         assertThatThrownBy(client::version).isInstanceOf(CodexTransportException.class);
@@ -281,7 +282,7 @@ class CodexAppServerClientTest {
     }
 
     private CodexAppServerClient client(final FakeStarter starter, final CodexAppServerProperties properties) {
-        return new CodexAppServerClient(this.objectMapper, starter, properties, new CodexRuntimeWorkspace(properties));
+        return new CodexAppServerClient(this.objectMapper, starter, properties, new CodexRuntimeWorkspace(properties), null, new ForgeAuthorizationFixture(false).gate);
     }
 
     private CodexAppServerProperties properties() {

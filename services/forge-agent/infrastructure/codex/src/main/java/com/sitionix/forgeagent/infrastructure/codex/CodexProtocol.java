@@ -4,6 +4,12 @@ final class CodexProtocol {
 
     static final String INITIALIZE = "initialize";
     static final String INITIALIZED = "initialized";
+    static final String ACCOUNT_READ = "account/read";
+    static final String ACCOUNT_LOGIN_START = "account/login/start";
+    static final String ACCOUNT_LOGIN_CANCEL = "account/login/cancel";
+    static final String ACCOUNT_LOGOUT = "account/logout";
+    static final String ACCOUNT_LOGIN_COMPLETED = "account/login/completed";
+    static final String ACCOUNT_UPDATED = "account/updated";
     static final String THREAD_START = "thread/start";
     static final String THREAD_RESUME = "thread/resume";
     static final String MCP_SERVER_STATUS_LIST = "mcpServerStatus/list";

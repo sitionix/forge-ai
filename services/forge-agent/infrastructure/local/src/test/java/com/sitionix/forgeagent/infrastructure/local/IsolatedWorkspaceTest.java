@@ -1,7 +1,6 @@
 package com.sitionix.forgeagent.infrastructure.local;
 
 import static org.assertj.core.api.Assertions.*;
-import com.sitionix.forgeagent.infrastructure.local.runtime.RuntimeBoundaryProperties;
 import com.sitionix.forgeagent.domain.model.*;
 import java.nio.file.*;
 import java.util.UUID;
@@ -14,7 +13,14 @@ class IsolatedWorkspaceTest {
         Files.createDirectories(root.resolve(".git"));
         Path projects=Files.createDirectory(root.resolve("forge-projects"));
         Files.setAttribute(projects,"unix:mode",02750);
-        return new LocalProjectWorkspaceAdapter(new ForgeRootResolver(root),new RuntimeBoundaryProperties(true,"/missing-unused"));
+        return new LocalProjectWorkspaceAdapter(new ForgeRootResolver(root.resolve("forge-projects")));
+    }
+    @Test void configuredWorkspaceDoesNotRequireSourceCheckoutOrGitMarker() throws Exception {
+        Path managed = Files.createDirectory(root.resolve("managed"));
+        Files.setAttribute(managed, "unix:mode", 02750);
+        var adapter = new LocalProjectWorkspaceAdapter(new ForgeRootResolver(managed));
+        var id = UUID.randomUUID();
+        assertThat(adapter.resolveProjectWorkspace(id)).isEqualTo(managed.resolve(id.toString()));
     }
     @Test void onlyCheckoutContentsAreGroupWritable() throws Exception {
         var adapter=adapter();
