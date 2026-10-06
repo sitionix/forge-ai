@@ -1,6 +1,7 @@
 package com.sitionix.forgeagent.application.mcp;
 
 import com.sitionix.forgeagent.application.runtime.NodeExecutionClaim;
+import com.sitionix.forgeagent.domain.exception.McpOAuthException;
 import com.sitionix.forgeagent.domain.exception.McpProbeException;
 import com.sitionix.forgeagent.domain.exception.McpToolCallException;
 import com.sitionix.forgeagent.domain.model.AgentSessionExecutionClaim;
@@ -55,7 +56,7 @@ public final class McpExecutionSelectionService {
                     entries.add(new McpExecutionSelection.Entry(alias, connection.id(),
                             connection.displayName(), connection.allowedTools()));
                     tokens.put(alias, grant.token());
-                } catch (McpProbeException | McpToolCallException | McpGatewayAccessException unavailable) {
+                } catch (McpProbeException | McpToolCallException | McpGatewayAccessException | McpOAuthException unavailable) {
                     diagnostics.add(new McpExecutionSelection.Diagnostic(connection.id(),
                             McpExecutionSelection.DiagnosticCode.CONNECTION_UNAVAILABLE));
                 }

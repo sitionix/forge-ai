@@ -82,6 +82,8 @@ class CodexAppServerTurnClientTest {
                     .contains("Approved Forge MCP tools are available as native tools.")
                     .doesNotContain("synthetic-grant");
             var config = thread.path("params").path("config");
+            assertThat(config.path("features").path("apps"))
+                    .isEqualTo(this.objectMapper.getNodeFactory().booleanNode(false));
             assertThat(config.path("mcp_servers").path(alias).path("bearer_token_env_var").asText())
                     .isEqualTo(grantName);
             assertThat(config.path("sandbox_workspace_write.network_access").asBoolean()).isFalse();
@@ -655,7 +657,8 @@ class CodexAppServerTurnClientTest {
                         {
                           "web_search": "disabled",
                           "features": {
-                            "shell_tool": true
+                            "shell_tool": true,
+                            "apps": false
                           },
                           "agents": {
                             "enabled": false

@@ -486,6 +486,7 @@ final class CodexAppServerClient implements CodexClient {
         config.put("web_search", "disabled");
         final ObjectNode features = config.putObject("features");
         features.put("shell_tool", true);
+        features.put("apps", false);
         final ObjectNode agents = config.putObject("agents");
         agents.put("enabled", false);
         return config;

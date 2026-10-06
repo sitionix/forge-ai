@@ -1,0 +1,84 @@
+{
+  "date": "2026-10-06",
+  "codexVersion": "0.160.1",
+  "workflowId": "0449de36-5793-437f-ad6b-54809b2914c2",
+  "runId": "af1a73f6-596a-4608-a2ea-086c6331f529",
+  "workflowStatus": "SUCCEEDED",
+  "pullRequest": {
+    "url": "https://github.com/sitionix/forge-ai/pull/161",
+    "number": 161,
+    "finalState": "closed",
+    "merged": false,
+    "changedFiles": 1,
+    "additions": 5
+  },
+  "agents": [
+    {
+      "id": "99e70a21-3b38-47b5-a6a5-fe3d4dc5530d",
+      "sourceAgentId": "f2355c46-261f-4fee-aaad-9e4836fe2736",
+      "status": "SUCCEEDED",
+      "output": {
+        "PR_URL": "https://github.com/sitionix/forge-ai/pull/161",
+        "OUTCOME": "SUCCEEDED",
+        "PR_BASE": "main",
+        "PR_HEAD": "test/mcp-live-smoke-20261002T184719Z",
+        "PR_STATE": "open",
+        "PR_NUMBER": 161,
+        "DIAGNOSTIC": "Created exactly once through native Forge MCP. Verified PR 161 is open, non-draft, unmerged, and has the expected repository and refs. Ready for Agent 2 to close."
+      }
+    },
+    {
+      "id": "73f3a973-2403-437e-99fe-25dd164721bf",
+      "sourceAgentId": "5d7d0bd9-0269-45d8-9766-2414d075eda2",
+      "status": "SUCCEEDED",
+      "output": {
+        "PR_URL": "https://github.com/sitionix/forge-ai/pull/161",
+        "OUTCOME": "SUCCEEDED",
+        "PR_BASE": "main",
+        "PR_HEAD": "test/mcp-live-smoke-20261002T184719Z",
+        "PR_STATE": "closed",
+        "PR_NUMBER": 161,
+        "DIAGNOSTIC": "Closed through approved native GitHub MCP. Verified PR #161 is closed, unmerged, and has the expected repository and refs."
+      }
+    }
+  ],
+  "completedMcpCalls": [
+    {
+      "nodeRunId": "99e70a21-3b38-47b5-a6a5-fe3d4dc5530d",
+      "turnId": "add7de89-e862-46a3-ac0d-d3df56085ad0",
+      "tool": "create_pull_request",
+      "server": "forge_842c3a03788d4459b29f11d10dd3a07f"
+    },
+    {
+      "nodeRunId": "99e70a21-3b38-47b5-a6a5-fe3d4dc5530d",
+      "turnId": "add7de89-e862-46a3-ac0d-d3df56085ad0",
+      "tool": "pull_request_read",
+      "server": "forge_842c3a03788d4459b29f11d10dd3a07f"
+    },
+    {
+      "nodeRunId": "73f3a973-2403-437e-99fe-25dd164721bf",
+      "turnId": "c5232fff-b90b-4755-a4ea-6533a38908eb",
+      "tool": "update_pull_request",
+      "server": "forge_842c3a03788d4459b29f11d10dd3a07f"
+    },
+    {
+      "nodeRunId": "73f3a973-2403-437e-99fe-25dd164721bf",
+      "turnId": "c5232fff-b90b-4755-a4ea-6533a38908eb",
+      "tool": "pull_request_read",
+      "server": "forge_842c3a03788d4459b29f11d10dd3a07f"
+    }
+  ],
+  "boundaries": {
+    "managedRuntime": true,
+    "liveCheckoutIncludedUncommittedCodexAuthorizationChanges": true,
+    "codexAuthorizationChangesExcludedFromThisCommit": true,
+    "nativeGithubMcp": true,
+    "operatorGithubApiUsedOnlyForReadVerification": true,
+    "productionTlsProvider": "https://api.githubcopilot.com/mcp/"
+  },
+  "observations": [
+    "Codex apps=true adds codex_apps for the authenticated runtime account. Forge rejected this ungranted server before turn/start. Explicit apps=false removed it while preserving configured Forge MCP tools.",
+    "GitHub initially denied create_pull_request with 403 Resource not accessible by integration. After Pull requests write permissions were saved and accepted for the installed App, native MCP create and close succeeded.",
+    "Workflow SUCCEEDED alone does not prove external side effects. Earlier fixture output schemas forced success-shaped PR_NUMBER=0 outputs after a tool error. This live verification requires actual MCP events and independently read GitHub state."
+  ]
+}

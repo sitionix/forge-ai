@@ -115,6 +115,33 @@ class McpExecutionSelectionServiceTest {
                 .containsExactly(broken.id());
     }
 
+    @Test void oauthReconnectAndRefreshOutageDoNotHideHealthyApprovedConnection() {
+        for (var failure : List.of(
+                com.sitionix.forgeagent.domain.exception.McpOAuthException.reconnect(),
+                com.sitionix.forgeagent.domain.exception.McpOAuthException.unavailable())) {
+            var broken = connection(UUID.fromString("00000000-0000-4000-8000-000000000001"), true,
+                    McpProjectAccess.all(), true);
+            var working = connection(UUID.fromString("00000000-0000-4000-8000-000000000002"), true,
+                    McpProjectAccess.all(), true);
+            when(workflows.findById(workflowId)).thenReturn(Optional.of(workflow(projectId)));
+            when(connections.findAll(installation)).thenReturn(List.of(working, broken));
+            org.mockito.Mockito.doThrow(failure).when(gateway)
+                    .issue(session, NOW.plusSeconds(90), broken.id());
+            when(gateway.issue(session, NOW.plusSeconds(90), working.id()))
+                    .thenReturn(new McpRuntimeGrantHandle(UUID.randomUUID(), "healthy-oauth-grant"));
+
+            var prepared = service.prepare(claim(session), NOW.plusSeconds(90));
+
+            assertThat(prepared.selection().entries()).extracting(entry -> entry.connectionId())
+                    .containsExactly(working.id());
+            assertThat(prepared.selection().diagnostics()).extracting(diagnostic -> diagnostic.connectionId())
+                    .containsExactly(broken.id());
+            assertThat(prepared.launchGrants().tokens())
+                    .containsOnlyKeys("forge_" + working.id().toString().replace("-", ""));
+        }
+        org.mockito.Mockito.verify(gateway, org.mockito.Mockito.never()).revokeExecution(session.turnId());
+    }
+
     @Test void unexpectedIssuanceFailureRevokesAlreadyIssuedGrantWithoutLeakingCause() {
         var first = connection(UUID.fromString("00000000-0000-4000-8000-000000000001"), true,
                 McpProjectAccess.all(), true);
