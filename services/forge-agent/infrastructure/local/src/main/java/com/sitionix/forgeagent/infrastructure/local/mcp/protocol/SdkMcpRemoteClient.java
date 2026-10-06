@@ -213,7 +213,8 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
                 throw new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
             for (var tool : result.tools()) {
                 if (tool == null || tool.name() == null || tool.name().isBlank()
-                        || tool.inputSchema() == null || !names.add(tool.name()) || tools.size() >= maxTools)
+                        || tool.inputSchema() == null || !"object".equals(tool.inputSchema().get("type"))
+                        || !names.add(tool.name()) || tools.size() >= maxTools)
                     throw new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
                 tools.add(tool);
             }
@@ -248,6 +249,8 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         if (http.authStatus() == 403) return new McpProbeException(McpProbeException.Reason.FORBIDDEN);
         if (!initialized && hasSdkInvalidProtocol(exception))
             return new McpProbeException(McpProbeException.Reason.UNSUPPORTED_PROTOCOL);
+        if (http.sawSuccessfulPost() && hasCause(exception, com.fasterxml.jackson.core.JsonProcessingException.class))
+            return new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
         if (http.sawSuccessfulPost() && hasCause(exception, io.modelcontextprotocol.spec.McpTransportException.class))
             return new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
         if (http.completedSuccessfulPost() && hasCause(exception, java.util.concurrent.TimeoutException.class))

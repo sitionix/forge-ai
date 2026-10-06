@@ -31,10 +31,21 @@
         <lombok.version>1.18.34</lombok.version>
         <mockito.version>5.12.0</mockito.version>
         <forgeit.version>0.0.40</forgeit.version>
+        <mcp-sdk.version>2.0.1</mcp-sdk.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>io.modelcontextprotocol.sdk</groupId>
+                <artifactId>mcp-core</artifactId>
+                <version>${mcp-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.modelcontextprotocol.sdk</groupId>
+                <artifactId>mcp-json-jackson2</artifactId>
+                <version>${mcp-sdk.version}</version>
+            </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>domain</artifactId>

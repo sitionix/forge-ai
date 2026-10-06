@@ -57,7 +57,7 @@ class McpGatewayProtocolAdapterTest {
         verify(runtime).call(token, connectionId, "read", approval.schemaFingerprint(), "{}");
     }
 
-    @Test void unsafeExceptionAndMalformedBodyNeverReturnRawCanary() {
+    @Test void unsafeExceptionAndMalformedBodyNeverReturnRawCanary() throws Exception {
         when(views.tools(grant.id())).thenReturn(List.of(McpSchema.Tool.builder().name("read")
                 .inputSchema(new JacksonMcpJsonMapper(json), "{\"type\":\"object\"}").build()));
         when(runtime.call(anyString(), any(), anyString(), anyString(), anyString()))
@@ -66,6 +66,7 @@ class McpGatewayProtocolAdapterTest {
         assertThat(new String(failed.body(), StandardCharsets.UTF_8)).doesNotContain("synthetic-secret-canary");
         var malformed = adapter.process(grant, token, request("{broken-synthetic-secret-canary"));
         assertThat(new String(malformed.body(), StandardCharsets.UTF_8)).doesNotContain("synthetic-secret-canary");
+        assertThat(json.readTree(malformed.body()).path("id").isNull()).isTrue();
         var unsupported = adapter.process(grant, token,
                 request("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"sampling/createMessage\",\"params\":{}}"));
         assertThat(new String(unsupported.body(), StandardCharsets.UTF_8)).contains("MCP method unavailable");
@@ -84,4 +85,21 @@ class McpGatewayProtocolAdapterTest {
     }
 
     private static byte[] request(String value) { return value.getBytes(StandardCharsets.UTF_8); }
+
+    @Test void nativeToolsListPreservesFullSchemaIncludingProviderExtensions() throws Exception {
+        String schema = """
+                {"type":"object","additionalProperties":{"type":"string"},
+                 "$defs":{"q":{"type":"string"}},"properties":{"q":{"$ref":"#/$defs/q"}},
+                 "oneOf":[{"required":["q"]}],"unevaluatedProperties":false,
+                 "x-provider-extension":{"version":1}}
+                """;
+        when(views.tools(grant.id())).thenReturn(List.of(McpSchema.Tool.builder()
+                .name("read").inputSchema(new JacksonMcpJsonMapper(json), schema).build()));
+        var response = adapter.process(grant, token,
+                request("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}"));
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(json.readTree(response.body()).path("result").path("tools").get(0).get("inputSchema"))
+                .isEqualTo(json.readTree(schema));
+        verifyNoInteractions(runtime);
+    }
 }

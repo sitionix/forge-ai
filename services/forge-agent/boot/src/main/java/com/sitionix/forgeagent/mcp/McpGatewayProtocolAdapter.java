@@ -119,9 +119,12 @@ public final class McpGatewayProtocolAdapter {
 
     private ProtocolResponse error(Object id, int code, String message) {
         try {
-            var response = new McpSchema.JSONRPCResponse(McpSchema.JSONRPC_VERSION, id, null,
-                    new McpSchema.JSONRPCResponse.JSONRPCError(code, message, null));
-            return new ProtocolResponse(200, protocolJson.writeValueAsBytes(response));
+            // JSON-RPC requires id:null when a malformed request has no identifiable ID.
+            // SDK 2 rejects null response IDs, so construct this fixed, safe error envelope directly.
+            var response = json.createObjectNode().put("jsonrpc", McpSchema.JSONRPC_VERSION);
+            response.set("id", json.valueToTree(id));
+            response.putObject("error").put("code", code).put("message", message);
+            return new ProtocolResponse(200, json.writeValueAsBytes(response));
         } catch (IOException impossible) {
             throw new IllegalStateException("MCP JSON mapper unavailable");
         }
