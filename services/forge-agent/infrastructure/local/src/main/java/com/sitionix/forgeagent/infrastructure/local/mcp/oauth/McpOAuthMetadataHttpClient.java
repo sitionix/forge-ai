@@ -9,6 +9,7 @@ import com.sitionix.forgeagent.domain.exception.McpProbeException;
 import com.sitionix.forgeagent.infrastructure.local.mcp.McpEndpointPolicy;
 import java.io.IOException;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.ProtocolVersions;
 import com.sitionix.forgeagent.domain.model.McpOAuthConfiguration;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -43,7 +44,7 @@ final class McpOAuthMetadataHttpClient {
     }
     /** Some Streamable HTTP servers reject GET or require a session; initialize observes their auth boundary. */
     Challenge initializeChallenge(URI uri,long deadline) {
-        var initialize=new McpSchema.InitializeRequest(McpSchema.LATEST_PROTOCOL_VERSION,
+        var initialize=new McpSchema.InitializeRequest(ProtocolVersions.MCP_2025_11_25,
                 McpSchema.ClientCapabilities.builder().build(),new McpSchema.Implementation("Forge","Forge","1"));
         var message=new McpSchema.JSONRPCRequest(McpSchema.JSONRPC_VERSION,McpSchema.METHOD_INITIALIZE,1,initialize);
         Challenge response=client(uri,deadline).post().uri(uri).contentType(MediaType.APPLICATION_JSON)
@@ -53,7 +54,7 @@ final class McpOAuthMetadataHttpClient {
         if(response.status()>=200 && response.status()<300 && session!=null) {
             if(session.isBlank() || session.chars().anyMatch(c->c<0x21 || c>0x7e))throw McpOAuthException.invalidResponse();
             client(uri,deadline).delete().uri(uri).header(HttpHeaders.CONTENT_LENGTH,"0").header("Mcp-Session-Id",session)
-                    .header("MCP-Protocol-Version",McpSchema.LATEST_PROTOCOL_VERSION)
+                    .header("MCP-Protocol-Version",ProtocolVersions.MCP_2025_11_25)
                     .exchange((request,result)->{try {
                         int status=result.getStatusCode().value();
                         if(!(status>=200 && status<300) && status!=404 && status!=405)throw McpOAuthException.unavailable();

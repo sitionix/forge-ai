@@ -73,8 +73,8 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         this.maxTools = maxTools;
         this.endpointPolicy = new McpEndpointPolicy(allowedPrivateEndpoints);
         this.sslContext = sslContext;
-        this.canonical = objectMapper.copy().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
-        this.protocolJson = new JacksonMcpJsonMapper(objectMapper.copy());
+        this.canonical = McpProtocolJson.copy(objectMapper).enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+        this.protocolJson = new JacksonMcpJsonMapper(McpProtocolJson.copy(objectMapper));
     }
 
     @Override public McpProbeReport probe(URI endpoint, McpAuthType authType, byte[] credential) {
@@ -82,7 +82,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         var http = new McpHttpClientBuilder();
         var transport = transport(endpoint, authType, credential, http, requestTimeout);
         boolean initialized = false;
-        try (var client = McpClient.sync(transport).initializationTimeout(requestTimeout)
+        try (var client = McpClient.sync(transport).enableCallToolSchemaCaching(false).initializationTimeout(requestTimeout)
                 .requestTimeout(requestTimeout).build()) {
             String protocolVersion = initialize(client);
             initialized = true;
@@ -124,7 +124,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         var transport = transport(endpoint, authType, credential, http, toolCallTimeout);
         long deadline = System.nanoTime() + toolCallTimeout.toNanos();
         boolean initialized = false;
-        var client = McpClient.async(transport).initializationTimeout(toolCallTimeout)
+        var client = McpClient.async(transport).enableCallToolSchemaCaching(false).initializationTimeout(toolCallTimeout)
                 .requestTimeout(toolCallTimeout).build();
         try {
             var initialization = client.initialize().block(remaining(deadline));
@@ -185,7 +185,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         var http = new McpHttpClientBuilder();
         var transport = transport(endpoint, authType, credential, http, requestTimeout);
         boolean initialized = false;
-        try (var client = McpClient.sync(transport).initializationTimeout(requestTimeout)
+        try (var client = McpClient.sync(transport).enableCallToolSchemaCaching(false).initializationTimeout(requestTimeout)
                 .requestTimeout(requestTimeout).build()) {
             initialize(client);
             initialized = true;
@@ -213,7 +213,8 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
                 throw new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
             for (var tool : result.tools()) {
                 if (tool == null || tool.name() == null || tool.name().isBlank()
-                        || tool.inputSchema() == null || !names.add(tool.name()) || tools.size() >= maxTools)
+                        || tool.inputSchema() == null || !"object".equals(tool.inputSchema().get("type"))
+                        || !names.add(tool.name()) || tools.size() >= maxTools)
                     throw new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
                 tools.add(tool);
             }
@@ -248,6 +249,8 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
         if (http.authStatus() == 403) return new McpProbeException(McpProbeException.Reason.FORBIDDEN);
         if (!initialized && hasSdkInvalidProtocol(exception))
             return new McpProbeException(McpProbeException.Reason.UNSUPPORTED_PROTOCOL);
+        if (http.sawSuccessfulPost() && hasCause(exception, com.fasterxml.jackson.core.JsonProcessingException.class))
+            return new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
         if (http.sawSuccessfulPost() && hasCause(exception, io.modelcontextprotocol.spec.McpTransportException.class))
             return new McpProbeException(McpProbeException.Reason.INVALID_RESPONSE);
         if (http.completedSuccessfulPost() && hasCause(exception, java.util.concurrent.TimeoutException.class))

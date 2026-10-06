@@ -8,6 +8,8 @@ import com.sitionix.forgeagent.domain.model.McpRuntimeGrant;
 import com.sitionix.forgeagent.domain.model.McpToolCallResult;
 import com.sitionix.forgeagent.domain.port.McpGatewayRuntime;
 import com.sitionix.forgeagent.infrastructure.local.mcp.gateway.SdkMcpGatewayToolView;
+import com.sitionix.forgeagent.infrastructure.local.mcp.protocol.McpProtocolJson;
+import com.sitionix.forgeagent.infrastructure.local.mcp.protocol.McpRelaySchemaValidator;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
@@ -37,8 +39,8 @@ public final class McpGatewayProtocolAdapter {
             throw new IllegalArgumentException("Invalid MCP gateway timeout");
         this.runtime = runtime;
         this.views = views;
-        this.json = json;
-        this.protocolJson = new JacksonMcpJsonMapper(json.copy());
+        this.json = McpProtocolJson.copy(json);
+        this.protocolJson = new JacksonMcpJsonMapper(this.json.copy());
         this.timeout = timeout;
     }
 
@@ -77,6 +79,7 @@ public final class McpGatewayProtocolAdapter {
             var request = json.treeToValue(root, McpSchema.JSONRPCRequest.class);
             var transport = new HandlerTransport();
             var builder = McpServer.sync(transport).jsonMapper(protocolJson)
+                    .validateToolInputs(false).jsonSchemaValidator(new McpRelaySchemaValidator(protocolJson))
                     .serverInfo("Forge MCP Gateway", "1")
                     .capabilities(new McpSchema.ServerCapabilities(null, null, null, null, null,
                             new McpSchema.ServerCapabilities.ToolCapabilities(false)))
@@ -119,9 +122,12 @@ public final class McpGatewayProtocolAdapter {
 
     private ProtocolResponse error(Object id, int code, String message) {
         try {
-            var response = new McpSchema.JSONRPCResponse(McpSchema.JSONRPC_VERSION, id, null,
-                    new McpSchema.JSONRPCResponse.JSONRPCError(code, message, null));
-            return new ProtocolResponse(200, protocolJson.writeValueAsBytes(response));
+            // JSON-RPC requires id:null when a malformed request has no identifiable ID.
+            // SDK 2 rejects null response IDs, so construct this fixed, safe error envelope directly.
+            var response = json.createObjectNode().put("jsonrpc", McpSchema.JSONRPC_VERSION);
+            response.set("id", json.valueToTree(id));
+            response.putObject("error").put("code", code).put("message", message);
+            return new ProtocolResponse(200, json.writeValueAsBytes(response));
         } catch (IOException impossible) {
             throw new IllegalStateException("MCP JSON mapper unavailable");
         }
