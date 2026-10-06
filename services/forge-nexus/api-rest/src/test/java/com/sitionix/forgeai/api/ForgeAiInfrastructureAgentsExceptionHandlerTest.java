@@ -20,6 +20,17 @@ class ForgeAiInfrastructureAgentsExceptionHandlerTest {
 
     private ForgeAiInfrastructureAgentsExceptionHandler handler;
 
+    @Test void codex_authorization_errors_keep_safe_codes_and_status() {
+        for (String code : java.util.List.of("CODEX_AUTH_REQUIRED", "CODEX_LOGOUT_REQUIRED", "CODEX_AUTH_CLEANUP_FAILED")) {
+            int status = code.equals("CODEX_AUTH_REQUIRED") ? 409 : 503;
+            var response = this.handler.handleAgentClientException(new AgentClientException(status,
+                    "{\"code\":\"" + code + "\",\"message\":\"" + code + "\"}", Map.of(), null));
+            assertThat(response.getStatusCode().value()).isEqualTo(status);
+            assertThat(response.getBody().code()).isEqualTo(code);
+            assertThat(response.getBody().message()).isEqualTo(code);
+        }
+    }
+
     @BeforeEach
     void setUp() {
         this.handler = new ForgeAiInfrastructureAgentsExceptionHandler(new ObjectMapper());

@@ -29,6 +29,18 @@ resolve_codex_command() {
   fi
 }
 
+resolve_java_command() {
+  if [[ -n "${FORGE_JAVA_COMMAND:-}" ]]; then
+    printf '%s\n' "${FORGE_JAVA_COMMAND}"
+    return
+  fi
+
+  command -v java 2>/dev/null || {
+    echo "Java is required to run Forge Agent and Nexus." >&2
+    return 1
+  }
+}
+
 mkdir -p "${OUTPUT_DIR}" "$(dirname -- "${ENV_FILE}")"
 
 render_template() {
@@ -73,9 +85,12 @@ render_template "${TEMPLATE_DIR}/forge-remote-setup.service.in" "${OUTPUT_DIR}/f
   env_line "FORGE_WORKSPACE_ROOT" "${FORGE_WORKSPACE_ROOT}"
   env_line "WORKSPACE_ROOT" "${WORKSPACE_ROOT}"
   env_line "FORGE_AGENT_BASE_URL" "http://127.0.0.1:7091"
+  env_line "FORGE_CODEX_AGENT_BASE_URL" "http://127.0.0.1:7091"
+  env_line "FORGE_CODEX_SERVICE_TOKEN_FILE" "$(dirname -- "${MCP_MATERIAL_DIR}")/codex-service/token"
   env_line "FORGE_AGENT_DB_URL" "${FORGE_AGENT_DB_URL:-jdbc:postgresql://localhost:54329/forge_agent}"
   env_line "FORGE_AGENT_DB_USERNAME" "${FORGE_AGENT_DB_USERNAME:-forge_agent}"
   env_line "FORGE_AGENT_CODEX_COMMAND" "$(resolve_codex_command)"
+  env_line "FORGE_JAVA_COMMAND" "$(resolve_java_command)"
   env_line "FORGE_AGENT_PORT" "7091"
   # Only Agent consumes FORGE_AGENT_HOST; shared service environment remains safe.
   if [[ -n "${FORGE_AGENT_HOST:-}" ]]; then

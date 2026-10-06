@@ -1,5 +1,6 @@
 environment: localhost
 server:
+  forward-headers-strategy: none
   address: ${FORGE_NEXUS_HOST:}
   port: 9099
   tomcat:
@@ -33,6 +34,10 @@ management:
     readinessstate:
       enabled: true
 forge:
+  llm:
+    authorization:
+      browser-origin: ${FORGE_LLM_BROWSER_ORIGIN:http://127.0.0.1:9099}
+      binding-ttl: ${FORGE_LLM_BROWSER_BINDING_TTL:12h}
   mcp:
     catalog:
       agent-read-timeout: ${FORGE_MCP_CATALOG_AGENT_READ_TIMEOUT:55s}

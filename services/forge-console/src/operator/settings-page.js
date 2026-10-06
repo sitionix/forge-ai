@@ -4,6 +4,8 @@ import {McpCatalogConnect} from './mcp-catalog-connect.js';
 import {McpCatalog} from './mcp-catalog.js';
 import {RequestCoordinator} from './request-coordinator.js';
 import {renderMcpConnections,renderMcpDetails} from './mcp-connections-view.js';
+import {LlmApi} from './llm-api.js';
+import {LlmProvidersView} from './llm-providers-view.js';
 
 export class SettingsPage {
   constructor({document,window,fetcher}) {
@@ -11,6 +13,8 @@ export class SettingsPage {
     this.api=new McpApi({fetcher,location:window.location});
     this.requests=new RequestCoordinator();this.listeners=new window.AbortController();
     this.disposed=false;this.selection=0;this.selected=null;this.pending=false;
+    this.llm=new LlmProvidersView({document,window,api:new LlmApi({fetcher,location:window.location}),
+      onChanged:provider=>window.dispatchEvent(new window.CustomEvent('forge:llm-authorization-changed',{detail:{providerId:provider.providerId}}))});
     this.form=new McpConnectionForm({document,window,api:this.api,onConfirmed:id=>void this.confirmed(id),onError:error=>this.error(error),onClose:saved=>this.formClosed(saved)});
     this.catalog=new McpCatalog({document,window,api:this.api,onSelect:server=>this.catalogConnect.connect(server)});
     this.catalogConnect=new McpCatalogConnect({window,api:this.api,catalog:this.catalog,onSaved:()=>this.refresh(false)});
@@ -32,7 +36,7 @@ export class SettingsPage {
     this.listen('mcpRemove','click',()=>void this.mutate('remove'));
     this.listen('mcpConnections','click',event=>{const id=event.target.closest('[data-connection-id]')?.dataset.connectionId;if(id) void this.details(id);});
     this.window.addEventListener('pagehide',()=>this.dispose(),{signal:this.listeners.signal});
-    void this.start();void this.catalog.load();return this;
+    void this.start();void this.catalog.load();void Promise.resolve().then(()=>{if(!this.disposed)void this.llm.start();});return this;
   }
   notice(message) { this.element(this.element('mcpDetailsPanel').open?'mcpDetailsNotice':'mcpNotice').textContent=message; }
   clearError() {
@@ -132,6 +136,6 @@ export class SettingsPage {
     }
   }
   dispose() {
-    if(this.disposed) return;this.disposed=true;this.catalogConnect.dispose();this.form.dispose();this.closeCatalog();this.catalog.dispose();this.requests.dispose();this.listeners.abort();this.resetView();this.notice('');
+    if(this.disposed) return;this.disposed=true;this.llm.dispose();this.catalogConnect.dispose();this.form.dispose();this.closeCatalog();this.catalog.dispose();this.requests.dispose();this.listeners.abort();this.resetView();this.notice('');
   }
 }

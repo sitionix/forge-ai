@@ -7,6 +7,10 @@ import errno
 import io
 import os
 import sys
+import json
+import subprocess
+import select
+import time
 from unittest.mock import patch
 
 SOURCE = pathlib.Path(__file__).parents[1] / 'forge-runtime-launcher.py'
@@ -21,6 +25,26 @@ class LauncherTests(unittest.TestCase):
 
     def test_implementation_exists(self):
         self.assertTrue(SOURCE.exists(), 'fixed runtime launcher is missing')
+
+    def test_isolation_config_parsing_accepts_settings_and_rejects_external_tools(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = pathlib.Path(folder) / 'base.toml'
+            empty = pathlib.Path(folder) / 'empty.toml'
+            empty.write_text('')
+            profile = {'codex_config': str(base), 'empty_system_config': str(empty)}
+            # Disposable fixtures cannot satisfy the production root-owned path check.
+            with patch.object(self.launcher, 'trusted_path', side_effect=lambda path: pathlib.Path(path)):
+                base.write_text('model = "gpt-5"\n')
+                self.launcher.validate_codex_isolation_config(profile)
+                for content in ['[mcp_servers.github]\nurl = "https://example.com/mcp"\n',
+                                '[plugins]\nenabled = true\n', '[marketplaces]\nenabled = true\n']:
+                    base.write_text(content)
+                    with self.subTest(content=content), self.assertRaisesRegex(ValueError, 'unsafe Codex base'):
+                        self.launcher.validate_codex_isolation_config(profile)
+                base.write_text('model = "gpt-5"\n')
+                empty.write_text('[mcp_servers.github]\nurl = "https://example.com/mcp"\n')
+                with self.assertRaisesRegex(ValueError, 'unsafe Codex base'):
+                    self.launcher.validate_codex_isolation_config(profile)
 
     def test_noncanonical_identifiers_denied(self):
         if not SOURCE.exists(): self.skipTest('implementation absent')
@@ -66,7 +90,213 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(command[command.index('--')+1:][:4],
                          [str(pathlib.Path(sys.executable).resolve()), '-I', str(SOURCE), '--runtime-codex'])
 
-    def test_legacy_profile_and_codex_start_do_not_require_mcp_mount_sources(self):
+    def test_non_mcp_codex_has_same_config_isolation_as_mcp(self):
+        config = dict(installation='01234567-89ab-4cde-8012-3456789abcde', runtime_uid=62002,
+                      runtime_gid=62002, runtime_home='/srv/forge/runtime', agent_unit='forge-agent.service',
+                      max_lifetime_seconds=7200, workspace_roots=['/srv/forge/workspaces'],
+                      env_binary='/usr/bin/env', codex_binary='/opt/forge/codex', git_binary='/usr/bin/git',
+                      codex_config='/etc/forge/codex-runtime.toml', empty_system_config='/etc/forge/empty-codex.toml')
+        command = self.launcher.service_command(config, '01234567-89ab-4cde-8012-3456789abcdf',
+                '/srv/forge/workspaces/x', ['/opt/forge/codex', 'app-server', '--stdio'])
+        for property in [
+                'BindReadOnlyPaths=/etc/forge/codex-runtime.toml:/srv/forge/runtime/.codex/config.toml',
+                'BindReadOnlyPaths=/etc/forge/empty-codex.toml:/etc/codex/config.toml',
+                'InaccessiblePaths=/srv/forge/runtime/.codex/plugins',
+                'InaccessiblePaths=/srv/forge/runtime/.codex/.agents/plugins']:
+            self.assertIn('--property='+property, command)
+        self.assertFalse(any('LoadCredential=' in part for part in command))
+
+    def test_personal_credentials_and_project_provider_override_cannot_authorize(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            personal = root/'personal'; personal.mkdir()
+            (personal/'.codex').mkdir()
+            (personal/'.codex/auth.json').write_text('{"OPENAI_API_KEY":"synthetic-personal-canary"}')
+            (personal/'.codex/config.toml').write_text('model_provider = "personal"\n')
+            project = root/'project'; project.mkdir()
+            (project/'.codex').mkdir()
+            base = root/'base.toml'; base.write_text('model = "gpt-5"\n')
+            empty = root/'empty.toml'; empty.write_text('')
+            config = dict(installation='01234567-89ab-4cde-8012-3456789abcde', runtime_uid=os.getuid(),
+                          runtime_gid=os.getgid(), runtime_home=str(root/'runtime'),
+                          agent_unit='forge-agent.service', max_lifetime_seconds=7200,
+                          workspace_roots=[str(project)], env_binary='/usr/bin/env',
+                          codex_binary='/opt/forge/codex', git_binary='/usr/bin/git',
+                          codex_config=str(base), empty_system_config=str(empty))
+            sentinels = {'HOME':str(personal), 'CODEX_HOME':str(personal/'.codex'),
+                         'OPENAI_API_KEY':'synthetic-env-canary', 'CODEX_API_KEY':'synthetic-env-canary',
+                         'OPENAI_BASE_URL':'http://127.0.0.1:9', 'DBUS_SESSION_BUS_ADDRESS':'synthetic-keyring'}
+            command = self.launcher.service_command(config, '01234567-89ab-4cde-8012-3456789abcdf',
+                    str(project), ['/usr/bin/env'])
+            launched = subprocess.check_output(command[command.index('--')+1:], env=sentinels, text=True)
+            environment = dict(line.split('=',1) for line in launched.splitlines())
+            self.assertEqual(environment['HOME'], str(root/'runtime'))
+            self.assertEqual(environment['CODEX_HOME'], str(root/'runtime/.codex'))
+            for key in ['OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_URL','DBUS_SESSION_BUS_ADDRESS']:
+                self.assertNotIn(key, environment)
+            for content in ['model_provider = "personal"\n',
+                            'cli_auth_credentials_store = "keyring"\n',
+                            'forced_login_method = "api"\n',
+                            '[model_providers.personal]\nexperimental_bearer_token = "synthetic-project-canary"\n',
+                            '[agents.worker]\nconfig_file = "personal.toml"\n']:
+                (project/'.codex/config.toml').write_text(content)
+                with self.subTest(content=content), patch.object(self.launcher, 'trusted_path'), patch.object(
+                        self.launcher, 'validate_codex_mount_targets'), patch.object(
+                        self.launcher, 'locked_receipt') as receipt, patch.object(self.launcher.subprocess, 'Popen') as launch:
+                    with self.assertRaises(ValueError):
+                        self.launcher.start(config, '01234567-89ab-4cde-8012-3456789abcdf', str(project),
+                                            ['/opt/forge/codex', 'app-server', '--stdio'])
+                    receipt.assert_not_called()
+                    launch.assert_not_called()
+            self.assertEqual(json.loads((personal/'.codex/auth.json').read_text()),
+                             {'OPENAI_API_KEY':'synthetic-personal-canary'})
+
+    def test_reconstructed_launch_environment_preserves_only_the_forge_profile(self):
+        """Exec-environment fixture only: does not exercise host systemd or real Codex auth."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            personal = root/'personal'; (personal/'.codex').mkdir(parents=True)
+            runtime = root/'runtime'; (runtime/'.codex').mkdir(parents=True)
+            (personal/'.codex/account.fixture').write_text('terminal@example.test')
+            config = dict(installation='01234567-89ab-4cde-8012-3456789abcde', runtime_uid=os.getuid(),
+                          runtime_gid=os.getgid(), runtime_home=str(runtime), agent_unit='forge-agent.service',
+                          max_lifetime_seconds=7200, workspace_roots=[str(root)],
+                          env_binary='/usr/bin/env', codex_binary='/synthetic/codex', git_binary='/usr/bin/git')
+            reader = ('import os,pathlib; p=pathlib.Path(os.environ["CODEX_HOME"])/"account.fixture"; '
+                      'print(p.read_text() if p.exists() else "SIGNED_OUT")')
+            inherited = {'HOME':str(personal), 'CODEX_HOME':str(personal/'.codex'),
+                         'OPENAI_API_KEY':'synthetic-terminal-key'}
+            def observe():
+                command = self.launcher.service_command(config, '01234567-89ab-4cde-8012-3456789abcdf',
+                            str(root), [sys.executable, '-I', '-c', reader])
+                return subprocess.check_output(command[command.index('--')+1:], env=inherited, text=True).strip()
+            self.assertEqual(observe(), 'SIGNED_OUT')
+            account = runtime/'.codex/account.fixture'; account.write_text('forge@example.test')
+            before = account.stat()
+            self.assertEqual(observe(), 'forge@example.test')
+            self.assertEqual(observe(), 'forge@example.test')
+            self.assertEqual((account.stat().st_ino, account.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+            account.unlink()
+            self.assertEqual(observe(), 'SIGNED_OUT')
+            self.assertEqual((personal/'.codex/account.fixture').read_text(), 'terminal@example.test')
+
+    def test_all_codex_launches_pin_forge_auth_authority(self):
+        config = dict(installation='01234567-89ab-4cde-8012-3456789abcde', runtime_uid=62002,
+                      runtime_gid=62002, runtime_home='/srv/forge/runtime', agent_unit='forge-agent.service',
+                      max_lifetime_seconds=7200, workspace_roots=['/srv/forge/workspaces'],
+                      env_binary='/usr/bin/env', codex_binary='/opt/forge/codex', git_binary='/usr/bin/git',
+                      codex_config='/etc/forge/codex-runtime.toml', empty_system_config='/etc/forge/empty-codex.toml')
+        command = self.launcher.service_command(config, '01234567-89ab-4cde-8012-3456789abcdf',
+                '/srv/forge/workspaces/x', ['/opt/forge/codex', 'app-server', '--stdio'])
+        expected = ['/opt/forge/codex', 'app-server', '--stdio', '-c', 'model_provider="openai"',
+                    '-c', 'cli_auth_credentials_store="file"', '-c', 'forced_login_method="chatgpt"']
+        self.assertEqual(command[command.index('/opt/forge/codex'):], expected)
+        with tempfile.TemporaryDirectory() as folder:
+            (pathlib.Path(folder)/'forge-mcp-grants').write_text('{}')
+            with patch.dict(self.launcher.os.environ, {'CREDENTIALS_DIRECTORY':folder}, clear=True), patch.object(
+                    self.launcher.os, 'execve') as execute:
+                self.launcher.runtime_codex('/opt/forge/codex', '/srv/forge/runtime')
+            self.assertEqual(execute.call_args.args[1], expected)
+
+    @unittest.skipUnless(os.environ.get('FORGE_TEST_CODEX_BINARY'), 'opt-in installed Codex characterization')
+    def test_installed_codex_cli_auth_pins_survive_a_different_project_cwd(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            home = root/'runtime'; (home/'.codex').mkdir(parents=True)
+            project = root/'project'; (project/'.codex').mkdir(parents=True)
+            (home/'.codex/config.toml').write_text(
+                'cli_auth_credentials_store = "file"\nforced_login_method = "chatgpt"\n'
+                '[projects."'+str(project)+'"]\ntrust_level = "trusted"\n')
+            (project/'.codex/config.toml').write_text(
+                'model_provider = "personal"\ncli_auth_credentials_store = "ephemeral"\n'
+                'forced_login_method = "api"\n[model_providers.personal]\nname = "Fixture"\n'
+                'base_url = "http://127.0.0.1:9"\nwire_api = "responses"\n'
+                'experimental_bearer_token = "synthetic-project-canary"\nrequires_openai_auth = false\n')
+            binary = os.environ['FORGE_TEST_CODEX_BINARY']
+            config = dict(installation='01234567-89ab-4cde-8012-3456789abcde', runtime_uid=os.getuid(),
+                          runtime_gid=os.getgid(), runtime_home=str(home), agent_unit='forge-agent.service',
+                          max_lifetime_seconds=7200, workspace_roots=[str(project)],
+                          env_binary='/usr/bin/env', codex_binary=binary, git_binary='/usr/bin/git',
+                          codex_config=str(root/'base.toml'), empty_system_config=str(root/'empty.toml'))
+            service = self.launcher.service_command(config, '01234567-89ab-4cde-8012-3456789abcdf',
+                    str(home), [binary,'app-server','--stdio'])
+            # Exercise the emitted exec/environment boundary only; no host systemd changes.
+            child = subprocess.Popen(service[service.index('--')+1:], cwd=home,
+                                     env={'OPENAI_API_KEY':'synthetic-parent-canary'},
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            buffered = bytearray()
+            def request(identity, method, params):
+                child.stdin.write((json.dumps({'id':identity,'method':method,'params':params})+'\n').encode())
+                child.stdin.flush()
+                deadline = time.monotonic()+10
+                while time.monotonic() < deadline:
+                    if b'\n' not in buffered:
+                        if not select.select([child.stdout], [], [], max(0,deadline-time.monotonic()))[0]:
+                            self.fail('installed Codex response timed out')
+                        chunk = os.read(child.stdout.fileno(), 65536)
+                        if not chunk: self.fail('installed Codex closed its output')
+                        buffered.extend(chunk)
+                    while b'\n' in buffered:
+                        line, _, remaining = buffered.partition(b'\n'); buffered[:] = remaining
+                        response = json.loads(line)
+                        if response.get('id') == identity:
+                            self.assertNotIn('error', response)
+                            return response['result']
+                self.fail('installed Codex response timed out')
+            try:
+                initialized = request(1, 'initialize', {'clientInfo':{'name':'forge_isolation_test','version':'0'}})
+                self.assertRegex(initialized['userAgent'], r'/0\.160\.[01] ')
+                child.stdin.write(b'{"method":"initialized"}\n'); child.stdin.flush()
+                response = request(2, 'config/read', {'cwd':str(project),'includeLayers':True})
+                self.assertTrue(any(layer['name']['type']=='project' and not layer.get('disabledReason')
+                                    for layer in response['layers']))
+                self.assertEqual(response['config']['model_provider'], 'openai')
+                self.assertEqual(response['config']['cli_auth_credentials_store'], 'file')
+                self.assertEqual(response['config']['forced_login_method'], 'chatgpt')
+                account = request(3, 'account/read', {'refreshToken':False})
+                self.assertIsNone(account['account'])
+                self.assertTrue(account['requiresOpenaiAuth'])
+            finally:
+                child.terminate()
+                try: child.wait(timeout=5)
+                except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=5)
+                child.stdin.close(); child.stdout.close()
+
+    def test_base_config_rejects_auth_sources_and_unknown_nested_configuration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = pathlib.Path(folder)/'base.toml'; empty = pathlib.Path(folder)/'empty.toml'
+            empty.write_text('')
+            profile = {'codex_config':str(base), 'empty_system_config':str(empty)}
+            with patch.object(self.launcher, 'trusted_path'):
+                for content in ['model_provider = "custom"\n',
+                                'cli_auth_credentials_store = "auto"\n',
+                                'forced_login_method = "api"\n',
+                                '[profiles.worker]\nmodel_provider = "custom"\n',
+                                '[agents.worker]\nconfig_file = "/synthetic/other.toml"\n',
+                                'unknown_future_auth_setting = "custom"\n']:
+                    base.write_text(content)
+                    with self.subTest(content=content), self.assertRaisesRegex(ValueError, 'unsafe Codex base'):
+                        self.launcher.validate_codex_isolation_config(profile)
+
+    def test_project_config_accepts_harmless_settings_but_rejects_nested_auth_and_symlinks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder); project = root/'project'; project.mkdir()
+            (root/'.codex').mkdir(); (project/'.codex').mkdir()
+            config_file = root/'.codex/config.toml'
+            config_file.write_text('model = "gpt-5"\nmodel_reasoning_effort = "high"\n')
+            self.launcher.validate_codex_project_config(str(project))
+            for content in ['[profiles.worker]\ncli_auth_credentials_store = "keyring"\n',
+                            '[agents.worker]\nmodel_provider = "personal"\n',
+                            '[agents.worker]\nconfig_file = "personal.toml"\n',
+                            '[model_providers.personal.auth]\ncommand = "/synthetic/token"\n']:
+                config_file.write_text(content)
+                with self.subTest(content=content), self.assertRaises(ValueError):
+                    self.launcher.validate_codex_project_config(str(project))
+            config_file.unlink(); config_file.symlink_to(root/'outside.toml')
+            with self.assertRaises(ValueError):
+                self.launcher.validate_codex_project_config(str(project))
+
+    def test_legacy_profile_denies_codex_but_remains_usable_for_non_codex_launches(self):
         config = dict(installation='01234567-89ab-4cde-8012-3456789abcde', control_uid=2001,
                       runtime_uid=2002, runtime_gid=2002, runtime_home='/srv/forge/runtime',
                       workspace_roots=['/srv/forge/workspaces'], agent_unit='forge-agent.service',
@@ -76,12 +306,12 @@ class LauncherTests(unittest.TestCase):
         execution='01234567-89ab-4cde-8012-3456789abcdf'
         with patch.object(self.launcher, 'load_config', return_value=config), patch.object(
                 self.launcher, 'caller'), patch.object(self.launcher, 'workspace', return_value='/srv/forge/workspaces/x'), patch.object(
-                self.launcher, 'start', return_value=0) as start, patch.object(
-                self.launcher, 'read_startup_envelope') as read:
-            self.assertEqual(self.launcher.main(['start','codex',execution,'/srv/forge/workspaces/x']),0)
-        start.assert_called_once_with(config, execution, '/srv/forge/workspaces/x',
-                                      ['/opt/forge/codex','app-server','--stdio'])
-        read.assert_not_called()
+                self.launcher, 'locked_receipt') as receipt:
+            with self.assertRaisesRegex(ValueError, 'Codex isolation configuration unavailable'):
+                self.launcher.main(['start','codex',execution,'/srv/forge/workspaces/x'])
+            receipt.assert_not_called()
+        command = self.launcher.service_command(config, execution, '/srv/forge/workspaces/x', ['/usr/bin/git','status'])
+        self.assertIn('/usr/bin/git',command)
 
     def test_mcp_codex_start_requires_complete_isolation_config(self):
         config = dict(installation='01234567-89ab-4cde-8012-3456789abcde', control_uid=2001,

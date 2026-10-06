@@ -28,21 +28,24 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
     private final CodexAppServerProperties properties;
     private final CodexRecoveryProtocol recoveryProtocol;
     private final Clock clock;
+    private final com.sitionix.forgeagent.application.llm.ForgeCodexAuthorizationGate authorizationGate;
 
     CodexRecoveryInspector(final ObjectMapper objectMapper, final CodexAppServerProcessStarter processStarter,
                            final CodexAppServerProperties properties, final CodexRecoveryProtocol recoveryProtocol,
-                           final Clock clock) {
+                           final Clock clock,
+                           final com.sitionix.forgeagent.application.llm.ForgeCodexAuthorizationGate authorizationGate) {
         this.objectMapper = objectMapper;
         this.processStarter = processStarter;
         this.properties = properties;
         this.recoveryProtocol = recoveryProtocol;
         this.clock = clock;
+        this.authorizationGate = authorizationGate;
     }
 
     @Override
     public boolean supports(final String providerId, final String providerVersion) {
         return PROVIDER_ID.equals(providerId)
-                && CodexAppServerClient.SUPPORTED_RECOVERY_VERSION.equals(providerVersion);
+                && CodexAppServerClient.supportsDurableVersion(providerVersion);
     }
 
     @Override
@@ -59,6 +62,11 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
             return ProviderTurnRecoveryResult.unknown("Codex recovery deadline does not permit process inspection");
         }
         final Instant forceDeadline = inspection.deadline().minus(this.properties.getForceKillTimeout());
+        final com.sitionix.forgeagent.application.llm.ForgeCodexAuthorizationGate.AuthorizationLease lease;
+        try { lease = this.authorizationGate.observe(); }
+        catch (com.sitionix.forgeagent.domain.exception.LlmAuthorizationException blocked) {
+            return ProviderTurnRecoveryResult.unknown(blocked.code());
+        }
         final CodexRecoveryLifecycle lifecycle = new CodexRecoveryLifecycle();
         final CompletableFuture<Void> providerPhaseFinished = new CompletableFuture<>();
         final CompletableFuture<ProviderTurnRecoveryResult> result = new CompletableFuture<>();
@@ -67,7 +75,9 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
                 .name("forge-agent-codex-recovery-" + INSPECTION_IDS.incrementAndGet())
                 .start(() -> {
                     try {
-                        result.complete(this.inspectOwned(inspection, requestDeadline, lifecycle, providerPhaseFinished));
+                        var inspected = this.inspectOwned(inspection, requestDeadline, lifecycle, providerPhaseFinished, lease);
+                        this.authorizationGate.release(lease);
+                        result.complete(inspected);
                     } catch (final RuntimeException exception) {
                         result.complete(ProviderTurnRecoveryResult.unknown("Codex recovery lifecycle failed: "
                                 + exception.getClass().getSimpleName()));
@@ -109,12 +119,16 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
     private ProviderTurnRecoveryResult inspectOwned(final AgentExecutionRecoveryInspection inspection,
                                                     final Instant requestDeadline,
                                                     final CodexRecoveryLifecycle lifecycle,
-                                                    final CompletableFuture<Void> providerPhaseFinished) {
+                                                    final CompletableFuture<Void> providerPhaseFinished,
+                                                    final com.sitionix.forgeagent.application.llm.ForgeCodexAuthorizationGate.AuthorizationLease lease) {
         StartedCodexAppServer started = null;
         CodexJsonRpcTransport transport = null;
         ProviderTurnRecoveryResult result;
         try {
             started = this.processStarter.start(inspection.executionWorkspace().cwd());
+            final Process process = started.process();
+            this.authorizationGate.registerCancellation(lease,
+                    () -> this.closeUnownedProcess(process, inspection.deadline()));
             if (!lifecycle.register(started.process()) || lifecycle.aborted()) {
                 result = ProviderTurnRecoveryResult.unknown("Codex recovery process started after cancellation");
             } else {
@@ -126,7 +140,7 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
                         inspection.deadline()
                 );
                 final String liveVersion = this.initialize(transport, requestDeadline);
-                if (!CodexAppServerClient.SUPPORTED_RECOVERY_VERSION.equals(liveVersion)
+                if (!CodexAppServerClient.supportsDurableVersion(liveVersion)
                         || !Objects.equals(inspection.providerVersion(), liveVersion)) {
                     result = ProviderTurnRecoveryResult.unknown(
                             "Codex recovery live version did not match persisted version");
@@ -184,6 +198,10 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
     }
 
     private void closeUnownedProcess(final Process process, final Instant deadline) {
+        // The launcher pipe may exit before its managed unit; retain failed stop acknowledgements.
+        if (process instanceof com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess managed) {
+            managed.terminateOwnedUnit();
+        }
         if (!process.isAlive()) {
             return;
         }

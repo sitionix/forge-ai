@@ -549,7 +549,8 @@ public class ForgeAgentClientMapper {
                 response.displayName(),
                 response.status(),
                 response.version(),
-                response.models() == null ? null : response.models().stream().map(this::toDomain).toList()
+                response.models() == null ? null : response.models().stream().map(this::toDomain).toList(),
+                response.authState()
         );
     }
 

@@ -467,6 +467,13 @@ class ForgeAgentApiMapperTest {
         ))));
     }
 
+    @Test void authorization_state_is_separate_from_runtime_availability() {
+        var catalog = new AiRuntimeCatalog(List.of(new CodexRuntimeProvider("codex", "Codex",
+                RuntimeProviderStatus.READY, "1", List.of(), "CONNECTED")));
+        assertThat(mapper.toResponse(catalog).providers().getFirst().authState()).isEqualTo("CONNECTED");
+        assertThat(mapper.toResponse(catalog).providers().getFirst().status()).isEqualTo(RuntimeProviderStatus.READY);
+    }
+
     @Test
     void mapsWorkflowRequestsAndResponses() {
         assertThat(this.mapper.toCommand(new CreateWorkflowRequest("Full Testing")))

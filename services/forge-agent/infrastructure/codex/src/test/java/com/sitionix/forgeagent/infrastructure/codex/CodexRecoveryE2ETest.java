@@ -68,7 +68,7 @@ class CodexRecoveryE2ETest {
             executionClient.close();
         }
 
-        assertThat(version.get()).isEqualTo("0.157.0");
+        assertThat(version.get()).isIn("0.157.0", "0.160.0");
         assertThat(threadId.get()).isNotBlank();
         assertThat(turnId.get()).isNotBlank();
 
@@ -78,7 +78,7 @@ class CodexRecoveryE2ETest {
         final Clock clock = Clock.systemUTC();
         final CodexRecoveryInspector inspector = new CodexRecoveryInspector(
                 this.objectMapper, recoveryStarter, recoveryProperties,
-                new CodexRecoveryProtocol(this.objectMapper, clock), clock);
+                new CodexRecoveryProtocol(this.objectMapper, clock), clock, new ForgeAuthorizationFixture(false).gate);
 
         final ProviderTurnRecoveryResult result = inspector.inspect(new AgentExecutionRecoveryInspection(
                 "codex", version.get(), threadId.get(), turnId.get(), workspace, Instant.now().plusSeconds(30)));
@@ -94,7 +94,7 @@ class CodexRecoveryE2ETest {
                 this.objectMapper,
                 new DefaultCodexAppServerProcessStarter(properties, CodexFixtureProcesses.launcher(properties)),
                 properties,
-                new CodexRuntimeWorkspace(properties)
+                new CodexRuntimeWorkspace(properties), null, new ForgeAuthorizationFixture(true).gate
         );
     }
 

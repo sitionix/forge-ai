@@ -95,6 +95,38 @@ class McpExecutionSelectionServiceTest {
                 .hasMessage("MCP execution requires a tracked session");
     }
 
+    @Test void connectedLlmAccountDoesNotGrantForeignProjectsOrUnapprovedTools() {
+        var provider = mock(com.sitionix.forgeagent.domain.port.LlmAuthorizationGateway.Session.class);
+        when(provider.healthy()).thenReturn(true);
+        when(provider.drainEvents()).thenReturn(List.of());
+        when(provider.readAccount(org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(
+                new com.sitionix.forgeagent.domain.port.LlmAuthorizationGateway.Account(true, "forge@example.test", "plus"));
+        try (var auth = new com.sitionix.forgeagent.application.llm.LlmAuthorizationService(() -> provider, Clock.systemUTC())) {
+            var gate = new com.sitionix.forgeagent.application.llm.ForgeCodexAuthorizationGate(auth);
+            var lease = gate.requireAuthorized();
+            var allowed = connection(UUID.randomUUID(), true, McpProjectAccess.selected(Set.of(projectId)), true);
+            var foreign = connection(UUID.randomUUID(), true, McpProjectAccess.selected(Set.of(otherProjectId)), true);
+            var unapproved = connection(UUID.randomUUID(), true, McpProjectAccess.selected(Set.of(projectId)), false);
+            when(workflows.findById(workflowId)).thenReturn(Optional.of(workflow(projectId)));
+            when(connections.findAll(installation)).thenReturn(List.of(allowed, foreign, unapproved));
+            when(gateway.issue(session, NOW.plusSeconds(90), allowed.id()))
+                    .thenReturn(new McpRuntimeGrantHandle(UUID.randomUUID(), "synthetic-grant"));
+
+            var prepared = service.prepare(claim(session), NOW.plusSeconds(90));
+
+            assertThat(prepared.selection().entries()).extracting(entry -> entry.connectionId()).containsExactly(allowed.id());
+            assertThat(prepared.selection().entries().getFirst().tools()).isEqualTo(allowed.allowedTools());
+            verify(gateway, Mockito.never()).issue(any(), any(), org.mockito.ArgumentMatchers.eq(foreign.id()));
+            verify(gateway, Mockito.never()).issue(any(), any(), org.mockito.ArgumentMatchers.eq(unapproved.id()));
+            gate.release(lease);
+            when(provider.readAccount(false)).thenReturn(new com.sitionix.forgeagent.domain.port.LlmAuthorizationGateway.Account(false, null, null));
+            auth.logout();
+            // LLM logout cannot edit MCP configuration or revoke its independent OAuth credentials.
+            verify(connections).findAll(installation);
+            Mockito.verifyNoMoreInteractions(connections);
+        }
+    }
+
     @Test void unavailableConnectionDoesNotHideAnotherApprovedConnection() {
         var broken = connection(UUID.fromString("00000000-0000-4000-8000-000000000001"), true,
                 McpProjectAccess.all(), true);

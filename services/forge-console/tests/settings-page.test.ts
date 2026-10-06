@@ -11,6 +11,13 @@ function setup(list:unknown=[],status=200) {
 }
 beforeEach(()=>{HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};});
 describe('Settings integrations',()=>{
+ it('owns separate Codex and MCP controllers with provider bootstrap and pagehide disposal',async()=>{
+  document.documentElement.innerHTML=html();const signedOut={providerId:'codex',authState:'SIGNED_OUT',email:null,plan:null,availability:'AVAILABLE',errorCode:null};
+  const fetcher=vi.fn(async(url:string,_init?:RequestInit)=>Response.json(url.endsWith('/llm/providers')?[signedOut]:url.includes('/available?')?{servers:[],nextCursor:null}:[]));
+  const page=new SettingsPage({document,window,fetcher});page.mount();await tick();expect(document.querySelector('#codexState')?.textContent).toBe('Signed out');expect(document.querySelector('#mcpConnections')?.textContent).toContain('No integrations connected');
+  const llmCall=fetcher.mock.calls.find(([url])=>url.endsWith('/llm/providers'));expect(llmCall?.[1]?.credentials).toBe('same-origin');
+  window.dispatchEvent(new Event('pagehide'));(document.querySelector('#codexRetry') as HTMLButtonElement).click();await tick();expect(fetcher.mock.calls.filter(([url])=>url.endsWith('/llm/providers'))).toHaveLength(1);
+ });
  it('loads connections immediately without login or an operator session request',async()=>{
  const {page,fetcher}=setup();await tick();
  expect(fetcher.mock.calls.filter(([url])=>url.endsWith('/connections'))).toHaveLength(1);

@@ -2,14 +2,39 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_ROOT="${ROOT}"
 SYSTEM_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 PASSED=0
 TOTAL=0
-TEMP_DIRS=()
-cleanup() { for dir in "${TEMP_DIRS[@]:-}"; do rm -rf "${dir}"; done; }
+SUITE_DIR="$(mktemp -d)"
+cleanup() { rm -rf "${SUITE_DIR}"; }
 trap cleanup EXIT
-tmp() { local dir; dir="$(mktemp -d)"; TEMP_DIRS+=("${dir}"); printf '%s' "${dir}"; }
+tmp() { mktemp -d "${SUITE_DIR}/case.XXXXXX"; }
 run_case() { local name="$1"; shift; TOTAL=$((TOTAL + 1)); if "$@"; then printf 'ok - %s\n' "${name}"; PASSED=$((PASSED + 1)); else printf 'not ok - %s\n' "${name}" >&2; exit 1; fi; }
+
+# Exercise the real portable lifecycle and renderers, but isolate their installation
+# dependency. Native Codex, users, protected materials and root runtime provisioning
+# belong to the installer tests, never to this mocked service-manager fixture.
+ROOT="${SUITE_DIR}/checkout"
+mkdir -p "${ROOT}/scripts"
+cp -R "${SOURCE_ROOT}/scripts/runtime" "${SOURCE_ROOT}/scripts/systemd" \
+  "${SOURCE_ROOT}/scripts/launchd" "${SOURCE_ROOT}/scripts/lib" "${ROOT}/scripts/"
+cp -R "${SOURCE_ROOT}/config" "${ROOT}/config"
+cp "${SOURCE_ROOT}/Justfile" "${ROOT}/Justfile"
+cat > "${ROOT}/scripts/systemd/install.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+: "${FORGE_SYSTEMD_UNIT_DIR:?Fixture unit directory is required}"
+: "${FORGE_SYSTEMD_ENV_FILE:?Fixture environment file is required}"
+case "${FORGE_SYSTEMD_UNIT_DIR}" in "${TEST_SUITE_DIR}"/*) ;; *) exit 2 ;; esac
+case "${FORGE_SYSTEMD_ENV_FILE}" in "${TEST_SUITE_DIR}"/*) ;; *) exit 2 ;; esac
+printf 'fixture-install\n' >> "${TEST_RUNTIME_LOG}"
+"${script_dir}/render-units.sh" "${FORGE_SYSTEMD_UNIT_DIR}" "${FORGE_SYSTEMD_ENV_FILE}" "${FORGE_SYSTEMD_ENV_FILE}"
+if [[ "${FORGE_SYSTEMD_SKIP_RELOAD:-0}" != 1 ]]; then systemctl daemon-reload; fi
+EOF
+chmod +x "${ROOT}/scripts/systemd/install.sh"
+export TEST_SUITE_DIR="${SUITE_DIR}"
 
 fake_systemd_bin() {
   local bin="$1"
@@ -150,6 +175,7 @@ case_launchd_lifecycle() {
   local dir bin prepare
   dir="$(tmp)"; bin="${dir}/bin"; prepare="${dir}/prepare"; mkdir -p "${bin}"; export TEST_RUNTIME_LOG="${dir}/log" TEST_LAUNCHD_STATE="${dir}/launchd"
   fake_common_bin "${bin}"; fake_launchd_bin "${bin}"
+  printf '#!/usr/bin/env bash\n' > "${bin}/java"; chmod +x "${bin}/java"
   cat > "${prepare}" <<'EOF'
 #!/usr/bin/env bash
 printf 'prepare\n' >> "${TEST_RUNTIME_LOG}"
@@ -159,6 +185,7 @@ EOF
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" start >/dev/null
   [[ -f "${dir}/launchd/ai.forge.agent" ]]
   grep -Fq "${ROOT}/scripts/runtime/run-agent.sh" "${dir}/plists/ai.forge.agent.plist"
+  grep -Fq "<key>FORGE_JAVA_COMMAND</key><string>${bin}/java</string>" "${dir}/plists/ai.forge.agent.plist"
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" status >/dev/null
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" logs agent >/dev/null
   env "${envs[@]}" "${ROOT}/scripts/runtime/control.sh" logs all >/dev/null
@@ -193,6 +220,7 @@ case_launchd_stale_health_never_masks_failed_job() {
 }
 
 case_architecture_cleanup() {
+  local ROOT="${SOURCE_ROOT}"
   ! rg -n '_dev-start|_stop-dev|forge_start_background|forge-agent\.pid|forge-ai\.pid|nohup|tmux|MANAGED_LOCAL_SESSION' "${ROOT}/Justfile" "${ROOT}/scripts/runtime" "${ROOT}/scripts/launchd" >/dev/null
   ! rg -n 'lsof|kill .*port|kill .*listener' "${ROOT}/scripts/runtime" "${ROOT}/scripts/launchd" >/dev/null
   [[ ! -e "${ROOT}/scripts/runtime-ownership.sh" && ! -e "${ROOT}/scripts/lib/process.sh" ]]
@@ -216,6 +244,7 @@ case_systemd_preserves_ssh_agent() {
   local dir socket
   dir="$(tmp)"
   socket="${dir}/agent socket"
+  export TEST_RUNTIME_LOG="${dir}/log"
   SSH_AUTH_SOCK="${socket}" FORGE_SYSTEMD_UNIT_DIR="${dir}/units" \
     FORGE_SYSTEMD_ENV_DIR="${dir}/env" FORGE_SYSTEMD_ENV_FILE="${dir}/env/forge-ai.env" \
     FORGE_SYSTEMD_USE_SUDO=0 FORGE_SYSTEMD_SKIP_RELOAD=1 \
@@ -229,6 +258,43 @@ case_systemd_without_ssh_agent() {
   dir="$(tmp)"
   env -u SSH_AUTH_SOCK "${ROOT}/scripts/systemd/render-units.sh" "${dir}/units" "${dir}/forge-ai.env" >/dev/null || return 1
   ! grep -q '^SSH_AUTH_SOCK=' "${dir}/forge-ai.env"
+}
+
+case_runtime_uses_build_java() {
+  local dir bin java_bin env_file
+  dir="$(tmp)"; bin="${dir}/bin"; java_bin="${bin}/java"; env_file="${dir}/forge-ai.env"
+  mkdir -p "${bin}"
+  cat > "${java_bin}" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TEST_RUNTIME_LOG}"
+EOF
+  chmod +x "${java_bin}"
+  export TEST_RUNTIME_LOG="${dir}/java.log"
+
+  PATH="${bin}:${SYSTEM_PATH}" FORGE_AI_HOME="${ROOT}" \
+    "${ROOT}/scripts/systemd/render-units.sh" "${dir}/units" "${env_file}" >/dev/null
+  grep -Fx "FORGE_JAVA_COMMAND=\"${java_bin}\"" "${env_file}" >/dev/null || return 1
+
+  FORGE_AI_HOME="${ROOT}" FORGE_JAVA_COMMAND="${java_bin}" "${ROOT}/scripts/runtime/run-agent.sh"
+  FORGE_AI_HOME="${ROOT}" FORGE_JAVA_COMMAND="${java_bin}" "${ROOT}/scripts/runtime/run-nexus.sh"
+  grep -Fq -- '-jar '"${ROOT}"'/services/forge-agent/boot/target/boot-0.0.1-SNAPSHOT.jar' "${dir}/java.log"
+  grep -Fq -- '-jar '"${ROOT}"'/services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar' "${dir}/java.log"
+}
+
+case_runtime_discovers_sdkman_java_for_legacy_install() {
+  local dir sdk_java
+  dir="$(tmp)"; sdk_java="${dir}/home/.sdkman/candidates/java/current/bin/java"
+  mkdir -p "$(dirname -- "${sdk_java}")"
+  cat > "${sdk_java}" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TEST_RUNTIME_LOG}"
+EOF
+  chmod +x "${sdk_java}"
+  export TEST_RUNTIME_LOG="${dir}/java.log"
+
+  env -u FORGE_JAVA_COMMAND -u JAVA_HOME HOME="${dir}/home" PATH="${SYSTEM_PATH}" FORGE_AI_HOME="${ROOT}" \
+    "${ROOT}/scripts/runtime/run-agent.sh"
+  grep -Fq -- '-jar '"${ROOT}"'/services/forge-agent/boot/target/boot-0.0.1-SNAPSHOT.jar' "${dir}/java.log"
 }
 
 case_systemd_start_installs_and_refreshes() {
@@ -245,6 +311,7 @@ case_systemd_start_installs_and_refreshes() {
     grep -Fx "SSH_AUTH_SOCK=\"${socket}\"" "${FORGE_SYSTEMD_ENV_FILE}" >/dev/null || return 1
   done
   [[ "$(grep -c '^prepare$' "${dir}/log")" == 2 ]] || return 1
+  [[ "$(grep -c '^fixture-install$' "${dir}/log")" == 2 ]] || return 1
   [[ "$(grep -c '^systemctl daemon-reload$' "${dir}/log")" == 2 ]] || return 1
   [[ "$(grep -c '^systemctl restart forge-knowledge.service' "${dir}/log")" == 2 ]] || return 1
   # A failed installation must not restart the running services.
@@ -256,6 +323,8 @@ case_systemd_start_installs_and_refreshes() {
 run_case "start installs missing systemd units and refreshes SSH on every run" case_systemd_start_installs_and_refreshes
 run_case "systemd installation preserves the caller SSH agent socket" case_systemd_preserves_ssh_agent
 run_case "systemd rendering works without an SSH agent" case_systemd_without_ssh_agent
+run_case "runtime services use the Java selected by the build shell" case_runtime_uses_build_java
+run_case "legacy runtime installs discover the SDKMAN Java" case_runtime_discovers_sdkman_java_for_legacy_install
 run_case "backend resolver selects systemd and launchd" case_backend_resolution
 run_case "unusable systemd never falls back" case_unusable_systemd_never_falls_back
 run_case "systemctl without an active systemd runtime is rejected" case_inactive_systemd_never_selects

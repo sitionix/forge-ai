@@ -5,6 +5,7 @@ import pathlib
 import stat
 import tempfile
 import unittest
+import subprocess
 from unittest.mock import patch
 
 
@@ -24,6 +25,43 @@ class McpInstallationTest(unittest.TestCase):
                 self.install.install(self.root, 'fixture', self.root, self.root / 'db',
                                      self.root / 'workspace', self.root / 'material', self.root / 'env')
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_codex_service_token_is_private_separate_and_preserved_on_reinstall(self):
+        provider = self.root/'provider-auth.json'
+        provider.write_bytes(b'synthetic-provider-secret')
+        with patch.object(self.install, 'trusted_parent'):
+            token = self.install.provision_codex_service_token(self.root/'codex-service', os.getuid(), os.getgid())
+            before = token.stat()
+            first = token.read_bytes()
+            self.assertGreaterEqual(len(first), 32)
+            self.assertNotEqual(first, provider.read_bytes())
+            self.assertEqual(stat.S_IMODE(before.st_mode), 0o600)
+            self.assertEqual(before.st_uid, os.getuid())
+            again = self.install.provision_codex_service_token(self.root/'codex-service', os.getuid(), os.getgid())
+            self.assertEqual(again.read_bytes(), first)
+            self.assertEqual(again.stat().st_ino, before.st_ino)
+            self.assertEqual(again.stat().st_mtime_ns, before.st_mtime_ns)
+            token.chmod(0o644)
+            with self.assertRaises(RuntimeError):
+                self.install.provision_codex_service_token(self.root/'codex-service', os.getuid(), os.getgid())
+        self.assertEqual(provider.read_bytes(), b'synthetic-provider-secret')
+
+    def test_rendered_environment_uses_service_path_without_weakening_knowledge(self):
+        repository = pathlib.Path(__file__).resolve().parents[3]
+        material = self.root/'material'/'mcp'
+        output = self.root/'units'
+        subprocess.run(['bash', str(repository/'scripts/systemd/render-units.sh'), str(output)], check=True,
+            env={'PATH':'/usr/bin:/bin', 'FORGE_JAVA_COMMAND':'/synthetic/java', 'FORGE_AGENT_CODEX_COMMAND':'synthetic-codex',
+                 'FORGE_MCP_MATERIAL_DIR':str(material), 'FORGE_SYSTEMD_USER':'synthetic-control', 'FORGE_SYSTEMD_GROUP':'synthetic-control'},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        environment = dict(line.split('=',1) for line in (output/'forge-ai.env').read_text().splitlines())
+        self.assertEqual(environment['FORGE_CODEX_SERVICE_TOKEN_FILE'], '"'+str(material.parent/'codex-service/token')+'"')
+        self.assertEqual(environment['FORGE_CODEX_AGENT_BASE_URL'], '"http://127.0.0.1:7091"')
+        service = (output/'forge-knowledge.service').read_text()
+        # Assert generated artifact properties consumed by systemd, not source text.
+        settings = dict(line.split('=',1) for line in service.splitlines() if '=' in line)
+        self.assertEqual(settings['NoNewPrivileges'], 'true')
+        self.assertEqual(settings['User'], 'synthetic-control')
 
     def test_unsafe_ancestor_rejected_before_directory_creation(self):
         alias = self.root / 'alias'
@@ -88,3 +126,23 @@ class McpInstallationTest(unittest.TestCase):
         self.assertEqual(values['FORGE_AGENT_CODEX_RUNTIME_CWD'],
                          '"/srv/forge/workspaces/forge-projects/.forge-codex-runtime"')
         self.assertNotIn('/tmp/forge-agent-codex-runtime', content)
+
+    def test_codex_home_provisioning_preserves_existing_auth_without_copying_personal_profile(self):
+        home = self.root/'runtime'; home.mkdir(mode=0o700)
+        personal = self.root/'personal'; personal.mkdir()
+        (personal/'.codex').mkdir()
+        (personal/'.codex/auth.json').write_bytes(b'synthetic-personal-auth')
+        (personal/'.codex/config.toml').write_bytes(b'synthetic-personal-config')
+        with patch.object(self.install, 'trusted_parent'), patch.dict(
+                self.install.os.environ, {'HOME':str(personal), 'CODEX_HOME':str(personal/'.codex')}, clear=True):
+            codex = self.install.provision_codex_home(home, os.getuid(), os.getgid())
+            self.assertFalse((codex/'auth.json').exists())
+            self.assertEqual((codex/'config.toml').read_bytes(), b'')
+            auth = codex/'auth.json'; auth.write_bytes(b'synthetic-forge-auth'); auth.chmod(0o600)
+            before = auth.stat()
+            self.install.provision_codex_home(home, os.getuid(), os.getgid())
+            self.assertEqual(auth.read_bytes(), b'synthetic-forge-auth')
+            self.assertEqual((auth.stat().st_ino, auth.stat().st_mtime_ns, stat.S_IMODE(auth.stat().st_mode)),
+                             (before.st_ino, before.st_mtime_ns, 0o600))
+        self.assertEqual((personal/'.codex/auth.json').read_bytes(), b'synthetic-personal-auth')
+        self.assertEqual((personal/'.codex/config.toml').read_bytes(), b'synthetic-personal-config')

@@ -7,8 +7,13 @@ public record CodexRuntimeProvider(
         String displayName,
         RuntimeProviderStatus status,
         String version,
-        List<CodexRuntimeModel> models
+        List<CodexRuntimeModel> models,
+        String authState
 ) {
+    public CodexRuntimeProvider(String providerId, String displayName, RuntimeProviderStatus status,
+            String version, List<CodexRuntimeModel> models) {
+        this(providerId, displayName, status, version, models, "SIGNED_OUT");
+    }
     public CodexRuntimeProvider {
         models = models == null ? List.of() : List.copyOf(models);
     }

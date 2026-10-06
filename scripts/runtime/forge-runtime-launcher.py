@@ -17,7 +17,10 @@ import stat
 import subprocess
 import sys
 import time
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 import uuid
 
 CONFIG = Path('/etc/forge/runtime-launcher.json')
@@ -28,6 +31,22 @@ SAFE_ENV = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}
 MAX_GRANT_ENVELOPE = 262144
 GRANT_NAME = re.compile(r'FORGE_MCP_GRANT_[0-9A-F]{32}\Z')
 GRANT_VALUE = re.compile(r'[A-Za-z0-9_-]{1,256}\Z')
+# Process CLI precedence also applies when app-server resolves a different thread cwd.
+# Verified against installed Codex 0.160.0 and 0.160.1; all consumers share this auth authority.
+CODEX_AUTH_ARGS = ('-c', 'model_provider="openai"',
+                   '-c', 'cli_auth_credentials_store="file"',
+                   '-c', 'forced_login_method="chatgpt"')
+# Installation config only supplies model selection/reasoning, never an auth source,
+# plugin, profile, role import, or an unknown future configuration mechanism.
+CODEX_BASE_STRING_SETTINGS = frozenset({'model', 'model_reasoning_effort',
+                                      'model_reasoning_summary', 'model_verbosity', 'service_tier'})
+CODEX_BASE_INTEGER_SETTINGS = frozenset({'model_context_window', 'model_auto_compact_token_limit'})
+CODEX_PROJECT_FORBIDDEN_SETTINGS = frozenset({
+    'model_provider', 'model_providers', 'cli_auth_credentials_store', 'forced_login_method',
+    'forced_chatgpt_workspace_id', 'openai_base_url', 'chatgpt_base_url',
+    'experimental_realtime_ws_base_url', 'config_file', 'profile',
+    'experimental_bearer_token', 'env_key', 'env_http_headers', 'http_headers',
+    'mcp_servers', 'plugins', 'marketplaces'})
 
 
 def identifier(value):
@@ -126,9 +145,46 @@ def validate_codex_isolation_config(config):
     for key in ['codex_config', 'empty_system_config']:
         trusted_path(config[key])
     base = tomllib.loads(Path(config['codex_config']).read_text())
-    if any(key in base for key in ['mcp_servers', 'plugins', 'marketplaces']) or tomllib.loads(
-            Path(config['empty_system_config']).read_text()):
+    allowed = CODEX_BASE_STRING_SETTINGS | CODEX_BASE_INTEGER_SETTINGS
+    strings_valid = all(isinstance(value, str) for key, value in base.items()
+                        if key in CODEX_BASE_STRING_SETTINGS)
+    integers_valid = all(type(value) is int and value > 0 for key, value in base.items()
+                         if key in CODEX_BASE_INTEGER_SETTINGS)
+    if (set(base) - allowed or not strings_valid or not integers_valid
+            or tomllib.loads(Path(config['empty_system_config']).read_text())):
         raise ValueError('unsafe Codex base configuration')
+
+
+def validate_codex_project_config(cwd):
+    def validate(value):
+        if isinstance(value, dict):
+            if CODEX_PROJECT_FORBIDDEN_SETTINGS & value.keys():
+                raise ValueError('unsafe Codex project configuration')
+            for child in value.values(): validate(child)
+        elif isinstance(value, list):
+            for child in value: validate(child)
+    # Inspect all possible ancestor layers, including those above a repository root.
+    # Reject symlink/import routes instead of following alternate credential sources.
+    for directory in [Path(cwd), *Path(cwd).parents]:
+        dot_codex = directory/'.codex'
+        try: info = dot_codex.lstat()
+        except FileNotFoundError: continue
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError('unsafe Codex project configuration')
+        path = dot_codex/'config.toml'
+        try: info = path.lstat()
+        except FileNotFoundError: continue
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError('unsafe Codex project configuration')
+        validate(tomllib.loads(path.read_text()))
+
+
+def codex_command(binary):
+    return [binary, 'app-server', '--stdio', *CODEX_AUTH_ARGS]
+
+
+def is_codex_command(config, command):
+    return bool(command) and command[0] == config.get('codex_binary')
 
 
 def caller(config):
@@ -152,15 +208,18 @@ def service_command(config, execution, cwd, command, credential_path=None):
              'Delegate=no', 'UMask=0007',
              'WorkingDirectory='+cwd,
              'ReadWritePaths='+config['runtime_home']+' '+' '.join(config['workspace_roots'])]
-    if credential_path is not None:
+    if credential_path is not None or is_codex_command(config, command):
         if not has_codex_isolation_config(config):
             raise ValueError('Codex isolation configuration unavailable')
         codex_home = config['runtime_home']+'/.codex'
-        props.extend(['LoadCredential=forge-mcp-grants:'+str(credential_path),
-                      'BindReadOnlyPaths='+config['codex_config']+':'+codex_home+'/config.toml',
+        props.extend(['BindReadOnlyPaths='+config['codex_config']+':'+codex_home+'/config.toml',
                       'BindReadOnlyPaths='+config['empty_system_config']+':/etc/codex/config.toml',
                       'InaccessiblePaths='+codex_home+'/plugins',
                       'InaccessiblePaths='+codex_home+'/.agents/plugins'])
+        if credential_path is not None:
+            props.append('LoadCredential=forge-mcp-grants:'+str(credential_path))
+        else:
+            command = codex_command(config['codex_binary'])
     launch_command = command if credential_path is not None else [
         config['env_binary'], '-i', 'HOME='+config['runtime_home'],
         'CODEX_HOME='+config['runtime_home']+'/.codex', 'PATH=/usr/bin:/bin',
@@ -330,7 +389,7 @@ def runtime_codex(binary, home):
     environment = {'HOME':home, 'CODEX_HOME':home+'/.codex', 'PATH':'/usr/bin:/bin',
                    'LANG':'C.UTF-8', 'GIT_TERMINAL_PROMPT':'0'}
     environment.update(grants)
-    os.execve(binary, [binary, 'app-server', '--stdio'], environment)
+    os.execve(binary, codex_command(binary), environment)
 
 
 def stop(config, execution):
@@ -355,15 +414,16 @@ def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
     try:
-        if codex_grants is not None:
+        if codex_grants is not None or is_codex_command(config, command):
             validate_codex_isolation_config(config)
+            validate_codex_project_config(cwd)
+            validate_codex_mount_targets(config)
         with locked_receipt(config, execution) as receipt:
             if receipt.read():
                 raise ValueError('execution already used')
             receipt.seek(0); receipt.write(json.dumps({'state':'starting'})); receipt.flush()
             claimed = True
             if codex_grants is not None:
-                validate_codex_mount_targets(config)
                 credential = write_credential(config, execution, codex_grants)
                 command = [str(Path(sys.executable).resolve()), '-I', str(Path(__file__)),
                            '--runtime-codex', config['codex_binary'], config['runtime_home']]

@@ -149,6 +149,8 @@ class KnowledgeSettings(BaseModel):
     inventory: InventorySettings
     analysis: AnalysisSettings
     codex_app_server: CodexAppServerSettings = Field(default_factory=CodexAppServerSettings)
+    forge_codex_base_url: str = 'http://127.0.0.1:7091'
+    forge_codex_token_file: Path = Path('/etc/forge-ai/codex-service/token')
     semantic: SemanticSettings = Field(default_factory=SemanticSettings)
 
 
@@ -271,6 +273,8 @@ class AppConfig(BaseModel):
     semantic_min_similarity: float = 0.35
     semantic_query_timeout_ms: int = 1500
     codex_app_server: CodexAppServerSettings = Field(default_factory=CodexAppServerSettings)
+    forge_codex_base_url: str = 'http://127.0.0.1:7091'
+    forge_codex_token_file: Path = Path('/etc/forge-ai/codex-service/token')
     retention_inventory_build_days: int = 30
     retention_analysis_job_days: int = 30
     retention_analysis_diagnostic_days: int = 30
@@ -374,6 +378,8 @@ class AppConfig(BaseModel):
             semantic_min_similarity=semantic.min_similarity,
             semantic_query_timeout_ms=semantic.query_timeout_ms,
             codex_app_server=codex_app_server,
+            forge_codex_base_url=knowledge.forge_codex_base_url,
+            forge_codex_token_file=knowledge.forge_codex_token_file,
             retention_inventory_build_days=knowledge.storage.retention_inventory_build_days,
             retention_analysis_job_days=knowledge.storage.retention_analysis_job_days,
             retention_analysis_diagnostic_days=knowledge.storage.retention_analysis_diagnostic_days,
@@ -634,6 +640,8 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     "max_attempts_per_file": int(analysis.get("max-attempts-per-file") or analysis.get("max_attempts_per_file") or 3),
             },
             "codex_app_server": _codex_app_server_payload(codex_app_server, env),
+            "forge_codex_base_url": env.get('FORGE_CODEX_AGENT_BASE_URL', 'http://127.0.0.1:7091'),
+            "forge_codex_token_file": env.get('FORGE_CODEX_SERVICE_TOKEN_FILE', '/etc/forge-ai/codex-service/token'),
             "semantic": {
                     "enabled": _bool(semantic.get("enabled", True)),
                     "auto_build_enabled": _bool(semantic.get("auto-build-enabled", semantic.get("auto_build_enabled", True))),

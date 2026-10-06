@@ -48,6 +48,167 @@ class CodexAppServerTurnClientTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void dead_launcher_pipe_after_logout_still_requires_owned_unit_stop(boolean stopFails) {
+        var pipe = new FakeCodexProcess();
+        pipe.terminateNow();
+        var failed = new AtomicBoolean(stopFails);
+        var stopped = new AtomicBoolean();
+        var attempts = new AtomicInteger();
+        var managed = new com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess(pipe, () -> {
+            attempts.incrementAndGet();
+            if (failed.get()) throw new IllegalStateException("synthetic unit stop unconfirmed");
+            stopped.set(true);
+        });
+        var auth = new ForgeAuthorizationFixture(true);
+        CodexAppServerProcessStarter starter = cwd -> {
+            auth.service.logout();
+            return new StartedCodexAppServer(managed, List.of("fixture"), Instant.now());
+        };
+        var properties = this.properties();
+        var client = new CodexAppServerClient(objectMapper, starter, properties,
+                new CodexRuntimeWorkspace(properties), null, auth.gate);
+        assertThatThrownBy(() -> client.execute(new CodexTurnRequest(
+                "Read.", "Instructions.", "model-a", null, this.schemaUnchecked(), this.workspace())))
+                .hasMessage(stopFails ? "CODEX_AUTH_CLEANUP_FAILED" : "CODEX_AUTH_REQUIRED");
+        assertThat(attempts.get()).isPositive();
+        assertThat(pipe.pendingClientRequestBytes()).isZero();
+        if (stopFails) {
+            assertThat(stopped).isFalse();
+            assertThatThrownBy(auth.gate::requireAuthorized).hasMessage("CODEX_LOGOUT_REQUIRED");
+            failed.set(false);
+            auth.service.logout();
+            assertThat(attempts.get()).isGreaterThan(1);
+        } else {
+            assertThat(attempts.get()).isEqualTo(1);
+        }
+        assertThat(stopped).isTrue();
+        assertThat(auth.service.currentState().authState().name()).isEqualTo("SIGNED_OUT");
+    }
+
+    @Test void transport_construction_failure_still_closes_the_started_process() {
+        var process = new FakeCodexProcess();
+        Process broken = new Process() {
+            public java.io.OutputStream getOutputStream() { throw new IllegalStateException("construction failed"); }
+            public java.io.InputStream getInputStream() { return process.getInputStream(); }
+            public java.io.InputStream getErrorStream() { return process.getErrorStream(); }
+            public int waitFor() throws InterruptedException { return process.waitFor(); }
+            public boolean waitFor(long time, TimeUnit unit) throws InterruptedException { return process.waitFor(time, unit); }
+            public int exitValue() { return process.exitValue(); }
+            public void destroy() { process.destroy(); }
+            public Process destroyForcibly() { process.destroyForcibly(); return this; }
+            public boolean isAlive() { return process.isAlive(); }
+            public long pid() { return process.pid(); }
+        };
+        var properties = this.properties();
+        var auth = new ForgeAuthorizationFixture(true);
+        var client = new CodexAppServerClient(objectMapper,
+                cwd -> new StartedCodexAppServer(broken, List.of("fixture"), Instant.now()), properties,
+                new CodexRuntimeWorkspace(properties), null, auth.gate);
+        try {
+            assertThatThrownBy(() -> client.execute(new CodexTurnRequest(
+                    "Read.", "Instructions.", "model-a", null, this.schemaUnchecked(), this.workspace())))
+                    .hasMessage("construction failed");
+            assertThat(process.isAlive()).isFalse();
+        } finally { process.terminateNow(); }
+    }
+
+    @Test void logout_during_initialize_cancels_owned_process_and_returns_safe_auth_error() throws Exception {
+        var process = new FakeCodexProcess();
+        var auth = new ForgeAuthorizationFixture(true);
+        var properties = this.properties();
+        var client = new CodexAppServerClient(objectMapper, new FakeStarter(process), properties,
+                new CodexRuntimeWorkspace(properties), null, auth.gate);
+        var result = CompletableFuture.supplyAsync(() -> client.execute(new CodexTurnRequest(
+                "Read.", "Instructions.", "model-a", null, this.schemaUnchecked(), this.workspace())));
+        assertThat(this.readRequest(process).path("method").asText()).isEqualTo("initialize");
+        auth.service.logout();
+        assertThat(process.isAlive()).isFalse();
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS)).hasRootCauseMessage("CODEX_AUTH_REQUIRED");
+        assertThat(process.pendingClientRequestBytes()).isZero();
+    }
+
+    @Test void logout_before_turn_dispatch_prevents_write() throws Exception {
+        var process = new FakeCodexProcess();
+        var auth = new ForgeAuthorizationFixture(true);
+        var properties = this.properties();
+        var client = new CodexAppServerClient(objectMapper, new FakeStarter(process), properties,
+                new CodexRuntimeWorkspace(properties), null, auth.gate);
+        var result = CompletableFuture.supplyAsync(() -> client.executeTrackedFresh(new CodexTurnRequest(
+                "Read.", "Instructions.", "model-a", null, this.schemaUnchecked(), this.workspace()),
+                new CodexExecutionIdentityCallbacks() {
+                    public void conversationStarted(String id, String version) { }
+                    public void turnStarted(String id) { }
+                    public void dispatchTurnStart(Runnable write) { auth.service.logout(); write.run(); }
+                }));
+        this.initialize(process);
+        this.replyThread(process, this.readRequest(process), "thread-1");
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS)).hasRootCauseMessage("CODEX_AUTH_REQUIRED");
+        assertThat(process.isAlive()).isFalse();
+        assertThat(process.pendingClientRequestBytes()).isZero();
+    }
+
+    @Test void logout_cancels_running_turn_without_waiting_for_provider_reply() throws Exception {
+        var process = new FakeCodexProcess();
+        var auth = new ForgeAuthorizationFixture(true);
+        var properties = this.properties();
+        var client = new CodexAppServerClient(objectMapper, new FakeStarter(process), properties,
+                new CodexRuntimeWorkspace(properties), null, auth.gate);
+        var result = CompletableFuture.supplyAsync(() -> client.execute(new CodexTurnRequest(
+                "Read.", "Instructions.", "model-a", null, this.schemaUnchecked(), this.workspace())));
+        this.initialize(process);
+        this.replyThread(process, this.readRequest(process), "thread-1");
+        assertThat(this.readRequest(process).path("method").asText()).isEqualTo("turn/start");
+        auth.service.logout();
+        assertThat(process.isAlive()).isFalse();
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS)).hasRootCauseMessage("CODEX_AUTH_REQUIRED");
+    }
+
+    @Test void process_returned_after_logout_is_closed_before_initialize() throws Exception {
+        var process = new FakeCodexProcess();
+        var auth = new ForgeAuthorizationFixture(true);
+        var entered = new CountDownLatch(1);
+        var proceed = new CountDownLatch(1);
+        CodexAppServerProcessStarter starter = cwd -> {
+            entered.countDown();
+            try { if (!proceed.await(2, TimeUnit.SECONDS)) throw new IllegalStateException("startup wait"); }
+            catch (InterruptedException e) { throw new IllegalStateException(e); }
+            return new StartedCodexAppServer(process, List.of("fixture"), Instant.now());
+        };
+        var properties = this.properties();
+        var client = new CodexAppServerClient(objectMapper, starter, properties,
+                new CodexRuntimeWorkspace(properties), null, auth.gate);
+        var result = CompletableFuture.supplyAsync(() -> client.execute(new CodexTurnRequest(
+                "Read.", "Instructions.", "model-a", null, this.schemaUnchecked(), this.workspace())));
+        assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+        auth.service.logout();
+        proceed.countDown();
+        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS)).hasRootCauseMessage("CODEX_AUTH_REQUIRED");
+        assertThat(process.isAlive()).isFalse();
+        assertThat(process.pendingClientRequestBytes()).isZero();
+    }
+
+    @Test
+    void fresh_and_durable_turns_fail_without_forge_auth() throws Exception {
+        var starter = new FakeStarter();
+        var properties = this.properties();
+        var auth = new ForgeAuthorizationFixture(false);
+        var client = new CodexAppServerClient(objectMapper, starter, properties,
+                new CodexRuntimeWorkspace(properties), null, auth.gate);
+        var request = new CodexTurnRequest("Read.", "Instructions.", "model-a", null,
+                this.schema(), this.workspace());
+        assertThatThrownBy(() -> client.execute(request)).hasMessage("CODEX_AUTH_REQUIRED");
+        var callbacks = new CodexExecutionIdentityCallbacks() {
+            public void conversationStarted(String id, String version) { }
+            public void turnStarted(String id) { }
+        };
+        assertThatThrownBy(() -> client.executeTrackedFresh(request, callbacks)).hasMessage("CODEX_AUTH_REQUIRED");
+        assertThatThrownBy(() -> client.executeDurable(request, null, callbacks)).hasMessage("CODEX_AUTH_REQUIRED");
+        assertThatThrownBy(() -> client.executeDurable(request, "old-thread", callbacks)).hasMessage("CODEX_AUTH_REQUIRED");
+        assertThat(starter.starts()).isZero();
+    }
+
     @Test
     void nativeMcpConfigurationAndDistinctLaunchGrantsReachFreshAndResume() throws Exception {
         var connection = UUID.fromString("01234567-89ab-4cde-8012-3456789abcde");
@@ -60,7 +221,7 @@ class CodexAppServerTurnClientTest {
         var starter = new FakeStarter(first, second);
         var properties = this.properties();
         var client = new CodexAppServerClient(this.objectMapper, starter, properties,
-                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"), new ForgeAuthorizationFixture(true).gate);
         JsonNode originalConfig = null;
         JsonNode originalThreadParams = null;
         for (int index = 0; index < 2; index++) {
@@ -118,7 +279,7 @@ class CodexAppServerTurnClientTest {
         var process = new FakeCodexProcess(false, true);
         var properties = this.properties();
         var client = new CodexAppServerClient(this.objectMapper, new FakeStarter(process), properties,
-                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"), new ForgeAuthorizationFixture(true).gate);
         var selection = new McpExecutionSelection(List.of(new McpExecutionSelection.Entry(
                 "forge_0123456789ab4cde80123456789abcde",
                 UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"), "Search",
@@ -151,7 +312,7 @@ class CodexAppServerTurnClientTest {
         var process = new FakeCodexProcess(false, true);
         var properties = this.properties();
         var client = new CodexAppServerClient(this.objectMapper, new FakeStarter(process), properties,
-                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"), new ForgeAuthorizationFixture(true).gate);
         var alias = "forge_0123456789ab4cde80123456789abcde";
         var selection = new McpExecutionSelection(List.of(new McpExecutionSelection.Entry(alias,
                 UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"), "Search",
@@ -181,7 +342,7 @@ class CodexAppServerTurnClientTest {
         var properties = this.properties();
         var starter = new FakeStarter(new FakeCodexProcess(false, true));
         var client = new CodexAppServerClient(this.objectMapper, starter, properties,
-                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"), new ForgeAuthorizationFixture(true).gate);
         var selected = new McpExecutionSelection(List.of(new McpExecutionSelection.Entry(
                 "forge_0123456789ab4cde80123456789abcde",
                 UUID.fromString("01234567-89ab-4cde-8012-3456789abcde"), "Search",
@@ -201,7 +362,7 @@ class CodexAppServerTurnClientTest {
         var process = new FakeCodexProcess(false, true);
         var properties = this.properties();
         var client = new CodexAppServerClient(this.objectMapper, new FakeStarter(process), properties,
-                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"));
+                new CodexRuntimeWorkspace(properties), () -> URI.create("http://127.0.0.1:18345"), new ForgeAuthorizationFixture(true).gate);
         var request = new CodexTurnRequest("Read.", "Instructions.", "model-a", null,
                 this.schemaUnchecked(), this.workspace(), false,
                 new McpExecutionSelection(List.of(), List.of()));
@@ -478,8 +639,9 @@ class CodexAppServerTurnClientTest {
         assertThat(methods).doesNotContain("turn/interrupt");
     }
 
-    @Test
-    void durableExecutionPersistsThreadBeforeTurnStartAndTurnBeforeNotifications() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"0.157.0", "0.160.0"})
+    void durableExecutionPersistsThreadBeforeTurnStartAndTurnBeforeNotifications(String version) throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
         final List<String> ordering = new ArrayList<>();
@@ -489,7 +651,7 @@ class CodexAppServerTurnClientTest {
                     public void conversationStarted(String id, String version) { ordering.add("thread:" + id); }
                     public void turnStarted(String id) { ordering.add("turn:" + id); }
                 }));
-        this.initialize(process);
+        this.initialize(process, version);
         final JsonNode threadStart=this.readRequest(process);
         assertThat(threadStart.path("params").path("ephemeral").asBoolean()).isFalse();
         this.replyThread(process,threadStart,"thread-durable");
@@ -582,7 +744,7 @@ class CodexAppServerTurnClientTest {
         this.readRequest(process);
 
         assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
-                .hasRootCauseMessage("Codex durable context requires audited CLI version 0.157.0; found 0.155.0");
+                .hasRootCauseMessage("Codex durable context requires audited CLI versions 0.157.0, 0.160.0; found 0.155.0");
         assertThat(process.pendingClientRequestBytes()).isZero();
         client.close();
     }
@@ -655,7 +817,10 @@ class CodexAppServerTurnClientTest {
         assertThat(threadStart.path("params").path("config"))
                 .isEqualTo(this.objectMapper.readTree("""
                         {
-                          "web_search": "disabled",
+                        "model_provider": "openai",
+                        "cli_auth_credentials_store": "file",
+                        "forced_login_method": "chatgpt",
+                        "web_search": "disabled",
                           "features": {
                             "shell_tool": true,
                             "apps": false
@@ -1303,9 +1468,13 @@ class CodexAppServerTurnClientTest {
     }
 
     private void initialize(final FakeCodexProcess process) throws Exception {
+        this.initialize(process, "0.157.0");
+    }
+
+    private void initialize(final FakeCodexProcess process, String version) throws Exception {
         final JsonNode initialize = this.readRequest(process);
         assertThat(initialize.path("method").asText()).isEqualTo("initialize");
-        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/0.157.0\"}}");
+        process.writeStdout("{\"id\":\"" + initialize.path("id").asText() + "\",\"result\":{\"userAgent\":\"codex/" + version + "\"}}");
         final JsonNode initialized = this.readRequest(process);
         assertThat(initialized.path("method").asText()).isEqualTo("initialized");
     }
@@ -1516,7 +1685,7 @@ class CodexAppServerTurnClientTest {
     }
 
     private CodexAppServerClient client(final FakeStarter starter, final CodexAppServerProperties properties) {
-        return new CodexAppServerClient(this.objectMapper, starter, properties, new CodexRuntimeWorkspace(properties));
+        return new CodexAppServerClient(this.objectMapper, starter, properties, new CodexRuntimeWorkspace(properties), null, new ForgeAuthorizationFixture(true).gate);
     }
 
     private CodexAppServerProperties properties() {

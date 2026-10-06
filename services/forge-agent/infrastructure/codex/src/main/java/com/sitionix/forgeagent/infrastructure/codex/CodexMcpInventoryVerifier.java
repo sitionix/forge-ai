@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit;
 
 /** Audits Codex's thread-scoped MCP inventory before allowing any turn to start. */
 final class CodexMcpInventoryVerifier {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CodexMcpInventoryVerifier.class);
     private static final String MISMATCH = "Codex MCP inventory did not match issued grants";
     private static final int PAGE_LIMIT = 100;
     private static final int MAX_PAGES = 20;
@@ -71,10 +72,14 @@ final class CodexMcpInventoryVerifier {
             final JsonNode page;
             try {
                 page = transport.request(CodexProtocol.MCP_SERVER_STATUS_LIST, params, Duration.ofNanos(remaining));
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException failure) {
+                log.warn("MCP preflight rejected reason=STATUS_REQUEST_FAILED exceptionClass={}", failure.getClass().getSimpleName());
                 throw mismatch();
             }
-            if (page == null || !page.isObject() || !page.path("data").isArray()) throw mismatch();
+            if (page == null || !page.isObject() || !page.path("data").isArray()) {
+                log.warn("MCP preflight rejected reason=INVALID_STATUS_PAGE");
+                throw mismatch();
+            }
 
             for (JsonNode server : page.path("data")) {
                 if (!server.isObject() || !server.path("name").isTextual()
@@ -82,7 +87,13 @@ final class CodexMcpInventoryVerifier {
                     throw mismatch();
                 String alias = server.path("name").asText();
                 ExpectedServer expectedServer = expected.get(alias);
-                if (expectedServer == null || !server.path("runtimeStatus").isTextual()) throw mismatch();
+                if (expectedServer == null || !server.path("runtimeStatus").isTextual()) {
+                    log.warn("MCP preflight rejected reason={} server={} runtimeStatusType={}",
+                            expectedServer == null ? "UNGRANTED_SERVER" : "NON_TEXT_RUNTIME_STATUS",
+                            alias.matches("[A-Za-z0-9_-]{1,128}") ? alias : "redacted",
+                            server.path("runtimeStatus").getNodeType());
+                    throw mismatch();
+                }
 
                 JsonNode tools = server.path("tools");
                 Set<String> names = new HashSet<>();
@@ -91,14 +102,21 @@ final class CodexMcpInventoryVerifier {
                     while (fields.hasNext()) {
                         var tool = fields.next();
                         if (!expectedServer.tools().contains(tool.getKey()) || !tool.getValue().isObject()
-                                || !tool.getKey().equals(tool.getValue().path("name").asText())) throw mismatch();
+                                || !tool.getKey().equals(tool.getValue().path("name").asText())) {
+                            log.warn("MCP preflight rejected reason=UNGRANTED_OR_INVALID_TOOL");
+                            throw mismatch();
+                        }
                         names.add(tool.getKey());
                     }
                 }
 
                 switch (RuntimeStatus.fromWire(server.path("runtimeStatus").asText())) {
                     case CONNECTED -> {
-                        if (!tools.isObject() || names.size() != expectedServer.tools().size()) throw mismatch();
+                        if (!tools.isObject() || names.size() != expectedServer.tools().size()) {
+                            log.warn("MCP preflight rejected reason=CONNECTED_TOOL_COUNT_MISMATCH actual={} expected={}",
+                                    names.size(), expectedServer.tools().size());
+                            throw mismatch();
+                        }
                         effective.put(alias, Set.copyOf(names));
                     }
                     case NOT_STARTED, STARTING -> pendingConnections.add(alias);

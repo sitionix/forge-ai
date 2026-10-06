@@ -18,7 +18,7 @@ beforeEach(()=>{
 describe('Compact MCP Settings flow',()=>{
  it('keeps a single main action and moves catalog and management into dialogs',async()=>{
   const {page}=setup();await vi.waitFor(()=>expect(element('mcpConnections').textContent).toContain('Search'));
-  expect([...document.querySelectorAll('main button')].filter(button=>!(button as HTMLButtonElement).hidden).map(button=>button.textContent)).toEqual(['Add integration',expect.stringContaining('Search')]);
+  expect([...document.querySelectorAll('#mcpIntegrations button')].filter(button=>!(button as HTMLButtonElement).hidden).map(button=>button.textContent)).toEqual(['Add integration',expect.stringContaining('Search')]);
   expect(document.querySelector('#mcpRefresh')).toBeNull();expect(document.querySelector('#mcpCatalogTab')).toBeNull();
   expect(element('mcpConnections').textContent).not.toContain(connection.endpoint);
   expect(dialog('mcpCatalog').tagName).toBe('DIALOG');expect(dialog('mcpDetailsPanel').tagName).toBe('DIALOG');page.dispose();

@@ -5,6 +5,18 @@
 <main class="shell settings-shell">
   <header class="settings-header"><h1>Settings</h1></header>
   <h2>Integrations</h2>
+  <section id="llmIntegrations" class="panel" aria-labelledby="llmSectionTitle">
+    <h3 id="llmSectionTitle">LLM providers</h3>
+    <div class="llm-provider-card" aria-labelledby="codexTitle">
+      <img class="llm-provider-icon" src="./codex-icon.svg" width="48" height="48" alt="">
+      <div class="llm-provider-copy"><h4 id="codexTitle">Codex</h4><p class="mcp-description">Connect your ChatGPT account to this Forge installation.</p><p id="codexState" role="status" aria-live="polite">Loading…</p><p id="codexAccount"></p></div>
+      <div class="llm-provider-actions"><button id="codexSignIn" class="button" type="button" disabled>Sign in with ChatGPT</button><button id="codexSignOut" class="button secondary" type="button" hidden disabled>Sign out</button><button id="codexCancel" class="button secondary" type="button" hidden>Cancel sign-in</button></div>
+    </div>
+    <div id="codexError" class="error-box" role="alert" hidden></div>
+    <p id="codexNotice" role="status" aria-live="polite"></p>
+    <a id="codexOpenLink" class="link-button" target="_blank" rel="noopener noreferrer" hidden>Open ChatGPT sign-in</a>
+    <button id="codexRetry" class="link-button" type="button" hidden>Refresh provider status</button>
+  </section>
   <section id="mcpIntegrations" class="panel" aria-labelledby="mcpSectionTitle">
     <div class="mcp-section-head"><div><h3 id="mcpSectionTitle">MCP</h3><p class="mcp-description">Connect external MCP tools.</p></div><button id="mcpAdd" class="button" type="button">Add integration</button></div>
   <div id="mcpError" class="error-box" role="alert" hidden></div>

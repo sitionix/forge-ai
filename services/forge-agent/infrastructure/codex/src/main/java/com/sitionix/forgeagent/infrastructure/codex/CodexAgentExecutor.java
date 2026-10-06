@@ -31,6 +31,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 public final class CodexAgentExecutor implements AgentExecutor {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CodexAgentExecutor.class);
 
     private static final String PROVIDER_ID = "codex";
     private static final String PAYLOAD_SCHEMA_DEFINITION = "__forge_payload";
@@ -183,6 +184,8 @@ public final class CodexAgentExecutor implements AgentExecutor {
                 } catch (ConflictException exception) {
                     throw exception;
                 } catch (CodexExecutionException exception) {
+                    var authorization = com.sitionix.forgeagent.domain.exception.LlmAuthorizationException.find(exception);
+                    if (authorization != null) throw authorization;
                     if (exception.phase() == CodexExecutionFailurePhase.TURN_EXECUTION) throw exception;
                     final String code = switch (exception.phase()) {
                         case THREAD_START -> "AGENT_CONTEXT_START_FAILED";
@@ -205,7 +208,17 @@ public final class CodexAgentExecutor implements AgentExecutor {
             }
             return this.parseExecutionResult(outputText, claim.availableOutputs(), selectionRequired);
         } catch (RuntimeException failure) {
+            var authorization = com.sitionix.forgeagent.domain.exception.LlmAuthorizationException.find(failure);
+            if (authorization != null) throw authorization;
             if (CodexMcpExecutionException.causedBy(failure)) {
+                // Diagnostic only: never log provider payloads, exception messages or credentials.
+                Throwable diagnostic = failure;
+                for (int depth = 0; diagnostic != null && depth < 8; depth++) {
+                    var frames = diagnostic.getStackTrace();
+                    log.warn("MCP failure boundary nodeRunId={} exceptionClass={} origin={}", claim.nodeRunId(),
+                            diagnostic.getClass().getSimpleName(), frames.length == 0 ? "unknown" : frames[0]);
+                    diagnostic = diagnostic.getCause();
+                }
                 throw new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "MCP execution failed.");
             }
             if (prepared != null && failure instanceof CodexTransportException) {

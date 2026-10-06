@@ -15,6 +15,7 @@ import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import com.sitionix.forgeagent.domain.port.LlmAuthorizationPort;
 
 @Slf4j
 @Component
@@ -28,9 +29,17 @@ public class CodexRuntimeAdapter implements CodexRuntimePort {
     private final ObjectMapper objectMapper;
     private final CodexClient client;
     private final CodexAppServerProperties properties;
+    private final LlmAuthorizationPort authorization;
 
     @Override
     public CodexRuntimeProvider getModels() {
+        var account = this.authorization.readAccount();
+        var provider = this.discoverModels();
+        return new CodexRuntimeProvider(provider.providerId(), provider.displayName(), provider.status(),
+                provider.version(), provider.models(), account.authState().name());
+    }
+
+    private CodexRuntimeProvider discoverModels() {
         final String version;
         try {
             version = this.client.version();

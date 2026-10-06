@@ -7,6 +7,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sitionix.forgeagent.domain.model.McpRuntimeLaunchGrants;
 import com.sitionix.forgeagent.domain.model.McpExecutionSelection;
 import com.sitionix.forgeagent.domain.port.McpGatewayAddress;
+import com.sitionix.forgeagent.application.llm.ForgeCodexAuthorizationGate;
+import com.sitionix.forgeagent.application.llm.ForgeCodexAuthorizationGate.AuthorizationLease;
+import com.sitionix.forgeagent.domain.exception.LlmAuthorizationException;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.ArrayList;
@@ -29,6 +32,10 @@ final class CodexAppServerClient implements CodexClient {
     static final String SUPPORTED_DURABLE_VERSION = "0.157.0";
     static final String SUPPORTED_RECOVERY_VERSION = SUPPORTED_DURABLE_VERSION;
 
+    static boolean supportsDurableVersion(String version) {
+        return SUPPORTED_DURABLE_VERSION.equals(version) || "0.160.0".equals(version);
+    }
+
     private final ObjectMapper objectMapper;
     private final CodexAppServerProcessStarter processStarter;
     private final CodexAppServerProperties properties;
@@ -38,22 +45,20 @@ final class CodexAppServerClient implements CodexClient {
     private final CodexMcpInventoryVerifier inventoryVerifier;
     private CodexJsonRpcTransport transport;
     private String codexVersion;
-
-    CodexAppServerClient(ObjectMapper objectMapper, CodexAppServerProcessStarter processStarter,
-                         CodexAppServerProperties properties, CodexRuntimeWorkspace runtimeWorkspace) {
-        this(objectMapper, processStarter, properties, runtimeWorkspace, null);
-    }
+    private final ForgeCodexAuthorizationGate authorizationGate;
+    private AuthorizationLease discoveryLease;
 
     @Autowired
     CodexAppServerClient(ObjectMapper objectMapper, CodexAppServerProcessStarter processStarter,
                          CodexAppServerProperties properties, CodexRuntimeWorkspace runtimeWorkspace,
-                         @Nullable McpGatewayAddress gatewayAddress) {
+                         @Nullable McpGatewayAddress gatewayAddress, ForgeCodexAuthorizationGate authorizationGate) {
         this.objectMapper = objectMapper;
         this.processStarter = processStarter;
         this.properties = properties;
         this.runtimeWorkspace = runtimeWorkspace;
         this.gatewayAddress = gatewayAddress;
         this.inventoryVerifier = new CodexMcpInventoryVerifier(objectMapper);
+        this.authorizationGate = java.util.Objects.requireNonNull(authorizationGate);
     }
 
     @Override
@@ -64,6 +69,7 @@ final class CodexAppServerClient implements CodexClient {
 
     @Override
     public JsonNode request(final String method, final JsonNode params) {
+        if (!"model/list".equals(method)) throw new LlmAuthorizationException("CODEX_AUTH_REQUIRED");
         CodexJsonRpcTransport current = this.ensureInitialized();
         try {
             return current.request(method, params, this.properties.getRequestTimeout());
@@ -118,6 +124,23 @@ final class CodexAppServerClient implements CodexClient {
                                    final String expectedProviderVersion,
                                    final CodexExecutionIdentityCallbacks callbacks, final boolean durable,
                                    final McpRuntimeLaunchGrants grants) {
+        final AuthorizationLease lease = this.authorizationGate.requireAuthorized();
+        try {
+            return this.executeAuthorized(request, existingThreadId, expectedProviderVersion, callbacks, durable, grants, lease);
+        } catch (RuntimeException failure) {
+            var authorization = LlmAuthorizationException.find(failure);
+            if (authorization != null) throw authorization;
+            this.authorizationGate.check(lease);
+            throw failure;
+        } finally {
+            this.authorizationGate.release(lease);
+        }
+    }
+
+    private String executeAuthorized(final CodexTurnRequest request, final String existingThreadId,
+                                     final String expectedProviderVersion,
+                                     final CodexExecutionIdentityCallbacks callbacks, final boolean durable,
+                                     final McpRuntimeLaunchGrants grants, final AuthorizationLease lease) {
         if (grants == null || (request.mcpSelection() == null && !grants.isEmpty()))
             throw new CodexMcpExecutionException("Codex MCP configuration is unavailable");
         if (request.mcpSelection() != null) {
@@ -132,16 +155,17 @@ final class CodexAppServerClient implements CodexClient {
                 new CodexAgentExecutionEventMapper(this.objectMapper), callbacks);
         final CodexJsonRpcTransport transport = this.startWorkspaceTransport(
                 request.executionWorkspace().cwd(), turnStateTracker, eventObserver, grants,
-                request.mcpSelection() != null);
-        if (callbacks != null) callbacks.executionStarted(transport::close);
+                request.mcpSelection() != null, lease);
         CodexExecution execution = null;
         try {
+            this.authorizationGate.registerCancellation(lease, transport::close);
+            if (callbacks != null) callbacks.executionStarted(transport::close);
             final String providerVersion = this.initialize(transport);
             if (durable) {
                 this.validateDurableVersion(providerVersion, expectedProviderVersion);
             }
             execution = this.startExecution(transport, turnStateTracker, eventObserver, request,
-                    existingThreadId, callbacks, providerVersion, durable);
+                    existingThreadId, callbacks, providerVersion, durable, lease);
             if (callbacks != null) {
                 final CodexExecution activeExecution = execution;
                 callbacks.executionStarted(() -> {
@@ -173,9 +197,9 @@ final class CodexAppServerClient implements CodexClient {
     }
 
     private void validateDurableVersion(final String providerVersion, final String expectedProviderVersion) {
-        if (!SUPPORTED_DURABLE_VERSION.equals(providerVersion)) {
+        if (!supportsDurableVersion(providerVersion)) {
             throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,
-                    "Codex durable context requires audited CLI version " + SUPPORTED_DURABLE_VERSION
+                    "Codex durable context requires audited CLI versions 0.157.0, 0.160.0"
                             + "; found " + providerVersion
             );
         }
@@ -190,14 +214,19 @@ final class CodexAppServerClient implements CodexClient {
 
     private synchronized CodexJsonRpcTransport ensureInitialized() {
         if (this.transport != null && this.transport.healthy()) {
-            return this.transport;
+            try {
+                this.authorizationGate.check(this.discoveryLease);
+                return this.transport;
+            } catch (LlmAuthorizationException revoked) { this.closeCurrent(); }
         }
         this.closeCurrent();
-        final CodexJsonRpcTransport next = this.startNeutralTransport(
-                this.runtimeWorkspace.routingWorkspace().cwd());
-        this.transport = next;
+        this.discoveryLease = this.authorizationGate.observe();
         this.codexVersion = null;
         try {
+            final CodexJsonRpcTransport next = this.startNeutralTransport(
+                    this.runtimeWorkspace.routingWorkspace().cwd(), this.discoveryLease);
+            this.transport = next;
+            this.authorizationGate.registerCancellation(this.discoveryLease, next::close);
             this.codexVersion = this.initialize(next);
             return next;
         } catch (final RuntimeException e) {
@@ -217,7 +246,7 @@ final class CodexAppServerClient implements CodexClient {
                                                            final CodexTurnStateTracker turnStateTracker,
                                                            final CodexExecutionEventObserver eventObserver,
                                                            final McpRuntimeLaunchGrants grants,
-                                                           final boolean mcpConfigured) {
+                                                           final boolean mcpConfigured, final AuthorizationLease lease) {
         final StartedCodexAppServer started;
         try {
             started = mcpConfigured
@@ -229,7 +258,7 @@ final class CodexAppServerClient implements CodexClient {
             }
             throw failure;
         }
-        return new CodexJsonRpcTransport(
+        return this.ownTransport(started, lease, () -> new CodexJsonRpcTransport(
                 this.objectMapper,
                 started,
                 this.properties,
@@ -246,15 +275,40 @@ final class CodexAppServerClient implements CodexClient {
                         turnStateTracker.failAll(exception);
                     }
                 }
-        );
+        ));
     }
 
-    private CodexJsonRpcTransport startNeutralTransport(final Path workingDirectory) {
-        return new CodexJsonRpcTransport(
-                this.objectMapper,
-                this.processStarter.start(workingDirectory),
-                this.properties
-        );
+    private CodexJsonRpcTransport startNeutralTransport(final Path workingDirectory, AuthorizationLease lease) {
+        var started = this.processStarter.start(workingDirectory);
+        return this.ownTransport(started, lease, () -> new CodexJsonRpcTransport(
+                this.objectMapper, started, this.properties));
+    }
+
+    /** Own the process before touching its streams: construction itself can fail or race logout. */
+    private CodexJsonRpcTransport ownTransport(StartedCodexAppServer started, AuthorizationLease lease,
+                                               java.util.function.Supplier<CodexJsonRpcTransport> construct) {
+        var owner = new java.util.concurrent.atomic.AtomicReference<CodexJsonRpcTransport>();
+        this.authorizationGate.registerCancellation(lease, () -> {
+            var current = owner.get();
+            if (current != null) { current.close(); return; }
+            var process = started.process();
+            // Pipe exit does not acknowledge termination of the separately owned runtime unit.
+            if (process instanceof com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess managed) {
+                managed.terminateOwnedUnit();
+            }
+            if (!process.isAlive()) return;
+            CodexProcessTree.capture(process).terminateTree();
+            try {
+                if (!process.waitFor(this.properties.getForceKillTimeout().toMillis(), TimeUnit.MILLISECONDS)
+                        || process.isAlive()) throw new CodexTransportException("Codex process cleanup incomplete");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new CodexTransportException("Codex process cleanup interrupted");
+            }
+        });
+        var current = construct.get();
+        owner.set(current);
+        return current;
     }
 
     private CodexExecution startExecution(final CodexJsonRpcTransport current,
@@ -263,7 +317,8 @@ final class CodexAppServerClient implements CodexClient {
                                           final CodexTurnRequest request,
                                           final String existingThreadId,
                                           final CodexExecutionIdentityCallbacks callbacks,
-                                          final String providerVersion, final boolean durable) {
+                                          final String providerVersion, final boolean durable,
+                                          final AuthorizationLease lease) {
         CodexExecutionState state = null;
         try {
             final CodexSessionProtocol sessionProtocol = new CodexSessionProtocol(this.objectMapper);
@@ -277,7 +332,7 @@ final class CodexAppServerClient implements CodexClient {
                                 ? sessionProtocol.resumeThread(current, existingThreadId,
                                         request.sharedSessionGroup() || request.mcpSelection() != null
                                                 ? this.developerInstructions(request) : null,
-                                        request.mcpSelection() == null ? null : this.threadStartParams(request),
+                                        this.threadStartParams(request),
                                         this.properties.getRequestTimeout())
                                 : this.startThread(current, turnStateTracker, request);
             } catch (final CodexExecutionException exception) {
@@ -301,7 +356,11 @@ final class CodexAppServerClient implements CodexClient {
             final String turnId;
             try {
                 turnId = sessionProtocol.startTurn(current, this.turnStartParams(threadId, request),
-                        this.properties.getRequestTimeout(), callbacks == null ? Runnable::run : callbacks::dispatchTurnStart);
+                        this.properties.getRequestTimeout(), write -> {
+                            Runnable authorizedWrite = () -> this.authorizationGate.dispatch(lease, write);
+                            if (callbacks == null) authorizedWrite.run();
+                            else callbacks.dispatchTurnStart(authorizedWrite);
+                        });
             } catch (final CodexExecutionException exception) {
                 throw exception;
             } catch (final RuntimeException exception) {
@@ -442,6 +501,7 @@ final class CodexAppServerClient implements CodexClient {
     private ObjectNode threadStartParams(final CodexTurnRequest request) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         params.put("model", request.modelId());
+        params.put("modelProvider", "openai");
         params.put("developerInstructions", this.developerInstructions(request));
         params.put("approvalPolicy", CodexProtocol.APPROVAL_POLICY_NEVER);
         params.put("sandbox", CodexProtocol.SANDBOX_WORKSPACE_WRITE);
@@ -483,6 +543,9 @@ final class CodexAppServerClient implements CodexClient {
 
     private ObjectNode codexConfig() {
         final ObjectNode config = this.objectMapper.createObjectNode();
+        config.put("model_provider", "openai");
+        config.put("cli_auth_credentials_store", "file");
+        config.put("forced_login_method", "chatgpt");
         config.put("web_search", "disabled");
         final ObjectNode features = config.putObject("features");
         features.put("shell_tool", true);
@@ -547,6 +610,10 @@ final class CodexAppServerClient implements CodexClient {
             }
             this.transport = null;
             this.codexVersion = null;
+        }
+        if (this.discoveryLease != null) {
+            this.authorizationGate.release(this.discoveryLease);
+            this.discoveryLease = null;
         }
     }
 

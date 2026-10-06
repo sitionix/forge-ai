@@ -418,7 +418,8 @@ public class AgentProxyApiMapper {
                 provider.displayName(),
                 provider.status(),
                 provider.version(),
-                provider.models() == null ? null : provider.models().stream().map(this::toResponse).toList()
+                provider.models() == null ? null : provider.models().stream().map(this::toResponse).toList(),
+                provider.authState()
         );
     }
 

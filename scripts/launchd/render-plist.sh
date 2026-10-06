@@ -23,6 +23,9 @@ runner_xml="$(xml_escape "${ROOT}/scripts/runtime/run-${SERVICE}.sh")"
 stdout_xml="$(xml_escape "${LOG_DIR}/${SERVICE}.out.log")"
 stderr_xml="$(xml_escape "${LOG_DIR}/${SERVICE}.err.log")"
 path_xml="$(xml_escape "${PATH:-/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin}")"
+java_command="${FORGE_JAVA_COMMAND:-$(command -v java 2>/dev/null || true)}"
+[[ -n "${java_command}" ]] || { echo "Java is required to run Forge Agent and Nexus." >&2; exit 1; }
+java_xml="$(xml_escape "${java_command}")"
 
 mkdir -p "$(dirname -- "${OUTPUT}")"
 tmp="${OUTPUT}.tmp.$$"
@@ -34,7 +37,7 @@ trap 'rm -f "${tmp}"' EXIT
   printf '  <key>Label</key><string>ai.forge.%s</string>\n' "${SERVICE}"
   printf '  <key>ProgramArguments</key><array><string>%s</string></array>\n' "${runner_xml}"
   printf '  <key>WorkingDirectory</key><string>%s</string>\n' "${root_xml}"
-  printf '  <key>EnvironmentVariables</key><dict><key>FORGE_AI_HOME</key><string>%s</string><key>PATH</key><string>%s</string></dict>\n' "${root_xml}" "${path_xml}"
+  printf '  <key>EnvironmentVariables</key><dict><key>FORGE_AI_HOME</key><string>%s</string><key>FORGE_JAVA_COMMAND</key><string>%s</string><key>PATH</key><string>%s</string></dict>\n' "${root_xml}" "${java_xml}" "${path_xml}"
   printf '%s\n' '  <key>RunAtLoad</key><true/>'
   printf '%s\n' '  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>'
   printf '  <key>StandardOutPath</key><string>%s</string>\n' "${stdout_xml}"

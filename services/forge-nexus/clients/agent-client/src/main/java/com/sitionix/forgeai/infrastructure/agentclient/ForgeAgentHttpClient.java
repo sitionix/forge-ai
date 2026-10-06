@@ -40,6 +40,16 @@ import org.springframework.web.service.annotation.PutExchange;
 import org.springframework.web.bind.annotation.RequestBody;
 
 public interface ForgeAgentHttpClient {
+    @GetExchange("/api/v1/integrations/llm/providers")
+    List<com.sitionix.forgeai.infrastructure.agentclient.dto.LlmProviderInbound> llmProviders();
+    @PostExchange(value="/api/v1/integrations/llm/codex/login",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.LlmLoginInbound startLlmLogin(@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingOutbound request);
+    @GetExchange("/api/v1/integrations/llm/codex/logins/{id}")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.LlmLoginInbound readLlmLogin(@PathVariable UUID id,com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingHeader binding);
+    @DeleteExchange(value="/api/v1/integrations/llm/codex/logins/{id}",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.LlmLoginInbound cancelLlmLogin(@PathVariable UUID id,@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingOutbound request);
+    @PostExchange(value="/api/v1/integrations/llm/codex/logout",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.LlmProviderInbound logoutLlm(@RequestBody java.util.Map<String,Object> empty);
     @GetExchange("/api/v1/integrations/mcp/available")
     com.sitionix.forgeai.infrastructure.agentclient.dto.McpAvailablePageInbound listAvailableMcp(
             @RequestParam(required = false) String search,

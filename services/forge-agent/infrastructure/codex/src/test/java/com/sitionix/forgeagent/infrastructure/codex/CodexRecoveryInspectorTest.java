@@ -27,7 +27,43 @@ import org.junit.jupiter.api.Test;
 class CodexRecoveryInspectorTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ForgeAuthorizationFixture auth = new ForgeAuthorizationFixture(false);
     private final ExecutionWorkspace workspace = new ExecutionWorkspace(Path.of("/workspace"), List.of(Path.of("/workspace")));
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void dead_launcher_pipe_after_logout_still_requires_owned_unit_stop(boolean stopFails) {
+        var pipe = new FakeCodexProcess();
+        pipe.terminateNow();
+        var failed = new java.util.concurrent.atomic.AtomicBoolean(stopFails);
+        var stopped = new java.util.concurrent.atomic.AtomicBoolean();
+        var attempts = new AtomicInteger();
+        var managed = new com.sitionix.forgeagent.infrastructure.local.runtime.ManagedRuntimeProcess(pipe, () -> {
+            attempts.incrementAndGet();
+            if (failed.get()) throw new IllegalStateException("synthetic unit stop unconfirmed");
+            stopped.set(true);
+        });
+        CodexAppServerProcessStarter starter = cwd -> {
+            this.auth.service.logout();
+            return new StartedCodexAppServer(managed, List.of("fixture"), Instant.now());
+        };
+        var result = this.inspector(starter).inspect(this.inspection("0.160.0"));
+        assertThat(result.state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+        assertThat(attempts.get()).isPositive();
+        assertThat(pipe.pendingClientRequestBytes()).isZero();
+        if (stopFails) {
+            assertThat(stopped).isFalse();
+            org.assertj.core.api.Assertions.assertThatThrownBy(this.auth.gate::requireAuthorized)
+                    .hasMessage("CODEX_LOGOUT_REQUIRED");
+            failed.set(false);
+            this.auth.service.logout();
+            assertThat(attempts.get()).isGreaterThan(1);
+        } else {
+            assertThat(attempts.get()).isEqualTo(1);
+        }
+        assertThat(stopped).isTrue();
+        assertThat(this.auth.service.currentState().authState().name()).isEqualTo("SIGNED_OUT");
+    }
 
     @Test
     void supportsOnlyExactAuditedCodexVersion() {
@@ -35,6 +71,8 @@ class CodexRecoveryInspectorTest {
         final CodexRecoveryInspector inspector = this.inspector(starter);
 
         assertThat(inspector.supports("codex", "0.157.0")).isTrue();
+        assertThat(inspector.supports("codex", "0.160.0")).isTrue();
+        assertThat(inspector.supports("codex", "0.161.0")).isFalse();
         assertThat(inspector.supports("CODEX", "0.157.0")).isFalse();
         assertThat(inspector.supports("codex", "0.153.2")).isFalse();
         assertThat(inspector.supports(null, "0.157.0")).isFalse();
@@ -52,16 +90,17 @@ class CodexRecoveryInspectorTest {
         assertThat(starter.processes()).isEmpty();
     }
 
-    @Test
-    void freshProcessInitializesThenInspectsExactTurnAndAlwaysCloses() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"0.157.0", "0.160.0"})
+    void recovery_inspection_does_not_restart_unauthorized_inference(String version) throws Exception {
         final RecordingStarter starter = new RecordingStarter();
         final CompletableFuture<ProviderTurnRecoveryResult> recovered = CompletableFuture.supplyAsync(
-                () -> this.inspector(starter).inspect(this.inspection("0.157.0")));
+                () -> this.inspector(starter).inspect(this.inspection(version)));
 
         final FakeCodexProcess process = starter.awaitProcess();
         final JsonNode initialize = this.readRequest(process);
         assertThat(initialize.path("method").asText()).isEqualTo("initialize");
-        this.reply(process, initialize, "{\"userAgent\":\"codex/0.157.0\"}");
+        this.reply(process, initialize, "{\"userAgent\":\"codex/" + version + "\"}");
         final JsonNode initialized = this.readRequest(process);
         assertThat(initialized.path("method").asText()).isEqualTo("initialized");
         final JsonNode turns = this.readRequest(process);
@@ -73,6 +112,19 @@ class CodexRecoveryInspectorTest {
                 ProviderTurnRecoveryTerminalOutcome.SUCCEEDED, "Codex turn status completed"));
         assertThat(process.destroyed()).isTrue();
         assertThat(process.forciblyDestroyed()).isFalse();
+        assertThat(process.pendingClientRequestBytes()).isZero();
+    }
+
+    @Test void logout_owns_recovery_process_before_initialize_completes() throws Exception {
+        var starter = new RecordingStarter();
+        var inspector = this.inspector(starter);
+        var result = CompletableFuture.supplyAsync(() -> inspector.inspect(this.inspection("0.157.0")));
+        var process = starter.awaitProcess();
+        assertThat(this.readRequest(process).path("method").asText()).isEqualTo("initialize");
+        this.auth.service.logout();
+        assertThat(process.isAlive()).isFalse();
+        assertThat(result.get(1, TimeUnit.SECONDS).state()).isEqualTo(ProviderTurnRecoveryState.UNKNOWN);
+        assertThat(process.pendingClientRequestBytes()).isZero();
     }
 
     @Test
@@ -236,7 +288,7 @@ class CodexRecoveryInspectorTest {
         properties.setForceKillTimeout(Duration.ofMillis(20));
         final Clock clock = Clock.systemUTC();
         return new CodexRecoveryInspector(this.objectMapper, starter, properties,
-                new CodexRecoveryProtocol(this.objectMapper, clock), clock);
+                new CodexRecoveryProtocol(this.objectMapper, clock), clock, this.auth.gate);
     }
 
     private AgentExecutionRecoveryInspection inspection(final String version) {

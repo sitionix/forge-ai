@@ -6148,6 +6148,18 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 #mcpToolChoices input, #mcpProjectChoices input { width: auto; }
 #mcpSecretHeaders { -webkit-text-security: disc; }
 .settings-shell .panel { padding: 24px; margin-bottom: 20px; }
+.llm-provider-card { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+#llmSectionTitle { margin: 0 0 20px; font-size: 1.2rem; }
+.llm-provider-icon { flex-shrink: 0; border-radius: 12px; }
+.llm-provider-copy { flex: 1; min-width: min(100%, 240px); overflow-wrap: anywhere; }
+.llm-provider-copy h4 { margin: 0; font-size: 1rem; }
+.llm-provider-copy .mcp-description { margin: 6px 0 12px; }
+.llm-provider-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+#codexState, #codexAccount { margin: 4px 0; }
+#codexAccount { font-size: .85rem; color: var(--muted); }
+#codexAccount:empty, #codexNotice:empty { display: none; }
+#codexOpenLink { display: inline-block; margin: 8px 12px 8px 0; }
+#codexOpenLink:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
 @media (max-width: 1000px) {
   .operator-sidebar, body.sidebar-collapsed .operator-sidebar { grid-template-columns: auto minmax(0, 1fr) auto; }
   .sidebar-nav { min-width: 0; }

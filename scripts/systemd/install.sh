@@ -37,6 +37,14 @@ run_privileged() {
   fi
 }
 
+# Ubuntu 22.04 uses Python 3.10, before TOML parsing joined the standard library.
+# The isolated root helper can use only a system-installed backport.
+if ! /usr/bin/python3 -I -c 'import tomllib' >/dev/null 2>&1 \
+    && ! /usr/bin/python3 -I -c 'import tomli' >/dev/null 2>&1; then
+  run_privileged /usr/bin/apt-get install -y python3-tomli
+  /usr/bin/python3 -I -c 'import tomli'
+fi
+
 tmp_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "${tmp_dir}"

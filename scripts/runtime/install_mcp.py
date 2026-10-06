@@ -13,6 +13,7 @@ import stat
 import subprocess
 import tempfile
 import uuid
+import secrets
 
 
 def trusted_parent(path, trusted_uid=0):
@@ -40,6 +41,33 @@ def provision_codex_runtime_workspace(workspace_root, control_uid, runtime_gid):
     path = workspace_root / '.forge-codex-runtime'
     protected_directory(path, control_uid, runtime_gid, 0o2750)
     return path
+
+
+def provision_codex_home(home, runtime_uid, runtime_gid):
+    # Provision mount targets only. Existing auth.json belongs to the Forge account
+    # lifecycle and must survive repeat installs; personal HOME is never a source.
+    codex_home = home / '.codex'
+    protected_directory(codex_home, runtime_uid, runtime_gid, 0o700)
+    for directory in [codex_home / 'plugins', codex_home / '.agents', codex_home / '.agents/plugins']:
+        protected_directory(directory, runtime_uid, runtime_gid, 0o700)
+    write_once(codex_home / 'config.toml', b'', runtime_uid, runtime_gid)
+    return codex_home
+
+
+def provision_codex_service_token(directory, control_uid, control_gid):
+    """A service credential, owned by control, independent of runtime provider auth."""
+    protected_directory(directory, control_uid, control_gid, 0o700)
+    token = directory / 'token'
+    if token.exists() or token.is_symlink():
+        info = token.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != control_uid or info.st_gid != control_gid or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+            raise RuntimeError('Unsafe existing Codex service credential')
+        value = token.read_bytes()
+        if not 32 <= len(value) <= 256 or any(c not in b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_' for c in value):
+            raise RuntimeError('Invalid existing Codex service credential')
+        return token
+    write_once(token, secrets.token_urlsafe(48).encode('ascii'), control_uid, control_gid)
+    return token
 
 
 def agent_environment(paths, workspace_root, runtime_cwd):
@@ -114,11 +142,7 @@ def install(source, control_name, codex_source, database_file, workspace_root, m
                        (pathlib.Path('/usr/local/libexec'), 0o755), (pathlib.Path('/usr/local/lib/forge-runtime'), 0o755)]:
         protected_directory(path, 0, 0, mode)
     protected_directory(pathlib.Path('/srv/forge-runtime/home'), runtime.pw_uid, runtime.pw_gid, 0o700)
-    codex_home = pathlib.Path('/srv/forge-runtime/home/.codex')
-    protected_directory(codex_home, runtime.pw_uid, runtime.pw_gid, 0o700)
-    for directory in [codex_home / 'plugins', codex_home / '.agents', codex_home / '.agents/plugins']:
-        protected_directory(directory, runtime.pw_uid, runtime.pw_gid, 0o700)
-    write_once(codex_home / 'config.toml', b'', runtime.pw_uid, runtime.pw_gid)
+    provision_codex_home(pathlib.Path('/srv/forge-runtime/home'), runtime.pw_uid, runtime.pw_gid)
     protected_directory(workspace_root, control.pw_uid, runtime.pw_gid, 0o2750)
     runtime_cwd = provision_codex_runtime_workspace(workspace_root, control.pw_uid, runtime.pw_gid)
     if runtime.pw_gid not in os.getgrouplist(control.pw_name, control.pw_gid):
@@ -189,6 +213,7 @@ def install(source, control_name, codex_source, database_file, workspace_root, m
                     previous_environment[name] = value
         database_password = previous_environment.get('FORGE_AGENT_DB_PASSWORD', 'forge_agent').encode()
     paths = provision.prepare(material_root, control.pw_uid, control.pw_gid, database_password)
+    provision_codex_service_token(material_root.parent / 'codex-service', control.pw_uid, control.pw_gid)
     # Copy only the former managed subtree, never a personal HOME. The parent was
     # allocated above; copying runs under the control identity with its runtime group.
     subprocess.run(['/usr/sbin/runuser', '-u', control_name, '--', '/usr/bin/python3', '-I',

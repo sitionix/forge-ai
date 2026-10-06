@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-/** Real provider processes with a read-only wire recorder; accessible only to boot tests. */
+/** Legacy opt-in raw provider fixture; its synthetic gate is not Forge authorization/isolation evidence. */
 public final class LiveCodexRecoveryFixture {
     private final ObjectMapper mapper = new ObjectMapper();
     private final CodexAppServerProperties properties = new CodexAppServerProperties();
@@ -36,7 +36,7 @@ public final class LiveCodexRecoveryFixture {
                                          final AgentSessionLeaseService leases,
                                          final AgentExecutionEventRepository events) throws IOException {
         final var client = new CodexAppServerClient(this.mapper, this.starter(this.executionProcesses),
-                this.properties, new CodexRuntimeWorkspace(this.properties));
+                this.properties, new CodexRuntimeWorkspace(this.properties), null, BootCodexAuthorizationFixture.approvedGate());
         try {
             client.executeDurable(new CodexTurnRequest(
                     "Return JSON with answer set to recovery-ready.",
@@ -69,7 +69,7 @@ public final class LiveCodexRecoveryFixture {
                                            final AgentSessionLeaseService leases,
                                            final AgentExecutionEventRepository events) throws IOException {
         final var client = new CodexAppServerClient(this.mapper, this.starter(this.executionProcesses),
-                this.properties, new CodexRuntimeWorkspace(this.properties));
+                this.properties, new CodexRuntimeWorkspace(this.properties), null, BootCodexAuthorizationFixture.approvedGate());
         try {
             final String output = client.executeDurable(new CodexTurnRequest(
                     "Return JSON with answer set to resumed-safely.",
@@ -109,7 +109,8 @@ public final class LiveCodexRecoveryFixture {
     public AgentExecutionRecoveryInspector inspector() {
         final Clock clock = Clock.systemUTC();
         return new CodexRecoveryInspector(this.mapper, this.starter(this.inspectionProcesses), this.properties,
-                new CodexRecoveryProtocol(this.mapper, clock), clock);
+                new CodexRecoveryProtocol(this.mapper, clock), clock,
+                BootCodexAuthorizationFixture.approvedGate());
     }
 
     public List<RecordedProcess> executionProcesses() { return List.copyOf(this.executionProcesses); }

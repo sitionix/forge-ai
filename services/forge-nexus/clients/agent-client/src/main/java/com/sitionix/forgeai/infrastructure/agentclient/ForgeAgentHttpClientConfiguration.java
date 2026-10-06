@@ -27,6 +27,12 @@ class ForgeAgentHttpClientConfiguration {
             .requestFactory(this.requestFactory(properties, catalogReadTimeout))
             .build();
     return HttpServiceProxyFactory.builderFor(RestClientAdapter.create(restClient))
+        .customArgumentResolver((argument, parameter, values) -> {
+          if (parameter.getParameterType() != com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingHeader.class) return false;
+          var binding = (com.sitionix.forgeai.infrastructure.agentclient.dto.LlmBindingHeader) argument;
+          values.addHeader("X-Forge-Browser-Binding", binding.value());
+          return true;
+        })
         .build()
         .createClient(ForgeAgentHttpClient.class);
   }

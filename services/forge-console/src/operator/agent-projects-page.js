@@ -122,6 +122,11 @@ export class AgentProjectsPage {
     this.systemHealthView = null;
     this.sshProfileFlow = new SshProfileFlow({ document: this.document, api: this.api });
     this.onPopState = () => this.syncRoute();
+    this.runtimeCatalogLoadGeneration = 0;
+    this.runtimeCatalogAppliedGeneration = 0;
+    this.agentModalLoadGeneration = 0;
+    this.authorizationRuntimeRefresh = null;
+    this.onAuthorizationChanged = () => void this.refreshAuthorizationRuntime();
   }
 
   mount() {
@@ -132,6 +137,8 @@ export class AgentProjectsPage {
     this.workflowBuilder.bind();
     this.sshProfileFlow.bind();
     this.window.addEventListener('popstate', this.onPopState);
+    this.window.addEventListener('forge:llm-authorization-changed', this.onAuthorizationChanged);
+    this.window.addEventListener('focus', this.onAuthorizationChanged);
     this.showProjectsIndex({ preserveProjects: true });
     this.loadProjects();
   }
@@ -143,6 +150,9 @@ export class AgentProjectsPage {
     this.workflowBuilder.dispose();
     this.disposeLogsWorkspace();
     this.window.removeEventListener('popstate', this.onPopState);
+    this.window.removeEventListener('forge:llm-authorization-changed', this.onAuthorizationChanged);
+    this.window.removeEventListener('focus', this.onAuthorizationChanged);
+    this.runtimeCatalogLoadGeneration += 1;
   }
 
   bind() {
@@ -1656,9 +1666,11 @@ export class AgentProjectsPage {
   }
 
   async openAgentModal(agentId = null) {
-    if (!this.projectDataCurrent()) {
+    if (this.disposed || !this.projectDataCurrent()) {
       return;
     }
+    const generation = ++this.agentModalLoadGeneration;
+    const projectId = this.state.selectedProjectId, sequence = this.projectLoadSequence;
     this.state.editingAgentId = agentId;
     this.showError('agentsV2AgentModalError', '');
     this.showFieldError('');
@@ -1671,7 +1683,8 @@ export class AgentProjectsPage {
     if (agentId) {
       try {
         const agent = await this.api.getAgent(agentId);
-        if (agent.projectId !== this.state.selectedProjectId) {
+        if (!this.currentAgentModal(generation, projectId, sequence, agentId)) return;
+        if (agent.projectId !== projectId) {
           this.showError('agentsV2AgentsError', 'Agent details do not belong to the opened project.');
           return;
         }
@@ -1681,12 +1694,13 @@ export class AgentProjectsPage {
         this.state.savedAgentModelSelection = agent.model || null;
         this.state.agentModelSelection = agent.model || null;
       } catch (error) {
+        if (!this.currentAgentModal(generation, projectId, sequence, agentId)) return;
         this.showError('agentsV2AgentsError', error.message || 'Agent details failed to load.');
         return;
       }
     }
-    await this.loadRuntimeForAgentModal();
-    this.openDialog('agentsV2AgentDialog');
+    const applied = await this.loadRuntimeForAgentModal();
+    if (applied && this.currentAgentModal(generation, projectId, sequence, agentId)) this.openDialog('agentsV2AgentDialog');
   }
 
   async submitAgent(event) {
@@ -2117,22 +2131,44 @@ export class AgentProjectsPage {
   }
 
   async loadRuntimeForAgentModal() {
+    if (this.disposed) return;
+    const modalGeneration = this.agentModalLoadGeneration, agentId = this.state.editingAgentId;
+    const projectId = this.state.selectedProjectId, sequence = this.projectLoadSequence;
+    const dialog = this.byId('agentsV2AgentDialog'), wasOpen = dialog?.open;
     this.renderModelPickerLoading();
-    await this.loadRuntimeCatalog(this.state.selectedProjectId, this.projectLoadSequence, { showModalError: true });
-    this.ensureInitialModelSelection();
+    const request = this.loadRuntimeCatalog(projectId, sequence, { showModalError: true });
+    const catalogGeneration = this.runtimeCatalogLoadGeneration;
+    const applied = await request;
+    const current = () => this.currentAgentModal(modalGeneration, projectId, sequence, agentId)
+      && this.byId('agentsV2AgentDialog') === dialog && dialog?.open === wasOpen;
+    if (!current()) return;
+    if (!applied || catalogGeneration !== this.runtimeCatalogLoadGeneration) {
+      const refresh = this.authorizationRuntimeRefresh;
+      if (refresh?.projectId === projectId && refresh.sequence === sequence) await refresh.promise;
+      if (!current() || this.runtimeCatalogAppliedGeneration !== this.runtimeCatalogLoadGeneration) return;
+    } else {
+      this.ensureInitialModelSelection();
+    }
     this.renderModelPicker();
+    return true;
+  }
+
+  currentAgentModal(generation, projectId, sequence, agentId) {
+    return !this.disposed && generation === this.agentModalLoadGeneration
+      && this.isCurrentProjectLoad(projectId, sequence) && this.state.editingAgentId === agentId;
   }
 
   async loadRuntimeCatalog(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence, options = {}) {
+    const generation = ++this.runtimeCatalogLoadGeneration;
     try {
       const runtime = await this.api.getRuntime();
-      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+      if (!this.isCurrentProjectLoad(projectId, loadSequence) || generation !== this.runtimeCatalogLoadGeneration) {
         return;
       }
       this.state.runtime = runtime;
       this.state.runtimeError = '';
     } catch (error) {
-      if (!this.isCurrentProjectLoad(projectId, loadSequence)) {
+      if (!this.isCurrentProjectLoad(projectId, loadSequence) || generation !== this.runtimeCatalogLoadGeneration) {
         return;
       }
       this.state.runtime = { providers: [] };
@@ -2141,7 +2177,26 @@ export class AgentProjectsPage {
         this.showError('agentsV2AgentModalError', this.state.runtimeError);
       }
     }
+    this.runtimeCatalogAppliedGeneration = generation;
     this.renderProjectWorkspace();
+    return true;
+  }
+
+  async refreshAuthorizationRuntime() {
+    if (this.disposed || !this.state.selectedProjectId) return;
+    const projectId = this.state.selectedProjectId, sequence = this.projectLoadSequence;
+    if (this.authorizationRuntimeRefresh?.projectId === projectId && this.authorizationRuntimeRefresh.sequence === sequence) return;
+    const refresh = { projectId, sequence };
+    this.authorizationRuntimeRefresh = refresh;
+    try {
+      refresh.promise = this.loadRuntimeCatalog(projectId, sequence);
+      const applied = await refresh.promise;
+      if (applied && !this.disposed && this.isCurrentProjectLoad(projectId, sequence) && this.byId('agentsV2AgentDialog')?.open) {
+        this.renderModelPicker();
+      }
+    } finally {
+      if (this.authorizationRuntimeRefresh === refresh) this.authorizationRuntimeRefresh = null;
+    }
   }
 
   renderModelPickerLoading() {
@@ -2170,7 +2225,7 @@ export class AgentProjectsPage {
     const effortSelect = this.byId('agentsV2AgentEffort');
     const selection = this.state.agentModelSelection || {};
     const readyProviders = this.readyProviders();
-    const saved = this.state.savedAgentModelSelection;
+    const saved = this.state.agentModelSelection || this.state.savedAgentModelSelection;
     const savedProvider = this.runtimeCatalogProvider(saved?.providerId);
     const savedProviderReady = savedProvider?.status === 'READY';
     providerSelect.disabled = !readyProviders.length;
@@ -2521,6 +2576,7 @@ export class AgentProjectsPage {
   }
 
   closeDialog(id) {
+    if (id === 'agentsV2AgentDialog') this.agentModalLoadGeneration += 1;
     const dialog = this.byId(id);
     if (dialog.close) {
       dialog.close();

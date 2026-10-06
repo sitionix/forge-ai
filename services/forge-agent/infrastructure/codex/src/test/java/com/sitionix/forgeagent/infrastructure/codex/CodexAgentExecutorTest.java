@@ -65,6 +65,20 @@ class CodexAgentExecutorTest {
             this.client
     );
 
+    @Test void authorization_failure_survives_wrapped_context_and_mcp_failure() {
+        var codex = mock(CodexClient.class);
+        var failure = new com.sitionix.forgeagent.domain.exception.LlmAuthorizationException("CODEX_AUTH_REQUIRED");
+        when(codex.executeDurable(any(), any(), any(), any()))
+                .thenThrow(new CodexExecutionException(CodexExecutionFailurePhase.THREAD_RESUME,
+                        "private provider details", failure))
+                .thenThrow(new CodexMcpExecutionException("private provider details", failure));
+        var executor = new CodexAgentExecutor(objectMapper, codex);
+        assertThatThrownBy(() -> executor.execute(this.trackedClaim("thread-existing")))
+                .isSameAs(failure).hasMessage("CODEX_AUTH_REQUIRED");
+        assertThatThrownBy(() -> executor.execute(this.trackedClaim("thread-existing")))
+                .isSameAs(failure).hasMessage("CODEX_AUTH_REQUIRED");
+    }
+
     @Test
     void selectedMcpGrantsArePassedOnlyToLaunchAndRevokedAfterSuccessOrFailure() {
         var selectionService = mock(McpExecutionSelectionService.class);

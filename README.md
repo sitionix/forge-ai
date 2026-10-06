@@ -12,3 +12,5 @@ Nexus forwards typed Forge Agent requests and responses through its controller, 
 Runtime configuration is under `config/`. Agent and workflow configuration belongs to Forge Agent.
 
 See each service README and `docs/` for service-specific and historical architecture material.
+
+For the local ChatGPT sign-in lifecycle and verification boundaries, see [Codex authorization setup](docs/codex-authorization-setup.md).
