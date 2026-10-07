@@ -20,10 +20,8 @@ public class PostgresNodeRunRepository implements NodeRunRepository {
 
     private static final int COMPLETION_RECONCILIATION_BATCH_SIZE = 100;
 
-    private static final List<String> ACTIVE_STATUSES = List.of(
-            NodeRunStatus.PENDING.name(),
-            NodeRunStatus.RUNNING.name()
-    );
+    private static final List<String> ACTIVE_STATUSES = java.util.Arrays.stream(NodeRunStatus.values())
+            .filter(NodeRunStatus::active).map(NodeRunStatus::name).toList();
 
     private final SpringDataNodeRunRepository repository;
     private final AgentExecutionSessionRepository sessionRepository;

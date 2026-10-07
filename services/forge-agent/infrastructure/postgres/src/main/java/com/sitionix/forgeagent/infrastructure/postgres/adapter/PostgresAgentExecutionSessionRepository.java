@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PostgresAgentExecutionSessionRepository implements AgentExecutionSessionRepository {
     private final JdbcTemplate jdbc;
+    private final com.sitionix.forgeagent.domain.port.dialogue.DialogueRepository dialogues;
     private static final String ALLOCATION_QUERY = "SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.provider_recovery_state turn_provider_recovery_state,t.provider_recovery_terminal_outcome turn_provider_recovery_terminal_outcome,t.provider_recovery_checked_at turn_provider_recovery_checked_at,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id";
 
     @Override
@@ -313,7 +314,9 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                 ? reconciliation.providerTerminalOutcome().name() : null;
         final boolean corrupting = forgeTerminal ? this.sessionCorrupting(failureCode)
                 : reconciliation.disposition() != AgentExecutionRecoveryDisposition.PROVIDER_TERMINAL_RESULT_LOST;
-        final String sessionStatus = fresh || "CANCELLED".equals(turnStatus) ? "CLOSED" : corrupting ? "FAILED" : "IDLE";
+        final boolean dialogue = session.contextMode() == NodeContextMode.DIALOGUE_WITHIN_NODE_RUN;
+        final String sessionStatus = fresh || "CANCELLED".equals(turnStatus) || (dialogue && forgeTerminal)
+                ? "CLOSED" : corrupting || dialogue ? "FAILED" : "IDLE";
         if (!forgeTerminal) {
             this.jdbc.update("UPDATE node_runs SET status='FAILED',failure_code=?,failure_message=?,finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='RUNNING'",
                     failureCode, failureMessage, claim.nodeRunId());
@@ -328,6 +331,17 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                        finished_at=COALESCE(finished_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP
                  WHERE id=?
                 """, turnStatus, failureCode, failureMessage, providerState, providerOutcome, forgeTerminal, claim.turnId());
+        if (dialogue) {
+            final var snapshot = this.dialogues.lock(claim.nodeRunId());
+            final var active = snapshot.activeTurn();
+            if (active != null && claim.turnId().equals(active.executionTurnId())) {
+                final var status = com.sitionix.forgeagent.domain.model.dialogue.DialogueTurnStatus.valueOf(turnStatus);
+                this.dialogues.finishTurn(active.id(),status,null,failureCode,failureMessage);
+                if (!"SUCCEEDED".equals(turnStatus)) this.dialogues.updateState(claim.nodeRunId(),
+                        "CANCELLED".equals(turnStatus) ? com.sitionix.forgeagent.domain.model.dialogue.DialogueState.CANCELLED
+                                : com.sitionix.forgeagent.domain.model.dialogue.DialogueState.FAILED,snapshot.revision()+1,null);
+            }
+        }
         this.jdbc.update("""
                 UPDATE agent_execution_sessions
                    SET status=?,terminal_outcome=?,active_node_run_id=NULL,lease_owner_id=NULL,lease_expires_at=NULL,
@@ -336,7 +350,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
                        updated_at=CURRENT_TIMESTAMP
                  WHERE id=?
                 """, sessionStatus, "CLOSED".equals(sessionStatus) ? turnStatus : null,
-                corrupting ? failureCode : null, corrupting ? failureMessage : null, sessionStatus, claim.sessionId());
+                corrupting || dialogue ? failureCode : null, corrupting || dialogue ? failureMessage : null, sessionStatus, claim.sessionId());
         return true;
     }
 
@@ -345,9 +359,11 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         final List<UUID> workflows = this.jdbc.query("SELECT id FROM workflow_runs WHERE id=? FOR UPDATE",
                 (rs, row) -> rs.getObject(1, UUID.class), workflowRunId);
         if (workflows.isEmpty()) return null;
-        return this.jdbc.query("SELECT status,failure_code,failure_message FROM node_runs WHERE id=? AND workflow_run_id=? FOR UPDATE",
-                (rs, row) -> new RecoveryNode(rs.getString("status"), rs.getString("failure_code"), rs.getString("failure_message")),
+        final RecoveryNode node = this.jdbc.query("SELECT status,failure_code,failure_message,node_type FROM node_runs WHERE id=? AND workflow_run_id=? FOR UPDATE",
+                (rs, row) -> new RecoveryNode(rs.getString("status"), rs.getString("failure_code"), rs.getString("failure_message"),rs.getString("node_type")),
                 nodeRunId, workflowRunId).stream().findFirst().orElse(null);
+        if (node != null && "DIALOGUE".equals(node.nodeType())) this.dialogues.lock(nodeRunId);
+        return node;
     }
 
     private Optional<AgentExecutionSession> lockExpiredRecoverySession(final UUID sessionId, final UUID workflowRunId,
@@ -380,7 +396,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         this.jdbc.query("SELECT id FROM node_runs WHERE id=? FOR UPDATE",
                 (rs, row) -> rs.getObject(1, UUID.class), nodeRunId);
         final List<AgentExecutionAllocation> target = this.jdbc.query(
-                "SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.provider_recovery_state turn_provider_recovery_state,t.provider_recovery_terminal_outcome turn_provider_recovery_terminal_outcome,t.provider_recovery_checked_at turn_provider_recovery_checked_at,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE t.node_run_id=? FOR UPDATE OF s,t",
+                "SELECT s.*,t.id turn_id,t.node_run_id,t.provider_turn_id,t.sequence turn_sequence,t.status turn_status,t.failure_code turn_failure_code,t.failure_message turn_failure_message,t.provider_recovery_state turn_provider_recovery_state,t.provider_recovery_terminal_outcome turn_provider_recovery_terminal_outcome,t.provider_recovery_checked_at turn_provider_recovery_checked_at,t.started_at turn_started_at,t.finished_at turn_finished_at,t.created_at turn_created_at,t.updated_at turn_updated_at FROM agent_execution_turns t JOIN agent_execution_sessions s ON s.id=t.agent_session_id WHERE t.node_run_id=? AND (t.dialogue_turn_id IS NULL OR t.status IN ('QUEUED','STARTING','ACTIVE')) FOR UPDATE OF s,t",
                 (rs, row) -> new AgentExecutionAllocation(this.session(rs, row), this.turn(rs)),
                 nodeRunId
         );
@@ -442,7 +458,7 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
     private static Instant instant(ResultSet rs, String name) throws SQLException { var value=rs.getTimestamp(name); return value == null ? null : value.toInstant(); }
     private static <E extends Enum<E>> E enumValue(Class<E> type, String value) { return value == null ? null : Enum.valueOf(type, value); }
 
-    private record RecoveryNode(String status, String failureCode, String failureMessage) {
+    private record RecoveryNode(String status, String failureCode, String failureMessage, String nodeType) {
         boolean terminal() {
             return "SUCCEEDED".equals(this.status) || "FAILED".equals(this.status)
                     || "BLOCKED".equals(this.status) || "CANCELLED".equals(this.status);

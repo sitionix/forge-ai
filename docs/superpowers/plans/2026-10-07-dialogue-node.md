@@ -120,13 +120,13 @@
 
 **Interfaces:** `DialogueExecutionRequest` містить exact workflow/node/execution turn IDs, session claim, workspace, snapshot agent/model/schema, turn kind, input revision та triggering message. Спільний provider execution helper приймає typed request/contract, повертає provider output; DialogueTurnResultPolicy перевіряє message/draft/questions/decisions/sources/readyForReview. Звичайний AgentExecutor.execute(NodeExecutionClaim) зберігає свій контракт. MCP selection отримує minimal trusted execution context замість дубльованих перевірок.
 
-- [ ] Написати failing tests: initial start → chat resume → summary resume на exact conversation; ordinary request не змінений; dialogue instructions не наказують обрати порт.
-- [ ] Написати failing result tests: SUMMARY null/invalid draft; ready with blocking questions; неіснуючий decision message ID; shape invalid output не створює assistant reply.
-- [ ] Написати failing MCP tests: project/tool access, новий grant на turn, changed permissions між turns, revoke після result/error/stop, відсутність grant між репліками.
-- [ ] Запустити focused application/codex tests і зафіксувати RED.
-- [ ] Виділити спільні transport/session/MCP execution операції з чинного CodexAgentExecutor; реалізувати Dialogue request policy через них. Не копіювати executor body.
-- [ ] Реалізувати committed turn result → assistant message/revision/wait state atomically; claim та callbacks fenced exact turn/lease.
-- [ ] Прогнати existing Codex tests і нові Dialogue tests, закомітити green.
+- [x] Написати failing tests: initial start → chat resume → summary resume на exact conversation; ordinary request не змінений; dialogue instructions не наказують обрати порт.
+- [x] Написати failing result tests: SUMMARY null/invalid draft; ready with blocking questions; неіснуючий decision message ID; shape invalid output не створює assistant reply.
+- [x] Написати failing MCP tests: project/tool access, новий grant на turn, changed permissions між turns, revoke після result/error/stop, відсутність grant між репліками.
+- [x] Запустити focused application/codex tests і зафіксувати RED.
+- [x] Виділити спільні transport/session/MCP execution операції з чинного CodexAgentExecutor; реалізувати Dialogue request policy через них. Не копіювати executor body.
+- [x] Реалізувати committed turn result → assistant message/revision/wait state atomically; claim та callbacks fenced exact turn/lease.
+- [x] Прогнати existing Codex tests і нові Dialogue tests, закомітити green.
 
 ## Task 5: Completion, cancellation, recovery та activity
 
@@ -139,12 +139,12 @@
 
 **Interfaces:** `DialogueCommands.complete(UUID runId, UUID nodeRunId, UUID requestId, long expectedRevision, UUID summaryRevisionId, UUID outputPortId) -> DialogueSnapshot`; exact schema envelope `{contractVersion:1,result,dialogue}`. Accepted completion closes session and makes NodeRun SUCCEEDED in one transaction; existing completion worker routes after commit. DialogueRecoveryHandler applies conservative recovery to dialogue turns without ordinary NodeRun completion.
 
-- [ ] Написати failing tests на ACCEPT без current SUMMARY/ready/draft, blocking questions, wrong port; REWORK/DEFER з unresolved questions дозволені з current valid summary.
-- [ ] Написати failing IT на duplicate completion, send vs complete, callback after stop, expiry fencing, active-turn restart, waiting restart, completion-before-routing restart.
-- [ ] Запустити RED, реалізувати exact completion checks, immutable accepted revision, ordinary recoverable routing і session closure.
-- [ ] Додати cancellation/recovery dispatch за owning node type; open Dialogue context reset відхиляти явно. Activity отримувати за explicit execution turn ID.
-- [ ] Прогнати DialogueLifecycleIT та існуючі manual/cancellation/context/recovery tests; перевірити zero duplicate downstream activations.
-- [ ] Закомітити green.
+- [x] Написати failing tests на ACCEPT без current SUMMARY/ready/draft, blocking questions, wrong port; REWORK/DEFER з unresolved questions дозволені з current valid summary.
+- [x] Написати failing IT на duplicate completion, send vs complete, callback after stop, expiry fencing, active-turn restart, waiting restart, completion-before-routing restart.
+- [x] Запустити RED, реалізувати exact completion checks, immutable accepted revision, ordinary recoverable routing і session closure.
+- [x] Додати cancellation/recovery dispatch за owning node type; open Dialogue context reset відхиляти явно. Activity отримувати за explicit execution turn ID.
+- [x] Прогнати DialogueLifecycleIT та існуючі manual/cancellation/context/recovery tests; перевірити zero duplicate downstream activations.
+- [x] Закомітити green.
 
 ## Task 6: Agent API й типізоване проксі Nexus
 

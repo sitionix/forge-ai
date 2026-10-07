@@ -77,7 +77,7 @@ class ForgeAgentDialogueCommandsIT extends com.sitionix.forgeagent.it.infra.Agen
         new TransactionTemplate(txManager).executeWithoutResult(status -> {
             var turn = queuedSummary.activeTurn().id();
             dialogues.appendRevision(new DialogueRevision(revisionId,node.id(),waitingRevision+1,turn,
-                    DialogueTurnKind.SUMMARY, waitingRevision,"{}",Instant.now()));
+                    DialogueTurnKind.SUMMARY, queuedSummary.activeTurn().inputRevision(),"{}",Instant.now()));
             dialogues.updateState(node.id(),DialogueState.AWAITING_REVIEW,waitingRevision+1,revisionId);
         });
         var summary = commands.get(node.workflowRunId(),node.id());

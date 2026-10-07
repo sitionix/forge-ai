@@ -27,6 +27,9 @@ public class DialogueCommands {
     private final DialogueInvocationLock locks;
     private final DialogueCommandValidation validation;
     private final Clock clock;
+    private final DialogueCompletionPolicy completionPolicy;
+    private final DialogueTranscript transcript;
+    private final com.sitionix.forgeagent.domain.port.WorkflowRunGraphRepository graphs;
 
     public DialogueSnapshot get(final UUID runId, final UUID nodeRunId) {
         this.requireOwner(runId,nodeRunId);
@@ -67,6 +70,40 @@ public class DialogueCommands {
     public DialogueSnapshot summarize(final UUID runId, final UUID nodeRunId, final UUID requestId,
                                       final long expectedRevision) {
         return this.command(runId,nodeRunId,requestId,expectedRevision,DialogueTurnKind.SUMMARY,null);
+    }
+
+    @Transactional
+    public DialogueSnapshot complete(final UUID runId, final UUID nodeRunId, final UUID requestId,
+                                     final long expectedRevision, final UUID summaryRevisionId, final UUID outputPortId) {
+        validation.command(requestId,expectedRevision);
+        final var target = locks.lock(runId,nodeRunId);
+        final var snapshot = dialogues.lock(nodeRunId);
+        final String fingerprint = validation.fingerprint("COMPLETE",expectedRevision,summaryRevisionId + ":" + outputPortId);
+        if (this.replayed(nodeRunId,requestId,fingerprint)) return snapshot;
+        DialogueInvocationLock.requireActive(target);
+        this.requireRevision(snapshot,expectedRevision);
+        if (target.node().status() != NodeRunStatus.WAITING_FOR_DIALOGUE) {
+            throw new ConflictException("DIALOGUE_TURN_IN_PROGRESS", "Wait for the current dialogue turn to finish.");
+        }
+        if (outputPortId == null) throw new ValidationException("INVALID_DIALOGUE_OUTPUT", "A Dialogue output is required.");
+        final var port = graphs.findPort(runId,outputPortId)
+                .filter(p -> p.sourceNodeId().equals(target.node().sourceNodeId()) && p.direction() == PortDirection.OUTPUT
+                        && p.dialogueDisposition() != null)
+                .orElseThrow(() -> new ValidationException("INVALID_DIALOGUE_OUTPUT", "The output does not belong to this snapshotted Dialogue node."));
+        final var reply = completionPolicy.validate(target.node().agentOutputSchema(),snapshot,summaryRevisionId,
+                port.dialogueDisposition(),transcript.userMessageIds(nodeRunId));
+        final Instant now = Instant.now(clock);
+        final var completion = new DialogueCompletion(nodeRunId,requestId,summaryRevisionId,outputPortId,
+                port.dialogueDisposition(),snapshot.revision()+1,now);
+        if (!sessions.closeDialogueSession(nodeRunId,AgentExecutionTerminalOutcome.SUCCEEDED)) {
+            throw new ConflictException("DIALOGUE_SESSION_BUSY", "The dialogue session could not be closed safely.");
+        }
+        dialogues.complete(completion);
+        dialogues.recordCommand(new DialogueCommand(nodeRunId,requestId,"COMPLETE",fingerprint,now));
+        dialogues.updateState(nodeRunId,DialogueState.COMPLETED,completion.revision(),summaryRevisionId);
+        nodes.saveAndFlush(DialogueNodeTransitions.node(target.node(),NodeRunStatus.SUCCEEDED,now,
+                completionPolicy.output(reply,completion,snapshot.latestRevision().revision(),runId),null,outputPortId));
+        return dialogues.lock(nodeRunId);
     }
 
     private DialogueSnapshot command(final UUID runId, final UUID nodeRunId, final UUID requestId,

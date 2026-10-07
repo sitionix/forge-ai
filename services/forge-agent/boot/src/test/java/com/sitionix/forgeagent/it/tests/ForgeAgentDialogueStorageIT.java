@@ -126,7 +126,7 @@ class ForgeAgentDialogueStorageIT extends com.sitionix.forgeagent.it.infra.Agent
     }
 
     private DialogueTurn queued(NodeRun node, DialogueTurnKind kind, long revision) {
-        return new DialogueTurn(UUID.randomUUID(), node.id(), kind, null, null, revision,
+        return new DialogueTurn(UUID.randomUUID(), node.id(), kind, kind==DialogueTurnKind.INITIAL ? null : UUID.randomUUID(), null, revision,
                 DialogueTurnStatus.QUEUED, null, null, null, null, Instant.now(), null);
     }
 

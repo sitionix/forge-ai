@@ -22,6 +22,9 @@ public class ResetAgentExecutionContextUseCase {
     public List<AgentExecutionAllocation> execute(final UUID sessionId) {
         // Read immutable identity first; match allocator order: scope advisory lock -> session row.
         final AgentExecutionSession identity = this.sessions.findSession(sessionId).orElseThrow(() -> missing(sessionId));
+        if (identity.contextMode() == NodeContextMode.DIALOGUE_WITHIN_NODE_RUN) {
+            throw new ConflictException(AgentContextResetEligibility.NOT_ALLOWED,"Dialogue contexts cannot be reset.");
+        }
         if (identity.contextMode() == NodeContextMode.SHARED_SESSION_GROUP) {
             this.sessions.lockSharedScope(identity.workflowRunId(), identity.contextIterationId(), identity.contextGroupKey(), identity.repositoryId());
         } else {
