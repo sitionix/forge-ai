@@ -67,7 +67,7 @@ Downstream agents consume this envelope through existing input contributions. Co
 
 Defaults: `forge.agent.dialogue.max-dialogue-turns-per-node-run=100`, `forge.agent.dialogue.max-message-code-points=16000`, `forge.agent.dialogue.max-initial-input-code-points=128000`. INITIAL and SUMMARY consume the same turn budget as CHAT. Reserve a turn for the final summary. Empty or whitespace-only replies are rejected; emoji count as Unicode code points and newlines are preserved.
 
-Provider execution reuses the existing Codex client, session callbacks, heartbeat, workspace resolver and MCP gateway. Each turn evaluates current project/tool permissions and receives a new grant. No grant remains between replies. Stopping a workflow cancels/fences active execution and keeps its transcript; queued and waiting dialogue need no provider cancellation handle.
+Provider execution reuses the existing Codex client, session callbacks, heartbeat, workspace resolver and MCP gateway. Durable sessions accept the audited Codex CLI versions 0.157.0, 0.160.0 and 0.160.1; an unknown version or a version change inside a session is rejected. Each turn evaluates current project/tool permissions and receives a new grant. No grant remains between replies. Stopping a workflow cancels/fences active execution and keeps its transcript; queued and waiting dialogue need no provider cancellation handle.
 
 A restart preserves waiting history and queued commands. A provider dispatch with uncertain completion is conservatively failed and is never replayed automatically or moved to a fresh conversation. A late callback cannot change a cancelled, failed or newer revision.
 

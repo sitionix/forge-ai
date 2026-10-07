@@ -640,7 +640,7 @@ class CodexAppServerTurnClientTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"0.157.0", "0.160.0"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"0.157.0", "0.160.0", "0.160.1"})
     void durableExecutionPersistsThreadBeforeTurnStartAndTurnBeforeNotifications(String version) throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
@@ -744,7 +744,7 @@ class CodexAppServerTurnClientTest {
         this.readRequest(process);
 
         assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
-                .hasRootCauseMessage("Codex durable context requires audited CLI versions 0.157.0, 0.160.0; found 0.155.0");
+                .hasRootCauseMessage("Codex durable context requires audited CLI versions 0.157.0, 0.160.0, 0.160.1; found 0.155.0");
         assertThat(process.pendingClientRequestBytes()).isZero();
         client.close();
     }

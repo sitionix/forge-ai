@@ -12,7 +12,7 @@ Console підтримує створення ноди, переписку, іс
 
 - Console: **752/752**, 39 файлів; TypeScript typecheck і production build пройшли.
 - Фокусовані інтеграційні тести Agent/Nexus та mapper після останніх виправлень: Maven BUILD SUCCESS.
-- Повний фінальний Maven verify: **BUILD SUCCESS**. Agent — **1711 tests: 1700 passed, 11 skipped, 0 failures/errors**; Nexus — **393/393**. Прогін включає unit та integration suites і фінальну збірку.
+- Повний фінальний Maven verify: **BUILD SUCCESS**. Agent — **1713 tests: 1702 passed, 11 skipped, 0 failures/errors**; Nexus — **393/393**. Прогін включає unit та integration suites і фінальну збірку.
 - Flow integration: INITIAL → CHAT → CHAT → SUMMARY → ACCEPT/DEFER; той самий conversation, різні turns, точний downstream envelope; REWORK створює нову ноду/сесію, повтор старого completion не повторює маршрутизацію.
 - Restart integration: очікування відповіді, queued CHAT, expired active turn з пізнім callback та незавершена маршрутизація completion переживають реальний перезапуск Spring application із тією самою БД.
 - Migration integration: V43 → V46 зберігає старі Manual nodes/ports/context. Legacy migration assertions перевіряють усі історичні значення й окремо дозволяють тільки навмисно додану nullable Dialogue binding.
@@ -52,3 +52,15 @@ Console підтримує створення ноди, переписку, іс
 - Повний initial input не виводиться безпосередньо в Dialogue panel; його треба дивитись у task/upstream nodes.
 
 Attachments, streaming та синхронізація Notion board залишаються окремими задачами, як визначено в дизайні.
+
+## Codex runtime compatibility
+
+Живий smoke виявив, що чинний allowlist збережених сесій не включав встановлений CLI `0.160.1`. Додано тільки цю конкретну версію після RED → GREEN регресій. Два opt-in тести на справжньому `0.160.1` пройшли: новий процес відновлює conversation та пам’ятає попередній факт; recovery читає точний завершений turn без thread/start, thread/resume чи turn/start. Невідомі версії й зміна версії між ходами лишаються заборонені.
+
+Протокол звірено з [офіційною документацією Codex App Server](https://learn.chatgpt.com/docs/app-server); сумісність конкретного встановленого CLI підтверджена локальними native тестами.
+
+Команда аудиту: `mvn -B -pl services/forge-agent/infrastructure/codex -am test -Dtest=CodexAppServerTurnClientTest,CodexRecoveryInspectorTest,CodexDurableSessionE2ETest,CodexRecoveryE2ETest -Dsurefire.failIfNoSpecifiedTests=false -Dforge.codex.live-session-e2e=true -Dforge.codex.live-recovery-e2e=true -Dforge.codex.live-model=gpt-6.1-sol`.
+
+Smoke потребує selected/cloned repository за чинним task/workspace контрактом. Використано окремий публічний octocat/Hello-World checkout через звичайний API; робочі репозиторії Ancestor та MCP permissions не змінені.
+
+Повторний повний Agent verify після додавання CLI 0.160.1: BUILD SUCCESS, 1713 tests / 0 failures / 0 errors / 11 skipped. Команда: `mvn -B -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`. Повний попередній Agent/Nexus прогін: `mvn -B -Dapi.version=1.44 -pl services/forge-agent/boot,services/forge-nexus/boot -am verify`.

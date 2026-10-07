@@ -68,7 +68,7 @@ class CodexRecoveryE2ETest {
             executionClient.close();
         }
 
-        assertThat(version.get()).isIn("0.157.0", "0.160.0");
+        assertThat(version.get()).isIn("0.157.0", "0.160.0", "0.160.1");
         assertThat(threadId.get()).isNotBlank();
         assertThat(turnId.get()).isNotBlank();
 
