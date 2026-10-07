@@ -68,3 +68,19 @@ Smoke потребує selected/cloned repository за чинним task/workspa
 Живий provider також виявив несумісний `uniqueItems` у внутрішньому Dialogue envelope. Provider schema прибирає тільки цей keyword; серверна схема зберігає його й відхиляє повтори `userMessageIds`. Бізнес-схема агента не послаблюється. RED → GREEN regression і opt-in `CodexDialogueReplySchemaE2ETest` на справжньому gpt-6.1-sol пройшли. Обмеження provider schema звірені з [офіційною документацією Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
 
 Остаточний повний Agent verify після provider schema виправлення: BUILD SUCCESS, 1715 tests / 0 failures / 0 errors / 12 skipped. Native schema тест запускався окремо з `-Dforge.codex.live-dialogue-e2e=true`; у звичайному suite він пропущений разом із іншими opt-in live тестами.
+
+## Живий наскрізний сценарій — PASS
+
+На фінальній перезапущеній збірці через звичайний Nexus API та containerized Codex runtime виконано INITIAL → CHAT → CHAT → SUMMARY → ACCEPT → downstream reviewer. Workflow завершився SUCCEEDED.
+
+- Project: `57893171-9a4e-488b-806b-9db59c14bd25` — Dialogue verification 2026-10-07 b8e6da53.
+- Task: `628ad171-04ec-4610-be9a-990ed52974be`.
+- Run: `0d89d180-b740-45ba-8fe9-76e7dfd6dd8f`.
+- Dialogue NodeRun: `fb5578f5-99ef-474f-95ae-0474d0e79d71`.
+- Provider: Codex CLI `0.160.1`, gpt-6.1-sol / medium.
+- Conversation: `01a11640-b6da-7310-8ee8-4d0bc0592557` — одна для всіх 4 ходів.
+- Summary: `4869db59-4b79-48f3-97a8-65524c6fcddd`, summary revision `12`; completion revision `13`.
+
+Скрипт перевірив 4 різні provider turn IDs, одну provider conversation, закриту сесію після completion, збережений transcript та успішний повтор completion з тим самим requestId. Downstream reviewer повернув acceptedSummary, disposition, summaryRevisionId і sourceNodeRunId; кожне поле звірене на точну рівність із прийнятим підсумком і snapshot.
+
+Перегляд у [локальному Console](http://127.0.0.1:9099/fgaisox/operator/agent-projects.html): обрати цей тестовий проєкт і задачу Live dialogue verification. Тестові проєкт/задача залишені для перегляду історії.

@@ -192,13 +192,13 @@
 
 **Interfaces:** Реальний persisted graph upstream → Dialogue → reviewer; deterministic executor тільки на provider boundary. Live verification окремо доводить native conversation resume, інструменти й exact downstream payload.
 
-- [ ] Написати failing E2E IT на два CHAT turns, summary invalidation, ACCEPT exact revision, REWORK/DEFER, loop reactivation isolation, restart і cancellation.
-- [ ] Прогнати RED; виправлення робити в owning компоненті з regression test, не в test fixture.
-- [ ] Запустити focused E2E IT, потім `scripts/test.sh`, `scripts/typecheck.sh`, `scripts/lint.sh`; перевірити звіти й явно записати будь-які unrelated failures.
-- [ ] Зібрати й запустити проєкт штатним `just start`; якщо потрібна sudo authentication, дати користувачу ввести пароль у локальному терміналі.
-- [ ] У тестовому проєкті запустити live INITIAL → CHAT → CHAT → SUMMARY → ACCEPT; перевірити conversation ID незмінний, turn IDs різні, transcript збережений і reviewer отримує exact accepted result. Не вмикати нових MCP permissions заради smoke test.
-- [ ] Перевірити migration старої БД на disposable fixture; production data не використовувати для destructive tests.
-- [ ] Записати фактичні test counts/commands/live evidence і обмеження у verification doc. Провести whole-branch review до оголошення завершення; PR не створювати без окремого запиту.
+- [x] Написати failing E2E IT на два CHAT turns, summary invalidation, ACCEPT exact revision, REWORK/DEFER, loop reactivation isolation, restart і cancellation.
+- [x] Прогнати RED; виправлення робити в owning компоненті з regression test, не в test fixture.
+- [x] Запустити focused E2E IT, потім `scripts/test.sh`, `scripts/typecheck.sh`, `scripts/lint.sh`; перевірити звіти й явно записати будь-які unrelated failures.
+- [x] Зібрати й запустити проєкт штатним `just start`; якщо потрібна sudo authentication, дати користувачу ввести пароль у локальному терміналі.
+- [x] У тестовому проєкті запустити live INITIAL → CHAT → CHAT → SUMMARY → ACCEPT; перевірити conversation ID незмінний, turn IDs різні, transcript збережений і reviewer отримує exact accepted result. Не вмикати нових MCP permissions заради smoke test.
+- [x] Перевірити migration старої БД на disposable fixture; production data не використовувати для destructive tests.
+- [x] Записати фактичні test counts/commands/live evidence і обмеження у verification doc. Провести whole-branch review до оголошення завершення; PR не створювати без окремого запиту.
 
 ## Plan Self-Review
 
@@ -209,3 +209,7 @@
 - Task 8 покриває реальний graph, upgrade, регресії та відмінність mock/live verification.
 - Усі п'ять Review Focus сценаріїв мають owning tests.
 - Метод виконання рекомендується Native: tasks послідовно змінюють спільні session/turn та API контракти. До реалізації потрібен перегляд цього плану; якщо обрано Subagent-driven, делегування виконується лише після такого вибору користувачем.
+
+## Final verification
+
+Усі 8 задач завершені. Фактичні counts, native smoke IDs, review fixes, архітектурні рішення та deferred minors: [dialogue-node-verification.md](../../dialogue-node-verification.md). Task 8 інтегрує компоненти, вже перевірені RED → GREEN у Tasks 1–7; додаткові native compatibility/schema регресії та final review fixes також пройшли RED → GREEN. Загальні Knowledge failures явно зафіксовані й не приховані.
