@@ -1,7 +1,7 @@
 export interface DialogueViewOptions {
   runId: string;
   nodeRunId: string;
-  ports: Array<{ sourcePortId: string; name: string; dialogueDisposition: 'ACCEPT' | 'REWORK' | 'DEFER' }>;
+  ports: Array<{ sourcePortId: string; name: string; description?: string; dialogueDisposition: 'ACCEPT' | 'REWORK' | 'DEFER' }>;
   readOnly?: boolean;
   onChange?: (state: any) => void;
 }
@@ -13,5 +13,6 @@ export class DialogueView {
   send(): Promise<void>;
   summarize(): Promise<void>;
   complete(outputPortId: string): Promise<void>;
+  confirmCompletion(): Promise<void>;
   retry(): Promise<void>;
 }

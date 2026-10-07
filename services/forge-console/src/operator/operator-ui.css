@@ -6210,3 +6210,11 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .dialogue-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .dialogue-palette-row { opacity: .88; }
 @media (max-width: 600px) { .dialogue-message-user { margin-left: 12px; } .dialogue-actions .button { flex: 1 1 160px; } }
+
+.dialogue-confirmation:empty { display: none; }
+.dialogue-confirmation { border: 2px solid var(--accent); padding: 12px; border-radius: 10px; }
+.dialogue-confirmation pre { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dialogue-confirmation p, .dialogue-completion dd { overflow-wrap: anywhere; }
+.dialogue-completion { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; font-size: 12px; }
+.dialogue-completion dd { margin: 0; }
+.dialogue-outcome-description { width: 100%; color: var(--muted); }

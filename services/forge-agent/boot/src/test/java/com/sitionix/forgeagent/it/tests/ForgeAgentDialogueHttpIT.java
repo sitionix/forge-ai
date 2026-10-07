@@ -41,6 +41,9 @@ class ForgeAgentDialogueHttpIT extends com.sitionix.forgeagent.it.infra.AgentMan
         commands.initialize(node.id());
         executeCurrent(node);
         String uri = uri(node);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/workflow-runs/"+node.workflowRunId()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.runtimeGraph.ports[?(@.dialogueDisposition == 'ACCEPT')].description")
+                        .value(org.hamcrest.Matchers.hasItem("Reviewed result")));
         var response = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(uri))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.state").value("AWAITING_REPLY"))

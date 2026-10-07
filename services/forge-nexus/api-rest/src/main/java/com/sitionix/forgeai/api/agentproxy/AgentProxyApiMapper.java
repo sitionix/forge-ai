@@ -532,6 +532,7 @@ public class AgentProxyApiMapper {
                 port.sourceNodeId(),
                 port.direction(),
                 port.name(),
+                port.description(),
                 port.order(), port.dialogueDisposition()
         );
     }

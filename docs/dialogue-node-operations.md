@@ -72,3 +72,9 @@ Provider execution reuses the existing Codex client, session callbacks, heartbea
 A restart preserves waiting history and queued commands. A provider dispatch with uncertain completion is conservatively failed and is never replayed automatically or moved to a fresh conversation. A late callback cannot change a cancelled, failed or newer revision.
 
 This first version has polling, text messages and explicit outcomes. Attachments, token streaming and Notion board synchronization are separate work.
+
+## Reviewing in Console
+
+Prepare summary creates a version that can be reviewed. Choosing an outcome opens an inline confirmation showing the exact draft, output name, description and disposition. Confirm outcome submits that version; if polling receives a newer revision, the confirmation is invalidated and must be opened again. Completed nodes show the final draft, chosen output, summary revision and completion time after reload.
+
+The activity selector switches between persisted provider turns and keeps the selected turn during polling. Conversation messages remain in the Dialogue panel; provider events for the selected turn appear in Agent activity.

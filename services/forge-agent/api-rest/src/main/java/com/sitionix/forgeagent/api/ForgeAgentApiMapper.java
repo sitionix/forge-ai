@@ -436,6 +436,7 @@ class ForgeAgentApiMapper {
                 port.sourceNodeId(),
                 port.direction(),
                 port.name(),
+                port.dialogueDisposition() == null ? null : port.description(),
                 port.order(), port.dialogueDisposition()
         );
     }

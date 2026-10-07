@@ -35,6 +35,8 @@ export class DialogueView {
     this.options = options;
     this.local = this.sessions.get(key) || { draft: '', pending: null };
     this.sessions.set(key, this.local);
+    this.confirmation = null;
+    this.confirmationMarkup = null;
     this.state = null;
     this.error = '';
     this.busy = false;
@@ -44,6 +46,7 @@ export class DialogueView {
       <p data-dialogue-error role="alert" class="dialogue-error"></p>
       <div data-dialogue-transcript class="dialogue-transcript" aria-label="Conversation history"></div>
       <section data-dialogue-review class="dialogue-review"></section>
+      <section data-dialogue-confirmation class="dialogue-confirmation" aria-label="Confirm outcome"></section>
       <label class="field-label" for="dialogue-reply">Your reply</label>
       <textarea id="dialogue-reply" data-dialogue-text class="text-input dialogue-composer" rows="4" aria-describedby="dialogue-help" disabled></textarea>
       <p id="dialogue-help" class="field-hint">Enter adds a line. Ctrl+Enter or ⌘+Enter sends. Up to 16,000 characters.</p>
@@ -123,18 +126,36 @@ export class DialogueView {
   }
 
   async send() {
-    if (!this.editable() || !this.withinBudget()) return;
+    if (!this.editable() || !this.withinBudget() || this.confirmation) return;
     const text = this.host.querySelector('[data-dialogue-text]').value;
     this.local.draft = text;
     if (!text.trim() || [...text].length > 16000) { this.error = 'Reply must contain 1–16,000 characters.'; this.render(); return; }
     await this.command('sendDialogueMessage', { text });
   }
   async summarize() {
-    if (this.editable() && this.withinBudget()) await this.command('summarizeDialogue', {});
+    if (this.editable() && this.withinBudget() && !this.confirmation) await this.command('summarizeDialogue', {});
   }
   async complete(outputPortId) {
     const port = this.options.ports.find(item => item.sourcePortId === outputPortId);
-    if (this.canComplete(port)) await this.command('completeDialogue', { summaryRevisionId: this.state.summaryRevisionId, outputPortId });
+    if (!this.canComplete(port)) return;
+    this.confirmation = { outputPortId, summaryRevisionId: this.state.summaryRevisionId, expectedRevision: this.state.revision,
+      name: port.name || LABELS[port.dialogueDisposition], description: port.description || '', disposition: port.dialogueDisposition,
+      draft: JSON.stringify(this.state.latestRevision.result.draft, null, 2) };
+    this.render();
+    this.host.querySelector('[data-dialogue-confirm]')?.focus();
+  }
+  async confirmCompletion() {
+    const confirmation = this.confirmation;
+    if (!confirmation) return;
+    const port = this.options.ports.find(item => item.sourcePortId === confirmation.outputPortId);
+    if (!this.canComplete(port) || confirmation.expectedRevision !== this.state.revision || confirmation.summaryRevisionId !== this.state.summaryRevisionId) {
+      this.confirmation = null;
+      this.error = 'The summary changed. Review the current version and choose an outcome again.';
+      this.render();
+      return;
+    }
+    this.confirmation = null;
+    await this.command('completeDialogue', { expectedRevision: confirmation.expectedRevision, summaryRevisionId: confirmation.summaryRevisionId, outputPortId: confirmation.outputPortId });
   }
   async retry() {
     if (!this.busy && this.local?.pending && !this.options.readOnly) await this.dispatch();
@@ -180,6 +201,11 @@ export class DialogueView {
   render() {
     if (!this.host) return;
     const state = this.state;
+    if (this.confirmation && (this.options.readOnly || this.confirmation.expectedRevision !== state?.revision
+      || this.confirmation.summaryRevisionId !== state?.summaryRevisionId || !this.currentSummary())) {
+      this.confirmation = null;
+      this.error = 'The summary changed. Review the current version and choose an outcome again.';
+    }
     this.host.querySelector('[data-dialogue-status]').textContent = state
       ? `${state.state.replaceAll('_', ' ')} · ${state.turnCount}/${state.maxTurns} turns` : 'Loading…';
     this.host.querySelector('[data-dialogue-error]').textContent = this.error;
@@ -196,17 +222,32 @@ export class DialogueView {
     }
     const reply = state?.latestRevision?.result;
     const review = this.host.querySelector('[data-dialogue-review]');
-    const reviewMarkup = reply ? `<h4>${this.currentSummary() ? 'Current summary' : 'Working draft'}</h4>
+    const completed = state?.completion;
+    const completedPort = this.options.ports.find(port => port.sourcePortId === completed?.outputPortId);
+    const reviewMarkup = reply ? `<h4>${completed ? 'Completed summary' : this.currentSummary() ? 'Current summary' : 'Working draft'}</h4>
+      ${completed ? `<dl class="dialogue-completion"><dt>Outcome</dt><dd>${escapeHtml(completedPort?.name || completed.disposition)} · ${escapeHtml(completed.disposition)}</dd><dt>Summary revision</dt><dd>${escapeHtml(completed.summaryRevisionId)}</dd><dt>Completed</dt><dd>${escapeHtml(completed.completedAt)}</dd></dl>` : ''}
       ${(reply.questions || []).length ? `<h4>Open questions</h4><ul>${reply.questions.map(question => `<li><strong>${escapeHtml(question.text)}</strong>${question.blocking ? ' · Required' : ''}<p>${escapeHtml(question.reason)}</p>${question.recommendation ? `<p>${escapeHtml(question.recommendation)}</p>` : ''}</li>`).join('')}</ul>` : ''}
       ${reply.draft == null ? '<p>No draft yet.</p>' : `<pre>${escapeHtml(JSON.stringify(reply.draft, null, 2))}</pre>`}
       ${(reply.decisions || []).length ? `<h4>Decisions</h4><ul>${reply.decisions.map(decision => `<li>${escapeHtml(decision.text)}</li>`).join('')}</ul>` : ''}
       ${(reply.sources || []).length ? `<h4>Sources</h4><ul>${reply.sources.map(source => `<li>${sourceLink(source)}${source.revision ? ` · ${escapeHtml(source.revision)}` : ''}</li>`).join('')}</ul>` : ''}` : '';
     if (this.reviewMarkup !== reviewMarkup) { this.reviewMarkup = reviewMarkup; review.innerHTML = reviewMarkup; }
-    this.host.querySelector('[data-dialogue-text]').disabled = !this.editable() || !this.withinBudget();
+    const confirmation = this.confirmation;
+    const confirmationMarkup = confirmation ? `<h4>Confirm ${escapeHtml(confirmation.name)}</h4><p>${escapeHtml(confirmation.description)}</p>
+      <p>${escapeHtml(confirmation.disposition)} · Revision ${confirmation.expectedRevision} · ${escapeHtml(confirmation.summaryRevisionId)}</p>
+      <pre>${escapeHtml(confirmation.draft)}</pre><button type="button" class="button small" data-dialogue-confirm>Confirm outcome</button>
+      <button type="button" class="button small secondary" data-dialogue-confirm-cancel>Keep discussing</button>` : '';
+    if (this.confirmationMarkup !== confirmationMarkup) {
+      this.confirmationMarkup = confirmationMarkup;
+      const section = this.host.querySelector('[data-dialogue-confirmation]');
+      section.innerHTML = confirmationMarkup;
+      section.querySelector('[data-dialogue-confirm]')?.addEventListener('click', () => void this.confirmCompletion());
+      section.querySelector('[data-dialogue-confirm-cancel]')?.addEventListener('click', () => { this.confirmation = null; this.render(); this.host.querySelector('[data-dialogue-text]')?.focus(); });
+    }
+    this.host.querySelector('[data-dialogue-text]').disabled = !this.editable() || !this.withinBudget() || Boolean(confirmation);
     const actions = this.host.querySelector('[data-dialogue-actions]');
-    const buttons = `<button type="button" class="button small" data-dialogue-send ${!this.editable() || !this.withinBudget() ? 'disabled' : ''}>Send reply</button>
-      <button type="button" class="button small secondary" data-dialogue-summary ${!this.editable() || !this.withinBudget() ? 'disabled' : ''}>Prepare summary</button>
-      ${this.options.ports.map(port => `<button type="button" class="button small secondary" data-dialogue-complete="${escapeHtml(port.sourcePortId)}" ${!this.canComplete(port) ? 'disabled' : ''}>${escapeHtml(LABELS[port.dialogueDisposition] || port.name)}</button>`).join('')}
+    const buttons = `<button type="button" class="button small" data-dialogue-send ${!this.editable() || !this.withinBudget() || confirmation ? 'disabled' : ''}>Send reply</button>
+      <button type="button" class="button small secondary" data-dialogue-summary ${!this.editable() || !this.withinBudget() || confirmation ? 'disabled' : ''}>Prepare summary</button>
+      ${this.options.ports.map(port => `<button type="button" class="button small secondary" data-dialogue-complete="${escapeHtml(port.sourcePortId)}" ${!this.canComplete(port) ? 'disabled' : ''}>${escapeHtml(port.name || LABELS[port.dialogueDisposition])} · ${escapeHtml(port.dialogueDisposition)}</button>${port.description ? `<small class="dialogue-outcome-description">${escapeHtml(port.description)}</small>` : ''}`).join('')}
       ${this.local.pending ? `<button type="button" class="button small secondary" data-dialogue-retry ${this.busy || this.options.readOnly ? 'disabled' : ''}>Retry request</button>` : ''}`;
     if (this.actionsMarkup !== buttons) {
       this.actionsMarkup = buttons;

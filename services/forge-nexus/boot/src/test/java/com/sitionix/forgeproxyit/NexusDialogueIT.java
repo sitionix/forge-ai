@@ -86,6 +86,22 @@ class NexusDialogueIT {
         UPSTREAM.verify(postRequestedFor(urlEqualTo(PATH+"/complete")).withRequestBody(equalToJson(complete)));
     }
 
+    @Test void runtimeSnapshotPreservesDialogueBusinessLabelsAndDescriptions() throws Exception {
+        var input = getClass().getResourceAsStream("/forge-it/wiremock/default/response/agent-working-run-response.json");
+        var upstream = (com.fasterxml.jackson.databind.node.ObjectNode)json.readTree(input);
+        for (var port : upstream.path("runtimeGraph").path("ports")) {
+            if (port.path("direction").asText().equals("OUTPUT")) {
+                ((com.fasterxml.jackson.databind.node.ObjectNode)port).put("name","Publish approved proposal")
+                        .put("description","Send this exact task to the implementer").put("dialogueDisposition","ACCEPT");
+            }
+        }
+        UPSTREAM.stubFor(com.github.tomakehurst.wiremock.client.WireMock.get(urlEqualTo("/api/v1/workflow-runs/"+RUN)).willReturn(okJson(upstream.toString())));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/infrastructure/agents/workflow-runs/"+RUN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.runtimeGraph.ports[?(@.dialogueDisposition == 'ACCEPT')].description")
+                        .value(org.hamcrest.Matchers.hasItem("Send this exact task to the implementer")));
+    }
+
     @Test void conflictsAndValidationDoNotLoseTheirCodes() throws Exception {
         String body = json.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("expectedRevision",3).toString();
         UPSTREAM.stubFor(com.github.tomakehurst.wiremock.client.WireMock.post(urlEqualTo(PATH+"/summary"))

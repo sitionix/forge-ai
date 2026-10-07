@@ -667,6 +667,7 @@ export class TaskExecutionView {
     this.activityLoadSequence = 0;
     this.activityPollTimer = null;
     this.activityIdentity = null;
+    this.dialogueActivityTurns = new Map();
     this.pollTimer = null;
     this.pollInFlight = null;
     this.canvasPan = null;
@@ -1497,12 +1498,14 @@ export class TaskExecutionView {
     const context = this.contextForNodeRun(nodeRun.id);
     if (panel.dataset.dialogueNodeRun !== identity) {
       panel.dataset.dialogueNodeRun = identity;
-      panel.innerHTML = `${this.renderInvocationSelector()}<div data-dialogue-host></div>${this.renderActivity(nodeRun, context)}`;
+      panel.innerHTML = `${this.renderInvocationSelector()}<div data-dialogue-host></div><div data-dialogue-activity-selector></div>${this.renderActivity(nodeRun, context)}`;
       panel.querySelector('[data-node-run-invocation-select]')?.addEventListener('change', event => this.selectNodeRun(event.target.value));
       this.bindActivityControls();
     } else if (panel.querySelector('.node-run-activity')?.dataset.activityGeneration !== String(this.activityLoadSequence)) {
-      this.renderSelectedActivity();
+      panel.querySelector('.node-run-activity').outerHTML = this.renderActivity(nodeRun, context);
+      this.bindActivityControls();
     }
+    this.renderDialogueActivitySelector(nodeRun, panel);
     const latest = this.latestNodeRunForUnit(nodeRun.sourceNodeId, nodeRun.repositoryId, this.state.workflowRun?.nodeRuns || []);
     void this.dialogueView.open(panel.querySelector('[data-dialogue-host]'), {
       runId: this.state.selectedRunId, nodeRunId: nodeRun.id, ports: this.manualOutputPorts(nodeRun),
@@ -1510,6 +1513,25 @@ export class TaskExecutionView {
         || this.state.cancellationInFlight || this.state.workflowRun?.operatorStopStatus === 'STOPPING',
       onChange: () => { if (this.opened) void this.pollSelectedRun(); }
     });
+  }
+
+  renderDialogueActivitySelector(nodeRun, panel) {
+    const contexts = (this.state.agentExecutionContexts || []).filter(context => context.nodeRunId === nodeRun.id)
+      .sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0));
+    const context = this.contextForNodeRun(nodeRun.id);
+    const host = panel.querySelector('[data-dialogue-activity-selector]');
+    const signature = contexts.map(turn => `${turn.turnId}/${turn.sequence}/${turn.turnStatus}`).join(',');
+    if (host.dataset.turns !== signature) {
+      host.dataset.turns = signature;
+      host.innerHTML = `<label class="field-label">Agent activity turn<select class="text-input" data-dialogue-activity-turn>${contexts.map(turn => `<option value="${escapeHtml(turn.turnId)}">Turn ${turn.sequence} · ${escapeHtml(turn.turnStatus || '')}</option>`).join('')}</select></label>`;
+      host.querySelector('[data-dialogue-activity-turn]').addEventListener('change', event => {
+        this.dialogueActivityTurns.set(`${this.state.selectedRunId}/${nodeRun.id}`, event.target.value);
+        this.syncSelectedActivity();
+        panel.querySelector('.node-run-activity').outerHTML = this.renderActivity(nodeRun, this.contextForNodeRun(nodeRun.id));
+        this.bindActivityControls();
+      });
+    }
+    host.querySelector('[data-dialogue-activity-turn]').value = context?.turnId || '';
   }
 
   manualOutputPorts(nodeRun) {
@@ -1756,8 +1778,10 @@ export class TaskExecutionView {
   }
 
   contextForNodeRun(nodeRunId) {
-    return (this.state.agentExecutionContexts || []).filter(context => context.nodeRunId === nodeRunId)
-      .sort((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0))[0] || null;
+    const contexts = (this.state.agentExecutionContexts || []).filter(context => context.nodeRunId === nodeRunId);
+    const selected = this.dialogueActivityTurns.get(`${this.state.selectedRunId}/${nodeRunId}`);
+    return contexts.find(context => context.turnId === selected)
+      || contexts.sort((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0))[0] || null;
   }
 
   hasMatchingIterationContext(nodeRun, context) {

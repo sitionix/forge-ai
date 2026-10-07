@@ -9,6 +9,8 @@ public record RunPortResponse(
         UUID sourceNodeId,
         PortDirection direction,
         String name,
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        String description,
         int order,
         DialogueOutputDisposition dialogueDisposition
 ) {
@@ -16,5 +18,9 @@ public record RunPortResponse(
         UUID sourceNodeId,
         PortDirection direction,
         String name,
-        int order) { this(sourcePortId, sourceNodeId, direction, name, order, null); }
+        int order) { this(sourcePortId, sourceNodeId, direction, name, null, order, null); }
+    public RunPortResponse(UUID sourcePortId, UUID sourceNodeId, PortDirection direction,
+            String name, int order, DialogueOutputDisposition dialogueDisposition) {
+        this(sourcePortId, sourceNodeId, direction, name, null, order, dialogueDisposition);
+    }
 }

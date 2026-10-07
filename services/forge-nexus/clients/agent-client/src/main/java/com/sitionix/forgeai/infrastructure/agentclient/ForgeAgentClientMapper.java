@@ -506,6 +506,7 @@ public class ForgeAgentClientMapper {
                 response.sourceNodeId(),
                 response.direction(),
                 response.name(),
+                response.description(),
                 response.order(), response.dialogueDisposition()
         );
     }

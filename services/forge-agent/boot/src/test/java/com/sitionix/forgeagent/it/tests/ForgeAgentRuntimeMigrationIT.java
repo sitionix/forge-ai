@@ -447,7 +447,8 @@ class ForgeAgentRuntimeMigrationIT extends com.sitionix.forgeagent.it.infra.Agen
             final var retiredSession = jdbc.queryForMap("SELECT * FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), sessionId);
             assertThat(retiredSession).containsAllEntriesOf(historicalSession);
             assertThat(retiredSession.get("context_reset_at")).isNotNull();
-            assertThat(jdbc.queryForMap("SELECT * FROM %s.agent_execution_turns WHERE id=?".formatted(schema), turnId)).isEqualTo(historicalTurn);
+            assertThat(jdbc.queryForMap("SELECT * FROM %s.agent_execution_turns WHERE id=?".formatted(schema), turnId))
+                    .containsAllEntriesOf(historicalTurn).containsEntry("dialogue_turn_id", null);
             assertThat(jdbc.queryForMap("SELECT context_reset_at, provider_conversation_id FROM %s.agent_execution_sessions WHERE id=?".formatted(schema), replacementId))
                     .containsEntry("context_reset_at", null).containsEntry("provider_conversation_id", null);
             assertThatThrownBy(() -> this.insertReusableSessionCopy(jdbc, schema, sessionId, UUID.randomUUID(), repositoryId))
