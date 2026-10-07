@@ -4,7 +4,9 @@
 
 ## Мета та погоджений напрям
 
-Додати окрему ноду `DIALOGUE` до Forge. Людина має вести кілька раундів переписки з обраним агентом, уточнювати задачу, переглядати поточний результат і явно завершувати діалог вибором виходу workflow. Перша реалізація — діалог у Forge Console. Notion і створення агентів грумінгу Ancestor — наступні окремі задачі.
+Додати окрему ноду `DIALOGUE` до Forge. Людина має вести кілька раундів переписки з обраним агентом, уточнювати задачу, переглядати поточний результат і явно завершувати діалог вибором виходу workflow. Перша реалізація — діалог у Forge Console. Автоматична синхронізація борди Notion і створення агентів грумінгу Ancestor — наступні окремі задачі; уже підключені та дозволені MCP-інструменти доступні агенту діалогу через чинний механізм Forge.
+
+Уточнення власника: використовувати вже наявні інструменти. Повторно використовувати provider client, session/turn infrastructure, MCP gateway і політику доступу, activity, workspace resolver, completion routing та компоненти Console. Нові сутності й API потрібні лише для повідомлень, багатораундового lifecycle та прийняття підсумку. Не будувати другий executor, окремий клієнт Notion або нову систему дозволів.
 
 Критерій успіху: агент отримує upstream-контекст, ставить питання, враховує текстові відповіді, створює валідний результат; користувач приймає конкретну версію або повертає її на дослідження; лише після цього активується відповідна гілка графа. Перезапуск, повторний HTTP-запит чи дві відкриті вкладки не гублять розмову і не дублюють виконання.
 
@@ -32,12 +34,14 @@
 - робота після оновлення сторінки та перезапуску сервісу;
 - типізовані API Agent → Nexus → Console;
 - activity для кожного ходу, скасування, контроль конфліктів і тестування;
-- читання обраних робочих репозиторіїв у read-only sandbox.
+- робота з обраними репозиторіями та вже дозволеними інструментами через чинний execution runtime;
+- підготовка й відкликання MCP grants для кожного конкретного ходу з чинним project/tool access.
 
 Не входить:
 
 - синхронізація Notion, сповіщення, розклад і автоматичне читання зовнішніх відповідей;
-- MCP у діалозі, запис файлів, виконання імплементації або зовнішні зміни;
+- окремі інструменти спеціально для Dialogue, власні інтеграційні клієнти або автоматичний флоу імплементації;
+- автоматичне підключення MCP, розширення project access чи схвалення інструментів при створенні ноди;
 - вкладення, голос, редагування/видалення вже надісланих повідомлень;
 - спільне редагування повідомлення кількома людьми;
 - потокове відображення токенів, приховані міркування моделі;
@@ -159,7 +163,13 @@ Provider transport, conversation identity callbacks, heartbeat, dispatch fencing
 
 Окремий DialogueTurnWorker виконує пошук queued ходів; він використовує спільний execution infrastructure, але керується Dialogue lifecycle. NodeRunWorker делегує старт DIALOGUE відповідній lifecycle policy. Нода не утримує thread між повідомленнями.
 
-GLOBAL Dialogue workspace використовує чинний resolver і snapshot репозиторіїв, а provider sandbox для Dialogue — read-only. MCP execution preparation для Dialogue не викликається. Наявний AGENT runtime з його workspace-write і MCP behavior не змінюється.
+GLOBAL Dialogue workspace використовує чинний resolver, snapshot репозиторіїв і чинну sandbox policy provider. Новий тип ноди не додає власної системи виконання shell-команд чи доступу до файлів.
+
+MCP execution preparation викликається через наявний McpExecutionSelectionService для кожного exact dialogue execution turn. Якщо потрібно відділити NodeExecutionClaim від спільних параметрів доступу, виділити мінімальний типізований execution context із workflow ID та AgentSessionExecutionClaim; ordinary і dialogue call sites використовують одну реалізацію selection/gateway. Не копіювати selection logic в DialogueTurnWorker.
+
+Застосовуються чинні enabled/projectAccess/allowedTools перевірки, native Codex MCP configuration, dispatch activation та відкликання grants при завершенні, помилці, cancellation і recovery. Grant належить конкретному turn і не залишається доступним під час очікування людини. Дозволи повторно оцінюються на початку кожного ходу; зміна дозволів не обходиться збереженим станом conversation. Нода не отримує ширшого доступу, ніж дозволено проєкту в Forge.
+
+Наявні інструменти можуть виконувати дозволені зміни за своїми чинними правилами. Прийняття summary завершує workflow ноду, але не є транзакцією або rollback для попередніх tool calls. Флоу грумінгу має обирати доречні інструменти й інструкції агента; Dialogue не підміняє їхню політику дозволів. Автоматична синхронізація статусів борди не з'являється лише від доступності Notion tools.
 
 Кількість внутрішніх ходів контролюється окремим конфігурованим бюджетом `max-dialogue-turns-per-node-run`, початкове значення 100. Враховуються INITIAL, CHAT і SUMMARY. До створення нового turn перевіряється бюджет. При вичерпанні новий turn не створюється; історія доступна, можна завершити через REWORK/DEFER з уже наявним валідним підсумком або скасувати workflow. Ліміт graph NodeRuns не витрачається на повідомлення.
 
@@ -226,7 +236,9 @@ Unit / policy:
 - INITIAL → reply → CHAT → reply → SUMMARY → review → complete;
 - SUMMARY без draft, blocking questions, invalid schema й stale summary не проходять ACCEPT;
 - нове повідомлення інвалідує старе прийняття, idempotent retry не інвалідує повторно;
-- read-only/no-MCP Dialogue request і незмінний звичайний AGENT request;
+- спільна provider/workspace/MCP execution policy для Dialogue та ordinary AGENT;
+- eligible та denied MCP connections, project isolation, дозволені tools, exact turn grant activation/revocation;
+- зміна дозволів між ходами, недоступна інтеграція й відсутність grants під час очікування людини;
 - ліміти text/turn budget, порожній текст, неправильний owning run;
 - completion звичайного agent turn не застосовується до Dialogue.
 
@@ -284,7 +296,7 @@ Console:
 - Виявлене one-turn DB-обмеження враховане разом із lookup, claim, recovery та activity.
 - Прийняття прив'язане до версії, idempotency і optimistic concurrency визначені.
 - Визначено форму downstream output та роль AgentOutputSchema.
-- Notion і створення grooming agents не включені до першого implementation scope.
+- Автоматична синхронізація Notion і створення grooming agents не включені до першого implementation scope; чинні дозволені MCP tools використовуються через наявний gateway.
 - Помилки й uncertain recovery не маскуються автоматичним повтором або новим контекстом.
 
 Наступний крок після перегляду цієї специфікації власником — implementation plan із послідовністю змін і командами тестування.
