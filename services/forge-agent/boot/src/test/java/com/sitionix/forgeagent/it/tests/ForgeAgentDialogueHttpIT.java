@@ -19,6 +19,7 @@ import static com.sitionix.forgeagent.it.infra.db.ForgeAgentDbContracts.*;
 import static org.assertj.core.api.Assertions.*;
 
 @IntegrationTest
+@org.springframework.test.context.TestPropertySource(properties="forge.agent.dialogue.max-message-code-points=8000")
 class ForgeAgentDialogueHttpIT extends com.sitionix.forgeagent.it.infra.AgentManagementFixture {
     @Autowired com.sitionix.forgeagent.application.dialogue.DialogueCommands commands;
     @Autowired com.sitionix.forgeagent.application.dialogue.DialogueTurnLifecycle lifecycle;
@@ -47,6 +48,7 @@ class ForgeAgentDialogueHttpIT extends com.sitionix.forgeagent.it.infra.AgentMan
         var response = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(uri))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.state").value("AWAITING_REPLY"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.maxMessageCodePoints").value(8000))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.messages.messages[0].role").value("ASSISTANT"))
                 .andReturn().getResponse().getContentAsString();
         long revision = json.readTree(response).path("revision").longValue();
@@ -61,6 +63,28 @@ class ForgeAgentDialogueHttpIT extends com.sitionix.forgeagent.it.infra.AgentMan
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(uri+"/messages?afterSequence=1&limit=1"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.messages[0].text").value("😀 First\nsecond"));
+    }
+
+    @Test void configuredUnicodeLimitIsReportedAndEnforcedWithoutConsumingInvalidReply() throws Exception {
+        NodeRun node = createNode();
+        commands.initialize(node.id());
+        executeCurrent(node);
+        String uri = uri(node);
+        long revision = commands.get(node.workflowRunId(),node.id()).revision();
+        String tooLong = json.createObjectNode().put("requestId",UUID.randomUUID().toString())
+                .put("expectedRevision",revision).put("text","😀".repeat(8001)).toString();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(uri+"/messages")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(tooLong))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("INVALID_DIALOGUE_MESSAGE"));
+        assertThat(commands.get(node.workflowRunId(),node.id()).revision()).isEqualTo(revision);
+        assertThat(commands.messages(node.workflowRunId(),node.id(),0,100).messages()).hasSize(1);
+        String boundary = json.createObjectNode().put("requestId",UUID.randomUUID().toString())
+                .put("expectedRevision",revision).put("text","😀".repeat(8000)).toString();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(uri+"/messages")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(boundary))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.maxMessageCodePoints").value(8000));
     }
 
     @Test void validationAndOwnershipConflictsRemainTyped() throws Exception {

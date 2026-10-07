@@ -7,7 +7,7 @@ const cleanup: Array<() => void> = [];
 afterEach(() => cleanup.splice(0).forEach(f => f()));
 const ports = (['ACCEPT', 'REWORK', 'DEFER'] as const).map((dialogueDisposition, i) => ({ sourcePortId: `p${i}`, name: dialogueDisposition, dialogueDisposition }));
 function state(overrides: any = {}): any { return { nodeRunId: 'node', state: 'AWAITING_REPLY', revision: 2, summaryRevisionId: null, activeTurn: null,
-  latestRevision: null, completion: null, turnCount: 1, maxTurns: 100, messages: { messages: [{ id:'a',sequence:1,role:'ASSISTANT',text:'Question <img src=x onerror=alert(1)>',turnId:'t1' }], nextSequence:1,hasMore:false }, ...overrides }; }
+  latestRevision: null, completion: null, turnCount: 1, maxTurns: 100, maxMessageCodePoints: 16000, messages: { messages: [{ id:'a',sequence:1,role:'ASSISTANT',text:'Question <img src=x onerror=alert(1)>',turnId:'t1' }], nextSequence:1,hasMore:false }, ...overrides }; }
 function summary(): any { return state({state:'AWAITING_REVIEW',revision:7,summaryRevisionId:'summary',latestRevision:{id:'summary',kind:'SUMMARY',revision:7,
   result:{message:'Ready',draft:{summary:'Task'},questions:[],decisions:[],sources:[{title:'Unsafe',uri:'javascript:alert(1)'},{title:'Docs',uri:'https://example.com'}],readyForReview:true}}}); }
 async function setup(initial = state(), readOnly = false) {
@@ -82,6 +82,19 @@ describe('DialogueView',()=>{
  it('historical/terminal invocations remain read-only',async()=>{
   const {view,api,host}=await setup(summary(),true);await view.send();await view.summarize();await view.complete('p0');
   expect(api.completeDialogue).not.toHaveBeenCalled();expect(api.summarizeDialogue).not.toHaveBeenCalled();expect(editor(host).disabled).toBe(true);
+ });
+ it.each([8000,20000])('uses server limit %i for hint and Unicode validation',async limit=>{
+  const {view,api,host}=await setup(state({maxMessageCodePoints:limit}));
+  expect(host.querySelector('[id="dialogue-help"]')!.textContent).toContain(limit.toLocaleString('en-US'));
+  editor(host).value='😀'.repeat(limit+1);await view.send();expect(api.sendDialogueMessage).not.toHaveBeenCalled();
+  expect(host.querySelector('[data-dialogue-error]')!.textContent).toContain(limit.toLocaleString('en-US'));
+  editor(host).value='😀'.repeat(limit);await view.send();
+  expect(api.sendDialogueMessage).toHaveBeenCalledWith('run','node',expect.objectContaining({text:'😀'.repeat(limit)}));
+ });
+ it.each([undefined,0,-1])('blocks sending when server message limit is unavailable (%s)',async limit=>{
+  const {view,api,host}=await setup(state({maxMessageCodePoints:limit}));
+  editor(host).value='Reply';await view.send();expect(api.sendDialogueMessage).not.toHaveBeenCalled();
+  expect(host.querySelector('#dialogue-help')!.textContent).toContain('unavailable');
  });
  it('rejects whitespace and over-budget Unicode text without truncation',async()=>{
   const {view,api,host}=await setup();editor(host).value='   \n';await view.send();editor(host).value='😀'.repeat(16001);await view.send();expect(api.sendDialogueMessage).not.toHaveBeenCalled();

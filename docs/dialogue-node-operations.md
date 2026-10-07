@@ -80,3 +80,5 @@ Prepare summary creates a version that can be reviewed. Choosing an outcome open
 The activity selector switches between persisted provider turns and keeps the selected turn during polling. Conversation messages remain in the Dialogue panel; provider events for the selected turn appear in Agent activity.
 
 Dialogue uses a provider-compatible reply schema and validates the returned reply against the full server contract. The internal `uniqueItems` constraint on decision message references is enforced on the server because strict Structured Outputs does not support it. User business schemas retain their original constraints.
+
+The Dialogue state response includes `maxMessageCodePoints` from the server configuration. Nexus preserves this value and Console uses it for the reply hint and Unicode validation. If the limit is missing or invalid, Console explains that it is unavailable and disables sending until a valid state is loaded.

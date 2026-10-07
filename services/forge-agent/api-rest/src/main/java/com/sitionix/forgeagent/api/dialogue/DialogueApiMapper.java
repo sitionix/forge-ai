@@ -17,7 +17,7 @@ public class DialogueApiMapper {
         final var s = value.snapshot();
         return new DialogueApiDtos.State(s.nodeRunId(),s.state().name(),s.revision(),s.summaryRevisionId(),
                 revision(s.latestRevision()),turn(s.activeTurn()),completion(s.completion()),page(value.messages()),
-                s.lastMessageSequence(),s.turnCount(),properties.maxTurns(),s.createdAt(),s.updatedAt());
+                s.lastMessageSequence(),s.turnCount(),properties.maxTurns(),properties.maxMessageCodePoints(),s.createdAt(),s.updatedAt());
     }
 
     public DialogueApiDtos.MessagePage page(final DialogueMessagePage page) {

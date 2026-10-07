@@ -14,7 +14,7 @@ public final class NodeExecutionInputJson {
     public static ObjectNode build(final ObjectMapper json, final NodeInputEnvelope envelope, final List<RunPort> outputs) {
         try {
             final ObjectNode input = json.createObjectNode();
-            
+
             if (envelope.originalTask() != null && !envelope.originalTask().isBlank()) {
                 input.put("task", envelope.originalTask());
             }

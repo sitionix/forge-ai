@@ -84,3 +84,13 @@ Smoke потребує selected/cloned repository за чинним task/workspa
 Скрипт перевірив 4 різні provider turn IDs, одну provider conversation, закриту сесію після completion, збережений transcript та успішний повтор completion з тим самим requestId. Downstream reviewer повернув acceptedSummary, disposition, summaryRevisionId і sourceNodeRunId; кожне поле звірене на точну рівність із прийнятим підсумком і snapshot.
 
 Перегляд у [локальному Console](http://127.0.0.1:9099/fgaisox/operator/agent-projects.html): обрати цей тестовий проєкт і задачу Live dialogue verification. Тестові проєкт/задача залишені для перегляду історії.
+
+## Review cleanup — 2026-10-07
+
+Обидва зауваження виправлені: прибрано trailing whitespace та додано `maxMessageCodePoints` у State контракт Agent → Nexus → Console. UI використовує серверне значення для hint і Unicode validation, без fallback до hardcoded 16000. Відсутній або некоректний ліміт явно блокує sending.
+
+Регресії спочатку відтворили відсутнє поле в Nexus та неправильний ліміт UI (RED), після виправлення пройшли (GREEN). Console перевіряє ліміти 8000/20000, emoji boundary та missing/invalid value. Agent HTTP IT із конфігурацією 8000 відхиляє 8001 emoji без зміни revision/transcript і приймає 8000; Nexus зберігає upstream 20000.
+
+Перевірки cleanup: Console **757/757**, typecheck і build; focused backend **52/52** (7 DialogueCommandValidationTest + 4 ForgeAgentDialogueHttpIT + 5 NexusDialogueIT + 36 NexusAgentProxyIT), Maven BUILD SUCCESS; `git diff --check origin/main` пройшов. Повні backend counts вище стосуються основної реалізації до цього cleanup; після нього запускались зазначені focused suites.
+
+Команда backend: `mvn -B -Dapi.version=1.44 -pl services/forge-agent/boot,services/forge-nexus/boot -am verify -Dtest=DialogueCommandValidationTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=ForgeAgentDialogueHttpIT,NexusDialogueIT,NexusAgentProxyIT -Dfailsafe.failIfNoSpecifiedTests=false`.

@@ -34,4 +34,12 @@ class DialogueCommandValidationTest {
                 .isNotEqualTo(validation.fingerprint("SUMMARY",2,"a\nb"))
                 .isNotEqualTo(validation.fingerprint("CHAT",3,"a\nb"));
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {8000, 20000})
+    void configuredMessageLimitCountsUnicodeCodePoints(final int limit) {
+        var configured = new DialogueCommandValidation(new DialogueProperties(100,limit,128000));
+        String text = "😀".repeat(limit);
+        assertThat(configured.text(text)).isEqualTo(text);
+        assertThatThrownBy(() -> configured.text(text + "😀")).isInstanceOf(ValidationException.class);
+    }
 }

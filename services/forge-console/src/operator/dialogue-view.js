@@ -49,7 +49,7 @@ export class DialogueView {
       <section data-dialogue-confirmation class="dialogue-confirmation" aria-label="Confirm outcome"></section>
       <label class="field-label" for="dialogue-reply">Your reply</label>
       <textarea id="dialogue-reply" data-dialogue-text class="text-input dialogue-composer" rows="4" aria-describedby="dialogue-help" disabled></textarea>
-      <p id="dialogue-help" class="field-hint">Enter adds a line. Ctrl+Enter or ⌘+Enter sends. Up to 16,000 characters.</p>
+      <p id="dialogue-help" class="field-hint">Enter adds a line. Ctrl+Enter or ⌘+Enter sends. Message limit is loading…</p>
       <div data-dialogue-actions class="dialogue-actions"></div>
     </section>`;
     const editor = host.querySelector('[data-dialogue-text]');
@@ -113,6 +113,11 @@ export class DialogueView {
 
   editable() { return this.state && !this.options.readOnly && WAITING.has(this.state.state) && !this.state.activeTurn && !this.busy && !this.local.pending; }
   withinBudget() { return this.state?.turnCount < this.state?.maxTurns; }
+  messageLimit() {
+    const limit = this.state?.maxMessageCodePoints;
+    return Number.isSafeInteger(limit) && limit > 0 ? limit : null;
+  }
+  canSend() { return this.editable() && this.withinBudget() && this.messageLimit() !== null && !this.confirmation; }
   currentSummary() {
     const state = this.state;
     return state?.state === 'AWAITING_REVIEW' && state.summaryRevisionId && state.latestRevision?.id === state.summaryRevisionId
@@ -126,10 +131,12 @@ export class DialogueView {
   }
 
   async send() {
-    if (!this.editable() || !this.withinBudget() || this.confirmation) return;
+    if (!this.canSend()) return;
     const text = this.host.querySelector('[data-dialogue-text]').value;
     this.local.draft = text;
-    if (!text.trim() || [...text].length > 16000) { this.error = 'Reply must contain 1–16,000 characters.'; this.render(); return; }
+    if (!text.trim() || [...text].length > this.messageLimit()) {
+      this.error = `Reply must contain 1–${this.messageLimit().toLocaleString('en-US')} characters.`; this.render(); return;
+    }
     await this.command('sendDialogueMessage', { text });
   }
   async summarize() {
@@ -243,9 +250,13 @@ export class DialogueView {
       section.querySelector('[data-dialogue-confirm]')?.addEventListener('click', () => void this.confirmCompletion());
       section.querySelector('[data-dialogue-confirm-cancel]')?.addEventListener('click', () => { this.confirmation = null; this.render(); this.host.querySelector('[data-dialogue-text]')?.focus(); });
     }
-    this.host.querySelector('[data-dialogue-text]').disabled = !this.editable() || !this.withinBudget() || Boolean(confirmation);
+    const limit = this.messageLimit();
+    this.host.querySelector('#dialogue-help').textContent = limit === null
+      ? 'Message limit is unavailable. Refresh after the server becomes available.'
+      : `Enter adds a line. Ctrl+Enter or ⌘+Enter sends. Up to ${limit.toLocaleString('en-US')} characters.`;
+    this.host.querySelector('[data-dialogue-text]').disabled = !this.canSend();
     const actions = this.host.querySelector('[data-dialogue-actions]');
-    const buttons = `<button type="button" class="button small" data-dialogue-send ${!this.editable() || !this.withinBudget() || confirmation ? 'disabled' : ''}>Send reply</button>
+    const buttons = `<button type="button" class="button small" data-dialogue-send ${!this.canSend() ? 'disabled' : ''}>Send reply</button>
       <button type="button" class="button small secondary" data-dialogue-summary ${!this.editable() || !this.withinBudget() || confirmation ? 'disabled' : ''}>Prepare summary</button>
       ${this.options.ports.map(port => `<button type="button" class="button small secondary" data-dialogue-complete="${escapeHtml(port.sourcePortId)}" ${!this.canComplete(port) ? 'disabled' : ''}>${escapeHtml(port.name || LABELS[port.dialogueDisposition])} · ${escapeHtml(port.dialogueDisposition)}</button>${port.description ? `<small class="dialogue-outcome-description">${escapeHtml(port.description)}</small>` : ''}`).join('')}
       ${this.local.pending ? `<button type="button" class="button small secondary" data-dialogue-retry ${this.busy || this.options.readOnly ? 'disabled' : ''}>Retry request</button>` : ''}`;

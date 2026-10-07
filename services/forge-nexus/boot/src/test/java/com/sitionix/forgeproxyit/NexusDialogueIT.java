@@ -26,7 +26,7 @@ class NexusDialogueIT {
     private static final UUID RUN = UUID.randomUUID(), NODE = UUID.randomUUID();
     private static final String PATH = "/api/v1/workflow-runs/"+RUN+"/node-runs/"+NODE+"/dialogue";
     private static final String API = "/api/v1/infrastructure/agents/workflow-runs/"+RUN+"/node-runs/"+NODE+"/dialogue";
-    private static final String STATE = "{\"nodeRunId\":\""+NODE+"\",\"state\":\"RUNNING\",\"revision\":4,\"summaryRevisionId\":null,\"latestRevision\":null,\"activeTurn\":null,\"completion\":null,\"messages\":{\"messages\":[],\"nextSequence\":2,\"hasMore\":false},\"turnCount\":2,\"maxTurns\":100,\"createdAt\":\"2026-10-07T00:00:00Z\",\"updatedAt\":\"2026-10-07T00:00:00Z\"}";
+    private static final String STATE = "{\"nodeRunId\":\""+NODE+"\",\"state\":\"RUNNING\",\"revision\":4,\"summaryRevisionId\":null,\"latestRevision\":null,\"activeTurn\":null,\"completion\":null,\"messages\":{\"messages\":[],\"nextSequence\":2,\"hasMore\":false},\"turnCount\":2,\"maxTurns\":100,\"maxMessageCodePoints\":20000,\"createdAt\":\"2026-10-07T00:00:00Z\",\"updatedAt\":\"2026-10-07T00:00:00Z\"}";
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) {
@@ -40,7 +40,7 @@ class NexusDialogueIT {
     @Test void getAndCursorRoutesPreserveTypedState() throws Exception {
         UPSTREAM.stubFor(com.github.tomakehurst.wiremock.client.WireMock.get(urlEqualTo(PATH)).willReturn(okJson(STATE)));
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(API))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.revision").value(4)).andExpect(jsonPath("$.state").value("RUNNING"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.revision").value(4)).andExpect(jsonPath("$.state").value("RUNNING")).andExpect(jsonPath("$.maxMessageCodePoints").value(20000));
         UPSTREAM.stubFor(com.github.tomakehurst.wiremock.client.WireMock.get(urlPathEqualTo(PATH+"/messages"))
                 .withQueryParam("afterSequence",equalTo("2")).withQueryParam("limit",equalTo("20"))
                 .willReturn(okJson("{\"messages\":[],\"nextSequence\":2,\"hasMore\":false}")));

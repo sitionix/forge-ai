@@ -24,5 +24,5 @@ public final class DialogueClientDtos {
     public record MessagePage(List<Message> messages, long nextSequence, boolean hasMore) { }
     public record State(UUID nodeRunId, String state, long revision, UUID summaryRevisionId, Revision latestRevision,
                         Turn activeTurn, Completion completion, MessagePage messages, long lastMessageSequence,
-                        int turnCount, int maxTurns, Instant createdAt, Instant updatedAt) { }
+                        int turnCount, int maxTurns, int maxMessageCodePoints, Instant createdAt, Instant updatedAt) { }
 }

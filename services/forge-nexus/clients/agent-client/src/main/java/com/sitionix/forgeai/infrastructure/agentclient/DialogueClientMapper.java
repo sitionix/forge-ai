@@ -123,6 +123,7 @@ public final class DialogueClientMapper {
         v.lastMessageSequence(),
         v.turnCount(),
         v.maxTurns(),
+        v.maxMessageCodePoints(),
         v.createdAt(),
         v.updatedAt());
   }
