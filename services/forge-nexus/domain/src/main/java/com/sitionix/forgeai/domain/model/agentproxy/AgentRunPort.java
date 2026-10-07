@@ -7,6 +7,13 @@ public record AgentRunPort(
         UUID sourceNodeId,
         String direction,
         String name,
-        int order
+        int order,
+        com.sitionix.forgeai.domain.model.agentproxy.AgentDialogueDisposition dialogueDisposition
 ) {
+    public AgentRunPort(UUID sourcePortId,
+        UUID sourceNodeId,
+        String direction,
+        String name,
+        int order) { this(sourcePortId, sourceNodeId, direction, name, order, null); }
+
 }

@@ -506,7 +506,7 @@ public class ForgeAgentClientMapper {
                 response.sourceNodeId(),
                 response.direction(),
                 response.name(),
-                response.order()
+                response.order(), response.dialogueDisposition()
         );
     }
 
@@ -625,12 +625,12 @@ public class ForgeAgentClientMapper {
                 port.id(),
                 port.name(),
                 port.description(),
-                port.order()
+                port.order(), port.dialogueDisposition()
         );
     }
 
     private NodePort toDomain(final com.sitionix.forgeai.infrastructure.agentclient.dto.NodePortResponse response) {
-        return new NodePort(response.id(), response.name(), response.description(), response.order());
+        return new NodePort(response.id(), response.name(), response.description(), response.order(), response.dialogueDisposition());
     }
 
     private AgentNodeRun toDomain(final NodeRunResponse response) {

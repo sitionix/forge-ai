@@ -159,11 +159,11 @@
 
 **Interfaces:** GET dialogue, GET cursor messages, POST messages/summary/complete за точними URI специфікації. 202 accepted queued command; 200 completion/dedup; typed conflicts preserve codes. Nexus exposes ці маршрути через наявний infrastructure API root; Console не викликає Agent напряму.
 
-- [ ] Написати failing Agent controller tests на всі маршрути, validation, ownership, status/conflict codes і Unicode text.
-- [ ] Написати failing Nexus contract IT із WireMock upstream: передача IDs/revision/text/disposition/schema та errors; незмінність typed JSON і URL encoding.
-- [ ] Запустити focused RED; реалізувати Agent DTO/controller та всі чинні Nexus proxy layers, без dialogue lifecycle у Nexus.
-- [ ] Прогнати `mvn -pl services/forge-nexus/boot -am -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=NexusDialogueIT -Dfailsafe.failIfNoSpecifiedTests=false verify` та Agent API focused tests.
-- [ ] Закомітити green.
+- [x] Написати failing Agent controller tests на всі маршрути, validation, ownership, status/conflict codes і Unicode text.
+- [x] Написати failing Nexus contract IT із WireMock upstream: передача IDs/revision/text/disposition/schema та errors; незмінність typed JSON і URL encoding.
+- [x] Запустити focused RED; реалізувати Agent DTO/controller та всі чинні Nexus proxy layers, без dialogue lifecycle у Nexus.
+- [x] Прогнати `mvn -pl services/forge-nexus/boot -am -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=NexusDialogueIT -Dfailsafe.failIfNoSpecifiedTests=false verify` та Agent API focused tests.
+- [x] Закомітити green.
 
 ## Task 7: Builder і Console chat
 

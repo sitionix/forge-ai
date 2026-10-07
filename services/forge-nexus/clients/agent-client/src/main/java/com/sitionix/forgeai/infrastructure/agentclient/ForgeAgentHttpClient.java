@@ -40,6 +40,17 @@ import org.springframework.web.service.annotation.PutExchange;
 import org.springframework.web.bind.annotation.RequestBody;
 
 public interface ForgeAgentHttpClient {
+    @GetExchange("/api/v1/workflow-runs/{runId}/node-runs/{nodeRunId}/dialogue")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.State getDialogue(@PathVariable UUID runId, @PathVariable UUID nodeRunId);
+    @GetExchange("/api/v1/workflow-runs/{runId}/node-runs/{nodeRunId}/dialogue/messages")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.MessagePage listDialogueMessages(@PathVariable UUID runId, @PathVariable UUID nodeRunId, @RequestParam long afterSequence, @RequestParam int limit);
+    @PostExchange(value="/api/v1/workflow-runs/{runId}/node-runs/{nodeRunId}/dialogue/messages", contentType=MediaType.APPLICATION_JSON_VALUE)
+    org.springframework.http.ResponseEntity<com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.State> sendDialogueMessage(@PathVariable UUID runId, @PathVariable UUID nodeRunId, @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.SendRequest request);
+    @PostExchange(value="/api/v1/workflow-runs/{runId}/node-runs/{nodeRunId}/dialogue/summary", contentType=MediaType.APPLICATION_JSON_VALUE)
+    org.springframework.http.ResponseEntity<com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.State> summarizeDialogue(@PathVariable UUID runId, @PathVariable UUID nodeRunId, @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.SummaryRequest request);
+    @PostExchange(value="/api/v1/workflow-runs/{runId}/node-runs/{nodeRunId}/dialogue/complete", contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.State completeDialogue(@PathVariable UUID runId, @PathVariable UUID nodeRunId, @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.CompleteRequest request);
+
     @GetExchange("/api/v1/integrations/llm/providers")
     List<com.sitionix.forgeai.infrastructure.agentclient.dto.LlmProviderInbound> llmProviders();
     @PostExchange(value="/api/v1/integrations/llm/codex/login",contentType=MediaType.APPLICATION_JSON_VALUE)

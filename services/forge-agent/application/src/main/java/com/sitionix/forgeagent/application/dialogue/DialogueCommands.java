@@ -63,12 +63,24 @@ public class DialogueCommands {
     @Transactional
     public DialogueSnapshot send(final UUID runId, final UUID nodeRunId, final UUID requestId,
                                  final long expectedRevision, final String text) {
-        return this.command(runId,nodeRunId,requestId,expectedRevision,DialogueTurnKind.CHAT,text);
+        return this.command(runId,nodeRunId,requestId,expectedRevision,DialogueTurnKind.CHAT,text).snapshot();
     }
 
     @Transactional
     public DialogueSnapshot summarize(final UUID runId, final UUID nodeRunId, final UUID requestId,
                                       final long expectedRevision) {
+        return this.command(runId,nodeRunId,requestId,expectedRevision,DialogueTurnKind.SUMMARY,null).snapshot();
+    }
+
+    @Transactional
+    public DialogueCommandReceipt sendReceipt(final UUID runId, final UUID nodeRunId, final UUID requestId,
+                                               final long expectedRevision, final String text) {
+        return this.command(runId,nodeRunId,requestId,expectedRevision,DialogueTurnKind.CHAT,text);
+    }
+
+    @Transactional
+    public DialogueCommandReceipt summarizeReceipt(final UUID runId, final UUID nodeRunId, final UUID requestId,
+                                                    final long expectedRevision) {
         return this.command(runId,nodeRunId,requestId,expectedRevision,DialogueTurnKind.SUMMARY,null);
     }
 
@@ -106,13 +118,13 @@ public class DialogueCommands {
         return dialogues.lock(nodeRunId);
     }
 
-    private DialogueSnapshot command(final UUID runId, final UUID nodeRunId, final UUID requestId,
+    private DialogueCommandReceipt command(final UUID runId, final UUID nodeRunId, final UUID requestId,
                                      final long expectedRevision, final DialogueTurnKind kind, final String text) {
         validation.command(requestId,expectedRevision);
         final var target = locks.lock(runId,nodeRunId);
         final var snapshot = dialogues.lock(nodeRunId);
         final String fingerprint = validation.fingerprint(kind.name(),expectedRevision,text);
-        if (this.replayed(nodeRunId,requestId,fingerprint)) return snapshot;
+        if (this.replayed(nodeRunId,requestId,fingerprint)) return new DialogueCommandReceipt(snapshot,true);
         DialogueInvocationLock.requireActive(target);
         this.requireRevision(snapshot,expectedRevision);
         if (snapshot.activeTurn() != null || target.node().status() != NodeRunStatus.WAITING_FOR_DIALOGUE) {
@@ -122,7 +134,7 @@ public class DialogueCommands {
         validation.turnBudget(snapshot.turnCount());
         this.queue(target,snapshot,kind,requestId,text);
         dialogues.recordCommand(new DialogueCommand(nodeRunId,requestId,kind.name(),fingerprint,Instant.now(clock)));
-        return dialogues.lock(nodeRunId);
+        return new DialogueCommandReceipt(dialogues.lock(nodeRunId),false);
     }
 
     private void queue(final DialogueInvocationLock.Target target, final DialogueSnapshot snapshot,
