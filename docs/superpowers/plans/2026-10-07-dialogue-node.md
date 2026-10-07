@@ -175,13 +175,13 @@
 
 **Interfaces:** DialogueView uses AgentProjectsApi.getDialogue/listDialogueMessages/sendDialogueMessage/summarizeDialogue/completeDialogue. Клієнтські POST створюють UUID requestId; retry того самого payload повторно використовує його. UI використовує authoritative revision і summaryRevisionId, ніколи локально не оголошує прийняття.
 
-- [ ] Написати failing UI tests: palette/preset, GLOBAL/target/dispositions, round-trip builder snapshot.
-- [ ] Написати failing chat tests: persisted history pagination, multiline/keyboard send, queued state, summary render, new-message stale acceptance, exact complete revision, retry без дублювання, historical read-only.
-- [ ] Написати failing safety/accessibility tests: escaped HTML/URLs, long text, focus, accessible labels, дві вкладки з conflict response.
-- [ ] Запустити `npm --prefix services/forge-console test -- tests/dialogue-view.test.ts tests/dialogue-workflow-builder.test.ts tests/dialogue-api.test.ts`; прочитати RED.
-- [ ] Реалізувати окрему DialogueView та делегування з TaskExecutionView; polling не породжує provider turns, off-page reply зберігається сервером.
-- [ ] Запустити `npm --prefix services/forge-console test`, `npm --prefix services/forge-console run typecheck`, `npm --prefix services/forge-console run build`; переглянути chat на широкому/вузькому екрані доступним browser tool.
-- [ ] Закомітити green.
+- [x] Написати failing UI tests: palette/preset, GLOBAL/target/dispositions, round-trip builder snapshot.
+- [x] Написати failing chat tests: persisted history pagination, multiline/keyboard send, queued state, summary render, new-message stale acceptance, exact complete revision, retry без дублювання, historical read-only.
+- [x] Написати failing safety/accessibility tests: escaped HTML/URLs, long text, focus, accessible labels, дві вкладки з conflict response.
+- [x] Запустити `npm --prefix services/forge-console test -- tests/dialogue-view.test.ts tests/dialogue-workflow-builder.test.ts tests/dialogue-api.test.ts`; прочитати RED.
+- [x] Реалізувати окрему DialogueView та делегування з TaskExecutionView; polling не породжує provider turns, off-page reply зберігається сервером.
+- [x] Запустити `npm --prefix services/forge-console test`, `npm --prefix services/forge-console run typecheck`, `npm --prefix services/forge-console run build`; переглянути chat на широкому/вузькому екрані доступним browser tool.
+- [x] Закомітити green.
 
 ## Task 8: Наскрізна перевірка й документація результатів
 

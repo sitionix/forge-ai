@@ -1,3 +1,4 @@
+import { DialogueView } from './dialogue-view.js';
 import { escapeHtml } from './dom-render-helpers.js';
 import { captureStatusPresentation, latestTokenUsage, renderAgentExecutionActivityEvents } from './agent-execution-activity.js';
 
@@ -658,6 +659,7 @@ export class TaskExecutionView {
     this.api = options.api;
     this.onBack = options.onBack;
     this.pollIntervalMs = Number(options.runtimeConfig?.activeJobPollIntervalMs) || 2000;
+    this.dialogueView = new DialogueView({ document: this.document, window: this.window, api: this.api, pollIntervalMs: this.pollIntervalMs });
     this.disposed = false;
     this.opened = false;
     this.taskLoadSequence = 0;
@@ -701,6 +703,7 @@ export class TaskExecutionView {
   }
 
   close() {
+    this.dialogueView.close();
     this.opened = false;
     this.invalidateActivity();
     this.taskLoadSequence += 1;
@@ -1234,7 +1237,7 @@ export class TaskExecutionView {
       'execution-board-node',
       selected ? 'selected' : '',
       running ? 'execution-node-has-running' : '',
-      nodeRuns.some((run) => run.status === 'WAITING_FOR_MANUAL') ? 'execution-node-has-waiting' : '',
+      nodeRuns.some((run) => ['WAITING_FOR_MANUAL', 'WAITING_FOR_DIALOGUE'].includes(run.status)) ? 'execution-node-has-waiting' : '',
       failed ? 'execution-node-has-failed' : '',
       !nodeRuns.length ? 'execution-node-unreached' : ''
     ].filter(Boolean).join(' ');
@@ -1396,6 +1399,7 @@ export class TaskExecutionView {
   renderNodeDetails() {
     const panel = this.byId('agentsV2NodeRunDetails');
     const nodeRun = this.selectedNodeRun();
+    if (nodeRun?.nodeType !== 'DIALOGUE') { this.dialogueView.close(); delete panel.dataset.dialogueNodeRun; }
     if (!nodeRun) {
       const unit = this.state.selectedVisualUnitKey
         ? this.modernProjection().nodeByUnit.get(this.state.selectedVisualUnitKey)
@@ -1414,6 +1418,7 @@ export class TaskExecutionView {
       panel.innerHTML = '<div class="muted-state">Select a node to inspect its execution.</div>';
       return;
     }
+    if (nodeRun.nodeType === 'DIALOGUE') { this.renderDialogueNodeDetails(nodeRun, panel); return; }
     if (nodeRun.nodeType === 'MANUAL') {
       this.renderManualNodeDetails(nodeRun, panel);
       return;
@@ -1484,6 +1489,26 @@ export class TaskExecutionView {
     });
     panel.querySelector('[data-retry-recovered-node-run]')?.addEventListener('click', () => {
       void this.retryRecoveredNodeRun();
+    });
+  }
+
+  renderDialogueNodeDetails(nodeRun, panel) {
+    const identity = `${this.state.selectedRunId}/${nodeRun.id}`;
+    const context = this.contextForNodeRun(nodeRun.id);
+    if (panel.dataset.dialogueNodeRun !== identity) {
+      panel.dataset.dialogueNodeRun = identity;
+      panel.innerHTML = `${this.renderInvocationSelector()}<div data-dialogue-host></div>${this.renderActivity(nodeRun, context)}`;
+      panel.querySelector('[data-node-run-invocation-select]')?.addEventListener('change', event => this.selectNodeRun(event.target.value));
+      this.bindActivityControls();
+    } else if (panel.querySelector('.node-run-activity')?.dataset.activityGeneration !== String(this.activityLoadSequence)) {
+      this.renderSelectedActivity();
+    }
+    const latest = this.latestNodeRunForUnit(nodeRun.sourceNodeId, nodeRun.repositoryId, this.state.workflowRun?.nodeRuns || []);
+    void this.dialogueView.open(panel.querySelector('[data-dialogue-host]'), {
+      runId: this.state.selectedRunId, nodeRunId: nodeRun.id, ports: this.manualOutputPorts(nodeRun),
+      readOnly: latest?.id !== nodeRun.id || !ACTIVE_RUN_STATUSES.has(this.state.workflowRun?.status)
+        || this.state.cancellationInFlight || this.state.workflowRun?.operatorStopStatus === 'STOPPING',
+      onChange: () => { if (this.opened) void this.pollSelectedRun(); }
     });
   }
 
@@ -1731,7 +1756,8 @@ export class TaskExecutionView {
   }
 
   contextForNodeRun(nodeRunId) {
-    return (this.state.agentExecutionContexts || []).find((context) => context.nodeRunId === nodeRunId) || null;
+    return (this.state.agentExecutionContexts || []).filter(context => context.nodeRunId === nodeRunId)
+      .sort((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0))[0] || null;
   }
 
   hasMatchingIterationContext(nodeRun, context) {
@@ -1746,7 +1772,7 @@ export class TaskExecutionView {
   }
 
   hasVerifiedActivityTurn(nodeRun, context) {
-    return nodeRun?.nodeType !== 'MANUAL' && nodeRun?.contextTrackingVersion != null
+    return nodeRun?.nodeType !== 'MANUAL' && (nodeRun?.contextTrackingVersion != null || nodeRun?.nodeType === 'DIALOGUE')
       && this.hasMatchingIterationContext(nodeRun, context)
       && context?.nodeRunId === nodeRun.id
       && (nodeRun.contextMode !== 'FRESH_EACH_NODE_RUN' || context.contextMode === 'FRESH_EACH_NODE_RUN')
@@ -2759,7 +2785,7 @@ export function statusTone(status) {
   if (normalized === 'cancelled') {
     return 'cancelled';
   }
-  if (normalized === 'waiting_for_manual') {
+  if (['waiting_for_manual', 'waiting_for_dialogue'].includes(normalized)) {
     return 'waiting';
   }
   if (normalized === 'pending') {

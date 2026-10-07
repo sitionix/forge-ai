@@ -168,6 +168,14 @@ export class WorkflowBuilder {
     this.addPresetNode('AGENT', agentId, { inputs: [DEFAULT_INPUT_PORT], outputs: [DEFAULT_OUTPUT_PORT] });
   }
 
+  addDialogueNode(agentId) {
+    this.addPresetNode('DIALOGUE', agentId, { inputs: [DEFAULT_INPUT_PORT], outputs: [
+      { name: 'Accept', description: 'Continue with the accepted task.', dialogueDisposition: 'ACCEPT' },
+      { name: 'Rework', description: 'Return the task for rework.', dialogueDisposition: 'REWORK' },
+      { name: 'Defer', description: 'Defer the task with the current summary.', dialogueDisposition: 'DEFER' }
+    ] });
+  }
+
   addManualNode(preset = DEFAULT_MANUAL_PRESET) {
     this.addPresetNode('MANUAL', null, preset);
   }
@@ -203,7 +211,7 @@ export class WorkflowBuilder {
       scopeMode: GLOBAL_SCOPE_MODE,
       includeTaskRepositories: true,
       workspaceRepositoryIds: [],
-      contextMode: FRESH_CONTEXT_MODE,
+      contextMode: nodeType === 'DIALOGUE' ? 'DIALOGUE_WITHIN_NODE_RUN' : FRESH_CONTEXT_MODE,
       inputs,
       outputs,
       position: {
@@ -265,7 +273,9 @@ export class WorkflowBuilder {
       <button class="agents-v2-agent-palette-row" type="button" data-add-agent-id="${escapeHtml(agent.id)}">
         ${escapeHtml(agent.name)}
       </button>
+      <button class="agents-v2-agent-palette-row dialogue-palette-row" type="button" data-add-dialogue-agent-id="${escapeHtml(agent.id)}">Dialogue · ${escapeHtml(agent.name)}</button>
     `).join('') || '<div class="muted-state">No agents yet.</div>';
+    palette.querySelectorAll('[data-add-dialogue-agent-id]').forEach(element => element.addEventListener('click', () => this.addDialogueNode(element.dataset.addDialogueAgentId)));
     palette.querySelectorAll('[data-add-agent-id]').forEach((element) => {
       element.addEventListener('click', () => this.addAgentNode(element.dataset.addAgentId));
     });
@@ -318,7 +328,7 @@ export class WorkflowBuilder {
           ${this.renderCompactPorts(inputs, 'input')}
         </div>
         <div class="workflow-node-content">
-          <strong>${escapeHtml(node.nodeType === 'MANUAL' ? 'Manual' : agent?.name || 'Unknown agent')}</strong>
+          <strong>${escapeHtml(node.nodeType === 'MANUAL' ? 'Manual' : `${node.nodeType === 'DIALOGUE' ? 'Dialogue · ' : ''}${agent?.name || 'Unknown agent'}`)}</strong>
           <span>${escapeHtml(node.nodeType === 'MANUAL' ? 'Manual action' : agent?.instructions || 'Reusable agent')}</span>
           ${node.nodeType !== 'MANUAL' && this.nodeContextMode(node) !== FRESH_CONTEXT_MODE ? '<small class="workflow-node-context-badge">↻ Context</small>' : ''}
         </div>
@@ -800,6 +810,7 @@ export class WorkflowBuilder {
         </div>`;
       return;
     }
+    if (node.nodeType === 'DIALOGUE') { this.renderDialogueNodeEditor(node); return; }
     const agent = this.agentById(node.targetId);
     this.byId('agentsV2NodeEditorTitle').textContent = agent?.name || 'Unknown agent';
     this.byId('agentsV2NodeEditorAgent').textContent = `Agent: ${agent?.name || 'Unknown agent'}`;
@@ -846,6 +857,19 @@ export class WorkflowBuilder {
       this.syncNodeEditorDraftFromDom();
       this.renderNodeEditor();
     });
+  }
+
+  renderDialogueNodeEditor(node) {
+    const agent = this.agentById(node.targetId);
+    this.byId('agentsV2NodeEditorTitle').textContent = `Dialogue · ${agent?.name || 'Unknown agent'}`;
+    this.byId('agentsV2NodeEditorAgent').textContent = 'One conversation per invocation · Global';
+    this.byId('agentsV2NodeEditorBody').innerHTML = `
+      <p class="field-hint">Discuss the task, prepare a summary, then explicitly choose an outcome.</p>
+      <label class="field-label">Agent<select class="text-input" data-dialogue-agent>${this.agents.map(item => `<option value="${escapeHtml(item.id)}" ${item.id === node.targetId ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>
+      <div class="node-editor-port-columns">${this.renderNodeEditorPorts('inputs', 'INPUTS', '+ Add Input')}${this.renderNodeEditorPorts('outputs', 'OUTPUTS', '+ Add Output')}</div>
+      <div class="node-editor-input-mode"><label class="field-label">Input content</label>${this.renderNodeEditorInputMode(node)}</div>
+      ${this.renderWorkingRepositories(node)}`;
+    this.bindWorkingRepositories();
   }
 
   workspaceConfiguration(node) {
@@ -966,6 +990,7 @@ export class WorkflowBuilder {
           <strong>${index + 1}.</strong>
           <button class="node-editor-port-remove" type="button" title="Remove port" aria-label="Remove port" data-node-editor-remove="${escapeHtml(port.id)}" data-node-editor-remove-direction="${escapeHtml(direction)}">×</button>
         </div>
+        ${direction === 'outputs' && this.nodeEditorDraft.nodeType === 'DIALOGUE' ? `<label class="field-label">Outcome<select class="text-input" data-dialogue-disposition>${['ACCEPT','REWORK','DEFER'].map(value => `<option ${port.dialogueDisposition === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>` : ''}
         <label class="field-label" for="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-name">Name</label>
         <input id="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-name" class="text-input" type="text" value="${escapeHtml(port.name || '')}" data-node-editor-port-name>
         <label class="field-label" for="node-editor-${escapeHtml(direction)}-${escapeHtml(port.id)}-description">Description</label>
@@ -978,7 +1003,7 @@ export class WorkflowBuilder {
     return `
       <div class="node-editor-port-row compact" data-node-editor-port="${escapeHtml(port.id)}" data-node-editor-port-direction="${escapeHtml(direction)}" data-node-editor-edit="${escapeHtml(port.id)}" data-node-editor-edit-direction="${escapeHtml(direction)}">
         <div class="node-editor-port-summary">
-          <strong>${escapeHtml(port.name || 'Untitled port')}</strong>
+          <strong>${escapeHtml(port.name || 'Untitled port')}${port.dialogueDisposition ? ` · ${escapeHtml(port.dialogueDisposition)}` : ''}</strong>
           <p>${escapeHtml(port.description || '')}</p>
         </div>
         <div class="node-editor-port-actions">
@@ -1081,6 +1106,8 @@ export class WorkflowBuilder {
         }
         const nameInput = row.querySelector('[data-node-editor-port-name]');
         const descriptionInput = row.querySelector('[data-node-editor-port-description]');
+        const disposition = row.querySelector('[data-dialogue-disposition]');
+        if (disposition) port.dialogueDisposition = disposition.value;
         if (nameInput) {
           port.name = nameInput.value || '';
         }
@@ -1090,6 +1117,8 @@ export class WorkflowBuilder {
       });
       this.nodeEditorDraft[direction] = this.reindexPorts([...portsById.values()]);
     }
+    const target = this.byId('agentsV2NodeEditorBody').querySelector('[data-dialogue-agent]');
+    if (target) this.nodeEditorDraft.targetId = target.value;
     const inputMode = this.byId('agentsV2NodeEditorBody').querySelector('[data-node-editor-input-mode]')?.value;
     if (inputMode) {
       this.nodeEditorDraft.inputMode = this.normalizeInputMode(inputMode);
@@ -1130,6 +1159,13 @@ export class WorkflowBuilder {
   }
 
   validateNodeEditorDraft() {
+    if (this.nodeEditorDraft.nodeType === 'DIALOGUE') {
+      if (!this.agentById(this.nodeEditorDraft.targetId)) return 'Dialogue requires a project agent.';
+      if (this.nodeEditorDraft.scopeMode !== 'GLOBAL') return 'Dialogue requires GLOBAL execution.';
+      const values = this.nodeEditorDraft.outputs.map(port => port.dialogueDisposition);
+      if (values.filter(value => value === 'ACCEPT').length !== 1) return 'Dialogue requires exactly one ACCEPT outcome.';
+      if (values.some(value => !['ACCEPT','REWORK','DEFER'].includes(value)) || new Set(values).size !== values.length) return 'Dialogue output outcomes must be explicit and unique.';
+    }
     const workspaceError = this.workingRepositoriesError(this.nodeEditorDraft);
     if (workspaceError) return workspaceError;
     if (ITERATION_CONTEXT_MODES.includes(this.nodeContextMode(this.nodeEditorDraft))) {
@@ -1688,6 +1724,7 @@ export class WorkflowBuilder {
   }
 
   nodeContextMode(node) {
+    if (node?.nodeType === 'DIALOGUE') return 'DIALOGUE_WITHIN_NODE_RUN';
     return this.normalizeContextMode(node?.contextMode);
   }
 
@@ -1751,7 +1788,8 @@ export class WorkflowBuilder {
       id: port.id,
       name: String(port.name || '').trim(),
       description: String(port.description || '').trim(),
-      order: Number(port.order || 0)
+      order: Number(port.order || 0),
+      ...(port.dialogueDisposition ? { dialogueDisposition: port.dialogueDisposition } : {})
     };
   }
 
