@@ -7,6 +7,7 @@ public record NodePortRequest(
         String name,
         String description,
         int order,
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
         com.sitionix.forgeai.domain.model.agentproxy.AgentDialogueDisposition dialogueDisposition
 ) {
     public NodePortRequest(UUID id,
