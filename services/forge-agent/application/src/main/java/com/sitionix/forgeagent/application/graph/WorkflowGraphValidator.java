@@ -81,12 +81,13 @@ public class WorkflowGraphValidator {
         if (node == null || node.id() == null) {
             throw new ValidationException("DUPLICATE_NODE_ID", "Workflow node IDs must be unique.");
         }
-        if (node.nodeType() == NodeType.AGENT && node.targetId() == null) {
+        if (node.nodeType() != NodeType.MANUAL && node.targetId() == null) {
             throw new ValidationException("UNKNOWN_NODE_TARGET", "Workflow nodes must target existing agents.");
         }
         if (node.nodeType() == NodeType.MANUAL && node.targetId() != null) {
             throw new ValidationException("INVALID_MANUAL_NODE_TARGET", "Manual workflow nodes must not target an agent.");
         }
+        DialogueNodePolicy.validate(node);
         final NodePosition position = node.position() == null ? new NodePosition(0.0, 0.0) : node.position();
         final NodeInputMode inputMode = node.inputMode() == null ? NodeInputMode.DEPENDENCIES_ONLY : node.inputMode();
         return new Node(
@@ -128,7 +129,7 @@ public class WorkflowGraphValidator {
             if (port.order() < 0 || !orders.add(port.order())) {
                 throw new ValidationException("INVALID_NODE_PORT_ORDER", "Workflow node port order must be unique and non-negative per direction.");
             }
-            normalized.add(new NodePort(port.id(), name, description, port.order()));
+            normalized.add(new NodePort(port.id(), name, description, port.order(), port.dialogueDisposition()));
         }
         for (int index = 0; index < normalized.size(); index += 1) {
             if (!orders.contains(index)) {

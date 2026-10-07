@@ -49,6 +49,7 @@ public class NodeRunWorker {
                 switch (node.nodeType()) {
                     case AGENT -> this.lifecycle.tryStart(nodeRunId).ifPresent(this::submit);
                     case MANUAL -> this.manualLifecycle.waitForSelection(nodeRunId);
+                    case DIALOGUE -> { /* DialogueTurnWorker owns this invocation. */ }
                 }
             });
         }

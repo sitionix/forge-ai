@@ -58,7 +58,7 @@ public class WorkflowRunSnapshotBuilder {
     }
 
     private Collection<UUID> agentIds(final List<Node> nodes) {
-        return nodes.stream().filter(node -> node.nodeType() == NodeType.AGENT).map(Node::targetId).collect(Collectors.toSet());
+        return nodes.stream().filter(node -> node.nodeType() != NodeType.MANUAL).map(Node::targetId).collect(Collectors.toSet());
     }
 
     private RunNode runNode(final UUID workflowRunId, final Node node, final Map<UUID, AgentDefinition> agentsById, final List<UUID> taskRepositorySnapshot) {
@@ -117,7 +117,7 @@ public class WorkflowRunSnapshotBuilder {
 
     private List<RunPort> runPorts(final UUID workflowRunId, final Node node, final PortDirection direction, final List<NodePort> ports) {
         return ports.stream()
-                .map(port -> new RunPort(workflowRunId, port.id(), node.id(), direction, port.name(), port.description(), port.order()))
+                .map(port -> new RunPort(workflowRunId, port.id(), node.id(), direction, port.name(), port.description(), port.order(), port.dialogueDisposition()))
                 .toList();
     }
 
