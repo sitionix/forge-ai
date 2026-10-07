@@ -266,3 +266,36 @@ CI skips: CodexRecoveryLifecycleTest1, CodexMcpInventoryVerifierTest1,
 McpGatewayRuntimeFilterTest1, AgentMcpProtectedConfigurationTest1,
 ForgeAgentProjectAssetIT1, ForgeAgentPortAwareExecutionIT6. Local and CI skip classes
 are environment-dependent and explicitly distinguished; skipped checks are not PASS.
+
+## 2026-10-07: live Notion refresh regression
+
+During the Ancestor TEST campaign, the native Notion connection stopped supplying
+tools after its access token expired. Settings → Test connection returned
+`MCP_OAUTH_INVALID_RESPONSE` while the connection still had configured credentials.
+
+Spring Security 6.3.3's refresh request converter includes `client_id` only for
+`client_secret_post`; Forge's Notion registration uses `none`. A synthetic invalid
+refresh request to the actual Notion token endpoint, without any real credentials,
+returned HTTP 401 `invalid_client` (`Client ID is required`). Adding the public
+client ID moved the same synthetic request to HTTP 400 `invalid_grant` (`Invalid
+token format`). The required refresh fields are documented in the
+[Notion MCP client guide](https://developers.notion.com/guides/mcp/build-mcp-client).
+
+Forge now supplies `client_id` for public-client refreshes without a client secret
+or Authorization header. The existing Spring OAuth error converter also handles
+JSON 401 responses, preserving terminal `invalid_client`/`invalid_grant` as a safe
+reconnect result. Malformed JSON remains a safe invalid response with no provider
+description or cause exposed. Unknown OAuth error codes remain unavailable and do
+not clear stored credentials. Other client authentication methods, token response
+validation, rotation and persistence are unchanged.
+
+Witnessed RED: 18 OAuth tests, two failures for missing client ID and incorrect 401
+classification. GREEN: 63 focused tests across OAuth lifecycle, credential refresh,
+probe, HTTP configuration, registration, discovery and cipher. A sole fresh
+read-only reviewer found no blocking issues. Boot packaging succeeded in an
+ordinary source snapshot under `/tmp`; the running JAR was not overwritten during
+the build. Actual connection verification after activation is still pending.
+
+The separate Codex Settings error was reproduced through `localhost:9099`:
+Nexus returns `LLM_BROWSER_DENIED`; the configured default origin
+`127.0.0.1:9099` returns CONNECTED/AVAILABLE. The browser-origin guard is retained.

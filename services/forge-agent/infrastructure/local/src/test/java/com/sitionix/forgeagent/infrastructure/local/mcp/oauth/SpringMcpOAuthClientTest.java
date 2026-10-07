@@ -93,6 +93,33 @@ class SpringMcpOAuthClientTest {
         assertThat(tokens.accessToken()).isEqualTo("rotated-access");
     }
 
+    @Test void publicClientRefreshIdentifiesClientWithoutSendingASecret() {
+        var publicClient = new McpOAuthConfiguration(base, base.resolve("/authorize"), base.resolve("/token"),
+                null, "public-client", "none", Set.of("tools"), RESOURCE);
+        reply(200, "{\"access_token\":\"rotated-access\",\"refresh_token\":\"rotated-refresh\",\"token_type\":\"bearer\",\"expires_in\":60}");
+        var tokens = client.refresh(publicClient, new McpOAuthCredentials(null, credentials().tokens()));
+        var request = requests.remove();
+        assertThat(form(request.body())).containsEntry("client_id", "public-client")
+                .containsEntry("grant_type", "refresh_token").containsEntry("refresh_token", "old-refresh")
+                .containsEntry("resource", RESOURCE.toString()).doesNotContainKey("client_secret");
+        assertThat(request.authorization()).isNull();
+        assertThat(tokens.refreshToken()).isEqualTo("rotated-refresh");
+    }
+
+    @Test void unauthorizedOAuthErrorRequiresReconnectWithoutLeakingProviderDetails() {
+        for (String error : List.of("invalid_client", "invalid_grant")) {
+            reply(401, "{\"error\":\"" + error + "\",\"error_description\":\"client-canary refresh-canary\"}");
+            assertThatThrownBy(() -> client.refresh(configuration(), credentials())).isInstanceOf(McpOAuthException.class)
+                    .hasMessage("OAuth authorization requires reconnect.").hasNoCause();
+        }
+    }
+
+    @Test void malformedUnauthorizedBodyDoesNotInvalidateStoredCredentials() {
+        reply(401, "broken-provider-canary");
+        assertThatThrownBy(() -> client.refresh(configuration(), credentials())).isInstanceOf(McpOAuthException.class)
+                .hasMessage("OAuth provider returned an invalid response.").hasNoCause();
+    }
+
     @Test void missingExpiryRemainsUnknown() {
         reply(200, "{\"access_token\":\"token\",\"token_type\":\"bearer\"}");
         var tokens = exchange();
