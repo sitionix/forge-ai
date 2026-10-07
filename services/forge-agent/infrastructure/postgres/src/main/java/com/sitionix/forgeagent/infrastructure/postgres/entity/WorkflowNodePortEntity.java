@@ -47,4 +47,7 @@ public class WorkflowNodePortEntity {
 
     @Column(name = "port_order", nullable = false)
     private int portOrder;
+
+    @Column(name = "dialogue_disposition", length = 16)
+    private String dialogueDisposition;
 }

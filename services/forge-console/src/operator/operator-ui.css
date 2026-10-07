@@ -6190,3 +6190,31 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .mcp-catalog-row { cursor: default; }
 .mcp-catalog-row > button { flex-shrink: 0; }
 .mcp-catalog-status { display: block; font-size: 12px; margin-top: 4px; white-space: normal; color: var(--ink); }
+
+/* Dialogue stays readable within the execution details panel on narrow screens. */
+.dialogue-panel { display: grid; gap: 12px; min-width: 0; }
+.dialogue-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.dialogue-heading h3 { margin: 0; }
+.dialogue-heading [role="status"] { color: var(--muted, #8996a8); font-size: 12px; }
+.dialogue-error:empty, .dialogue-review:empty { display: none; }
+.dialogue-error { margin: 0; color: var(--danger, #e87878); }
+.dialogue-transcript { display: grid; gap: 10px; max-height: 420px; overflow: auto; overscroll-behavior: contain; }
+.dialogue-message { padding: 12px 14px; border: 1px solid rgba(27, 36, 31, .18); border-radius: 10px; background: rgba(255, 248, 222, .55); }
+.dialogue-message-user { margin-left: 24px; border-color: var(--accent, #3b82f6); }
+.dialogue-message p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dialogue-review { padding: 12px; border: 1px solid rgba(27, 36, 31, .18); border-radius: 10px; }
+.dialogue-review h4 { margin: 8px 0; }
+.dialogue-review pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dialogue-review li, .dialogue-error { overflow-wrap: anywhere; }
+.dialogue-composer { width: 100%; min-height: 96px; resize: vertical; box-sizing: border-box; }
+.dialogue-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.dialogue-palette-row { opacity: .88; }
+@media (max-width: 600px) { .dialogue-message-user { margin-left: 12px; } .dialogue-actions .button { flex: 1 1 160px; } }
+
+.dialogue-confirmation:empty { display: none; }
+.dialogue-confirmation { border: 2px solid var(--accent); padding: 12px; border-radius: 10px; }
+.dialogue-confirmation pre { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dialogue-confirmation p, .dialogue-completion dd { overflow-wrap: anywhere; }
+.dialogue-completion { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; font-size: 12px; }
+.dialogue-completion dd { margin: 0; }
+.dialogue-outcome-description { width: 100%; color: var(--muted); }

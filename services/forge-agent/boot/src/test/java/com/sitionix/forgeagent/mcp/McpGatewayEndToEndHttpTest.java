@@ -122,7 +122,7 @@ class McpGatewayEndToEndHttpTest {
         var sessionState = new AgentExecutionSession[]{session};
         var turnState = new AgentExecutionTurn[]{turn};
         when(sessions.findSession(sessionId)).thenAnswer(ignored -> Optional.of(sessionState[0]));
-        when(sessions.findByNodeRunId(nodeId)).thenAnswer(ignored -> Optional.of(new AgentExecutionAllocation(sessionState[0], turnState[0])));
+        when(sessions.findByExecutionTurnId(turnId)).thenAnswer(ignored -> Optional.of(new AgentExecutionAllocation(sessionState[0], turnState[0])));
         when(sessions.lockCurrentLease(sessionId, "owner", 7L)).thenReturn(true);
         when(nodes.findById(nodeId)).thenReturn(Optional.of(new NodeRun(nodeId, workflowId, UUID.randomUUID(),
                 UUID.randomUUID(), "agent", "instructions", null, NodeInputMode.DEPENDENCIES_ONLY,

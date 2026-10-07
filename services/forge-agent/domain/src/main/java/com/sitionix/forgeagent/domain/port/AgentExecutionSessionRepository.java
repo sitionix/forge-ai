@@ -19,6 +19,9 @@ public interface AgentExecutionSessionRepository {
     boolean hasPendingTurns(UUID sessionId);
     void markContextReset(UUID sessionId);
     AgentExecutionAllocation allocate(NodeRun nodeRun, String providerId);
+    AgentExecutionAllocation allocateDialogueTurn(NodeRun nodeRun, UUID dialogueTurnId, String providerId);
+    Optional<AgentExecutionAllocation> findByExecutionTurnId(UUID turnId);
+    Optional<AgentSessionExecutionClaim> acquireTurn(UUID turnId, String ownerId);
     Optional<AgentExecutionAllocation> findByNodeRunId(UUID nodeRunId);
     List<AgentExecutionAllocation> findByWorkflowRunId(UUID workflowRunId);
     Optional<AgentSessionExecutionClaim> acquire(UUID nodeRunId, String ownerId);
@@ -32,4 +35,5 @@ public interface AgentExecutionSessionRepository {
     Optional<AgentExecutionRecoveryClaim> claimExpiredRecovery(String ownerId);
     boolean reconcileRecovery(AgentExecutionRecoveryClaim claim, AgentExecutionRecoveryReconciliation reconciliation);
     boolean cancel(UUID nodeRunId);
+    boolean closeDialogueSession(UUID nodeRunId, com.sitionix.forgeagent.domain.model.AgentExecutionTerminalOutcome outcome);
 }

@@ -95,6 +95,22 @@ class McpExecutionSelectionServiceTest {
                 .hasMessage("MCP execution requires a tracked session");
     }
 
+    @Test void dialogueTurnsRecheckCurrentPermissionsRatherThanReusingToolSelection() {
+        var allowed = connection(UUID.randomUUID(),true,McpProjectAccess.selected(Set.of(projectId)),true);
+        var first = new AgentSessionExecutionClaim(session.sessionId(),UUID.randomUUID(),nodeId,"worker",4,
+                NOW.plusSeconds(60),"thread","codex",NodeContextMode.DIALOGUE_WITHIN_NODE_RUN);
+        var next = new AgentSessionExecutionClaim(session.sessionId(),UUID.randomUUID(),nodeId,"worker",5,
+                NOW.plusSeconds(60),"thread","codex",NodeContextMode.DIALOGUE_WITHIN_NODE_RUN);
+        when(workflows.findById(workflowId)).thenReturn(Optional.of(workflow(projectId)));
+        when(connections.findAll(installation)).thenReturn(List.of(allowed),List.of());
+        when(gateway.issue(first,NOW.plusSeconds(90),allowed.id()))
+                .thenReturn(new McpRuntimeGrantHandle(UUID.randomUUID(),"first-turn-grant"));
+        assertThat(service.prepare(claim(first),NOW.plusSeconds(90)).selection().entries()).hasSize(1);
+        assertThat(service.prepare(claim(next),NOW.plusSeconds(90)).selection().entries()).isEmpty();
+        verify(gateway,Mockito.never()).issue(org.mockito.ArgumentMatchers.eq(next),any(),any());
+        verify(connections,Mockito.times(2)).findAll(installation);
+    }
+
     @Test void connectedLlmAccountDoesNotGrantForeignProjectsOrUnapprovedTools() {
         var provider = mock(com.sitionix.forgeagent.domain.port.LlmAuthorizationGateway.Session.class);
         when(provider.healthy()).thenReturn(true);
@@ -248,7 +264,7 @@ class McpExecutionSelectionServiceTest {
             var turn = new AgentExecutionTurn(session.turnId(), session.sessionId(), nodeId, null, 1,
                     AgentExecutionTurnStatus.STARTING, null, null, null, null, null, NOW, null, NOW, NOW);
             when(sessionRepository.findSession(session.sessionId())).thenReturn(Optional.of(tracked));
-            when(sessionRepository.findByNodeRunId(nodeId)).thenReturn(Optional.of(new AgentExecutionAllocation(tracked, turn)));
+            when(sessionRepository.findByExecutionTurnId(session.turnId())).thenReturn(Optional.of(new AgentExecutionAllocation(tracked, turn)));
             when(sessionRepository.lockCurrentLease(session.sessionId(), session.leaseOwnerId(), session.leaseToken()))
                     .thenReturn(true);
             when(nodeRepository.findById(nodeId)).thenReturn(Optional.of(new NodeRun(nodeId, workflowId,

@@ -47,11 +47,17 @@ public record Node(
     public Node {
         nodeType = nodeType == null ? NodeType.AGENT : nodeType;
         Objects.requireNonNull(scopeMode, "scopeMode must not be null");
-        contextMode = NodeContextMode.legacyDefault(contextMode);
+        contextMode = nodeType == NodeType.DIALOGUE ? NodeContextMode.DIALOGUE_WITHIN_NODE_RUN : NodeContextMode.legacyDefault(contextMode);
+        if (nodeType == NodeType.DIALOGUE && scopeMode != NodeScopeMode.GLOBAL) {
+            throw new ValidationException("INVALID_DIALOGUE_SCOPE", "Dialogue nodes require GLOBAL scope.");
+        }
+        if (nodeType != NodeType.DIALOGUE && contextMode == NodeContextMode.DIALOGUE_WITHIN_NODE_RUN) {
+            throw new ValidationException("INVALID_DIALOGUE_CONTEXT", "Dialogue context requires a Dialogue node.");
+        }
         ContextIterationPolicy.validateGroup(contextMode, contextGroupKey);
         workspaceRepositoryIds = List.copyOf(workspaceRepositoryIds);
         if ((!includeTaskRepositories && workspaceRepositoryIds.isEmpty())
-                || ((nodeType != NodeType.AGENT || scopeMode != NodeScopeMode.GLOBAL)
+                || ((nodeType == NodeType.MANUAL || scopeMode != NodeScopeMode.GLOBAL)
                     && (!includeTaskRepositories || !workspaceRepositoryIds.isEmpty()))) {
             throw new ValidationException(
                     "INVALID_WORKSPACE_REPOSITORIES", "Only GLOBAL Agent nodes may override working repositories; explicit-only selection must not be empty.");

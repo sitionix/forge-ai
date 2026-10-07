@@ -34,6 +34,11 @@ public class AgentSessionLeaseService {
         return this.repository.acquire(nodeRunId, ownerId);
     }
 
+    public Optional<AgentSessionExecutionClaim> claimTurn(final UUID turnId, final String ownerId) {
+        if (ownerId == null || ownerId.isBlank()) throw new IllegalArgumentException("ownerId must not be blank");
+        return this.repository.acquireTurn(turnId, ownerId);
+    }
+
     public void renew(final AgentSessionExecutionClaim claim) {
         if (!this.repository.renew(claim.sessionId(), claim.leaseOwnerId(), claim.leaseToken())) stale();
     }

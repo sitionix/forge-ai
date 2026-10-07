@@ -33,7 +33,7 @@ final class CodexAppServerClient implements CodexClient {
     static final String SUPPORTED_RECOVERY_VERSION = SUPPORTED_DURABLE_VERSION;
 
     static boolean supportsDurableVersion(String version) {
-        return SUPPORTED_DURABLE_VERSION.equals(version) || "0.160.0".equals(version);
+        return SUPPORTED_DURABLE_VERSION.equals(version) || "0.160.0".equals(version) || "0.160.1".equals(version);
     }
 
     private final ObjectMapper objectMapper;
@@ -199,7 +199,7 @@ final class CodexAppServerClient implements CodexClient {
     private void validateDurableVersion(final String providerVersion, final String expectedProviderVersion) {
         if (!supportsDurableVersion(providerVersion)) {
             throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,
-                    "Codex durable context requires audited CLI versions 0.157.0, 0.160.0"
+                    "Codex durable context requires audited CLI versions 0.157.0, 0.160.0, 0.160.1"
                             + "; found " + providerVersion
             );
         }

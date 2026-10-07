@@ -239,6 +239,7 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
             entity.setName(port.name());
             entity.setDescription(port.description());
             entity.setPortOrder(port.order());
+        entity.setDialogueDisposition(port.dialogueDisposition() == null ? null : port.dialogueDisposition().name());
             desiredEntities.add(entity);
         }
     }
@@ -292,7 +293,7 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
     private List<NodePort> toPorts(final List<WorkflowNodePortEntity> entities) {
         return entities.stream()
                 .sorted(Comparator.comparingInt(WorkflowNodePortEntity::getPortOrder))
-                .map(entity -> new NodePort(entity.getId(), entity.getName(), entity.getDescription(), entity.getPortOrder()))
+                .map(entity -> new NodePort(entity.getId(), entity.getName(), entity.getDescription(), entity.getPortOrder(), disposition(entity.getDialogueDisposition())))
                 .toList();
     }
 
@@ -354,5 +355,8 @@ public class PostgresWorkflowRepository implements WorkflowRepository {
         entity.setCreatedAt(workflow.createdAt());
         entity.setUpdatedAt(workflow.updatedAt());
         return entity;
+    }
+    private static com.sitionix.forgeagent.domain.model.dialogue.DialogueOutputDisposition disposition(String value) {
+        return value == null ? null : com.sitionix.forgeagent.domain.model.dialogue.DialogueOutputDisposition.valueOf(value);
     }
 }

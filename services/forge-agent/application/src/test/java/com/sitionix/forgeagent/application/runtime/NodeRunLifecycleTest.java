@@ -198,7 +198,7 @@ class NodeRunLifecycleTest {
             return Optional.of(claimed[0]);
         });
         when(sessions.findSession(sessionId)).thenAnswer(ignored -> Optional.of(sessionState[0]));
-        when(sessions.findByNodeRunId(NODE_RUN_ID)).thenAnswer(ignored -> Optional.of(
+        when(sessions.findByExecutionTurnId(turnId)).thenAnswer(ignored -> Optional.of(
                 new AgentExecutionAllocation(sessionState[0], turnState[0])));
         when(sessions.lockCurrentLease(org.mockito.ArgumentMatchers.eq(sessionId), any(),
                 org.mockito.ArgumentMatchers.eq(7L))).thenReturn(true);

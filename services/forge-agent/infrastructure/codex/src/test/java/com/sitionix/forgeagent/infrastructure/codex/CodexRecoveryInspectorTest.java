@@ -72,6 +72,7 @@ class CodexRecoveryInspectorTest {
 
         assertThat(inspector.supports("codex", "0.157.0")).isTrue();
         assertThat(inspector.supports("codex", "0.160.0")).isTrue();
+        assertThat(inspector.supports("codex", "0.160.1")).isTrue();
         assertThat(inspector.supports("codex", "0.161.0")).isFalse();
         assertThat(inspector.supports("CODEX", "0.157.0")).isFalse();
         assertThat(inspector.supports("codex", "0.153.2")).isFalse();
@@ -91,7 +92,7 @@ class CodexRecoveryInspectorTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"0.157.0", "0.160.0"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"0.157.0", "0.160.0", "0.160.1"})
     void recovery_inspection_does_not_restart_unauthorized_inference(String version) throws Exception {
         final RecordingStarter starter = new RecordingStarter();
         final CompletableFuture<ProviderTurnRecoveryResult> recovered = CompletableFuture.supplyAsync(

@@ -532,7 +532,8 @@ public class AgentProxyApiMapper {
                 port.sourceNodeId(),
                 port.direction(),
                 port.name(),
-                port.order()
+                port.description(),
+                port.order(), port.dialogueDisposition()
         );
     }
 
@@ -604,11 +605,11 @@ public class AgentProxyApiMapper {
         if (request == null) {
             return null;
         }
-        return new NodePort(request.id(), request.name(), request.description(), request.order());
+        return new NodePort(request.id(), request.name(), request.description(), request.order(), request.dialogueDisposition());
     }
 
     private NodePortResponse toResponse(final NodePort port) {
-        return new NodePortResponse(port.id(), port.name(), port.description(), port.order());
+        return new NodePortResponse(port.id(), port.name(), port.description(), port.order(), port.dialogueDisposition());
     }
 
     private AgentNodeRunResponse toResponse(final AgentNodeRun nodeRun) {

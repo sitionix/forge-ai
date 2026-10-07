@@ -37,6 +37,12 @@ public class CancelWorkflowRunUseCase {
     private final AgentExecutor agentExecutor;
     private final Clock clock;
     private final TransactionOperations transactions;
+    private com.sitionix.forgeagent.application.dialogue.DialogueRecoveryHandler dialogueRecovery;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDialogueRecovery(com.sitionix.forgeagent.application.dialogue.DialogueRecoveryHandler handler) {
+        this.dialogueRecovery = handler;
+    }
 
     public void execute(final UUID workflowRunId) {
         final StopAttempt attempt = this.transactions.execute(status -> this.prepare(workflowRunId));
@@ -83,6 +89,8 @@ public class CancelWorkflowRunUseCase {
             if (nodeRun.status() != NodeRunStatus.RUNNING) {
                 continue;
             }
+            if (nodeRun.nodeType() == com.sitionix.forgeagent.domain.model.NodeType.DIALOGUE && dialogueRecovery != null
+                    && !dialogueRecovery.needsProviderCancellation(nodeRun)) continue;
             cancellations.add(new CancellationAction(
                     nodeRun.id(),
                     this.agentExecutor.secureCancellation(nodeRun.id())

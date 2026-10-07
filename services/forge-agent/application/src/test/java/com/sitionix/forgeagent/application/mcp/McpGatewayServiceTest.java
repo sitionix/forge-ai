@@ -46,7 +46,7 @@ class McpGatewayServiceTest {
     @BeforeEach void activeExecution() {
         when(grants.admit(anyString(), any())).thenReturn(true);
         when(sessions.findSession(sessionId)).thenReturn(Optional.of(session(nodeId, now.plusSeconds(60))));
-        when(sessions.findByNodeRunId(nodeId)).thenReturn(Optional.of(new AgentExecutionAllocation(session(nodeId, now.plusSeconds(60)), turn)));
+        when(sessions.findByExecutionTurnId(turnId)).thenReturn(Optional.of(new AgentExecutionAllocation(session(nodeId, now.plusSeconds(60)), turn)));
         when(sessions.lockCurrentLease(sessionId, "owner", 7L)).thenReturn(true);
         when(nodes.findById(nodeId)).thenReturn(Optional.of(new NodeRun(nodeId, workflowId, UUID.randomUUID(),
                 UUID.randomUUID(), "agent", "instructions", null, NodeInputMode.DEPENDENCIES_ONLY,
@@ -58,6 +58,13 @@ class McpGatewayServiceTest {
         when(projects.findById(projectId)).thenReturn(Optional.of(new Project(projectId, "test", "test", now, now)));
         when(connections.findById(installation, connectionId)).thenReturn(Optional.of(connection(true, McpProjectAccess.all())));
         when(connections.credential(installation, connectionId)).thenReturn(Optional.of(encrypted));
+    }
+
+    @Test void gatewayAuthorizesTheExactTurnWithoutAmbiguousNodeLookup() {
+        when(grants.issue(any())).thenAnswer(call -> new McpRuntimeGrantHandle(call.<McpRuntimeGrant>getArgument(0).id(),"exact-turn-token"));
+        assertThat(service.issue(claim,now.plusSeconds(120),connectionId).token()).isEqualTo("exact-turn-token");
+        verify(sessions,atLeastOnce()).findByExecutionTurnId(turnId);
+        verify(sessions,never()).findByNodeRunId(any());
     }
 
     @Test void oauthRotationKeepsGrantAndUsesOnlyBearerAtProtocolBoundary() {
@@ -115,7 +122,7 @@ class McpGatewayServiceTest {
         var turnStatus = new AgentExecutionTurnStatus[]{AgentExecutionTurnStatus.STARTING};
         when(sessions.findSession(sessionId)).thenAnswer(ignored ->
                 Optional.of(session(nodeId, now.plusSeconds(60), sessionStatus[0])));
-        when(sessions.findByNodeRunId(nodeId)).thenAnswer(ignored -> Optional.of(new AgentExecutionAllocation(
+        when(sessions.findByExecutionTurnId(turnId)).thenAnswer(ignored -> Optional.of(new AgentExecutionAllocation(
                 session(nodeId, now.plusSeconds(60), sessionStatus[0]), turn(turnStatus[0]))));
         when(cipher.decrypt(installation, connectionId, "credential", encrypted))
                 .thenAnswer(ignored -> new byte[]{42});
@@ -164,7 +171,7 @@ class McpGatewayServiceTest {
             var status = (AgentExecutionSessionStatus) pair[0];
             var turnStatus = (AgentExecutionTurnStatus) pair[1];
             when(sessions.findSession(sessionId)).thenReturn(Optional.of(session(nodeId, now.plusSeconds(60), status)));
-            when(sessions.findByNodeRunId(nodeId)).thenReturn(Optional.of(new AgentExecutionAllocation(
+            when(sessions.findByExecutionTurnId(turnId)).thenReturn(Optional.of(new AgentExecutionAllocation(
                     session(nodeId, now.plusSeconds(60), status), turn(turnStatus))));
             assertThatThrownBy(() -> service.issue(claim, now.plusSeconds(120), connectionId))
                     .as(status + "/" + turnStatus).isInstanceOf(McpGatewayAccessException.class);
@@ -209,7 +216,7 @@ class McpGatewayServiceTest {
         byte[] credential = {8, 9};
         when(cipher.decrypt(installation, connectionId, "credential", encrypted)).thenReturn(credential);
         var turnStatus = new AgentExecutionTurnStatus[]{AgentExecutionTurnStatus.ACTIVE};
-        when(sessions.findByNodeRunId(nodeId)).thenAnswer(ignored -> Optional.of(new AgentExecutionAllocation(
+        when(sessions.findByExecutionTurnId(turnId)).thenAnswer(ignored -> Optional.of(new AgentExecutionAllocation(
                 session(nodeId, now.plusSeconds(60)), turn(turnStatus[0]))));
         int[] dispatched = {0};
         when(remote.call(eq(grant.endpoint()), eq(grant.authType()), same(credential), eq(tool.name()),

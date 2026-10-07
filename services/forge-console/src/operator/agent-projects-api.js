@@ -1,6 +1,12 @@
 export function createAgentProjectsApi(http) {
   const root = "/agents";
+  const dialoguePath = (runId, nodeRunId) => `${root}/workflow-runs/${encodeURIComponent(runId)}/node-runs/${encodeURIComponent(nodeRunId)}/dialogue`;
   return {
+    getDialogue(runId, nodeRunId) { return http.get(dialoguePath(runId, nodeRunId)); },
+    listDialogueMessages(runId, nodeRunId, afterSequence = 0, limit = 100) { return http.get(`${dialoguePath(runId, nodeRunId)}/messages?afterSequence=${encodeURIComponent(afterSequence)}&limit=${encodeURIComponent(limit)}`); },
+    sendDialogueMessage(runId, nodeRunId, request) { return http.post(`${dialoguePath(runId, nodeRunId)}/messages`, request); },
+    summarizeDialogue(runId, nodeRunId, request) { return http.post(`${dialoguePath(runId, nodeRunId)}/summary`, request); },
+    completeDialogue(runId, nodeRunId, request) { return http.post(`${dialoguePath(runId, nodeRunId)}/complete`, request); },
     listProjects() {
       return http.get(`${root}/projects`);
     },

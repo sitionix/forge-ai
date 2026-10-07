@@ -129,7 +129,7 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
                 PortDirection.valueOf(entity.getDirection()),
                 entity.getName(),
                 entity.getDescription(),
-                entity.getPortOrder()
+                entity.getPortOrder(), disposition(entity.getDialogueDisposition())
         );
     }
 
@@ -179,6 +179,7 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
         entity.setName(port.name());
         entity.setDescription(port.description());
         entity.setPortOrder(port.order());
+        entity.setDialogueDisposition(port.dialogueDisposition() == null ? null : port.dialogueDisposition().name());
         return entity;
     }
 
@@ -189,5 +190,8 @@ public class PostgresWorkflowRunGraphRepository implements WorkflowRunGraphRepos
         entity.setSourceOutputPortId(connection.sourceOutputPortId());
         entity.setTargetInputPortId(connection.targetInputPortId());
         return entity;
+    }
+    private static com.sitionix.forgeagent.domain.model.dialogue.DialogueOutputDisposition disposition(String value) {
+        return value == null ? null : com.sitionix.forgeagent.domain.model.dialogue.DialogueOutputDisposition.valueOf(value);
     }
 }

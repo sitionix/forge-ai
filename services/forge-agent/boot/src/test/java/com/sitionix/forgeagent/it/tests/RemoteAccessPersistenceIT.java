@@ -38,6 +38,10 @@ class RemoteAccessPersistenceIT {
                 .locations("classpath:db/migration").target("36").load().migrate();
         jdbc = new JdbcTemplate(new DriverManagerDataSource(DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword()));
         legacyColumns = legacyColumns();
+        // Check the remote-access-era migrations before Dialogue intentionally extends sessions.
+        Flyway.configure().dataSource(DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword())
+                .locations("classpath:db/migration").target("43").load().migrate();
+        assertThat(legacyColumns()).isEqualTo(legacyColumns);
         Flyway.configure().dataSource(DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword())
                 .locations("classpath:db/migration").load().migrate();
     }
@@ -187,7 +191,10 @@ class RemoteAccessPersistenceIT {
     }
     @Test
     void migrationDoesNotAlterLegacySshOrExecutionSessionDefinitions() {
-        assertThat(legacyColumns()).isEqualTo(legacyColumns);
+        var migrated = legacyColumns();
+        String dialogueBinding = "agent_execution_sessions.dialogue_node_run_id:uuid:YES:";
+        assertThat(migrated).contains(dialogueBinding).hasSize(legacyColumns.size() + 1);
+        assertThat(migrated.stream().filter(column -> !column.equals(dialogueBinding)).toList()).isEqualTo(legacyColumns);
     }
 
     @Test

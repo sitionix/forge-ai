@@ -40,6 +40,12 @@ import com.sitionix.forgeai.domain.model.agentproxy.SaveAgentAssetMonitoringComm
 import com.sitionix.forgeai.domain.model.agentproxy.ReplaceAgentAssetMonitoringCommand;
 
 public interface ForgeAgentClient {
+    com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.State getDialogue(UUID runId, UUID nodeRunId);
+    com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.MessagePage listDialogueMessages(UUID runId, UUID nodeRunId, long afterSequence, int limit);
+    com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.CommandReceipt sendDialogueMessage(UUID runId, UUID nodeRunId, com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.SendRequest request);
+    com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.CommandReceipt summarizeDialogue(UUID runId, UUID nodeRunId, com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.SummaryRequest request);
+    com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.State completeDialogue(UUID runId, UUID nodeRunId, com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.CompleteRequest request);
+
   List<AgentProjectAsset> listProjectAssets(UUID projectId);
   AgentProjectAsset createProjectAsset(UUID projectId, CreateAgentProjectAssetCommand command);
   AgentProjectAsset getProjectAsset(UUID projectId, UUID assetId);

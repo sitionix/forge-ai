@@ -1684,7 +1684,8 @@ class ForgeAgentPortAwareExecutionIT extends com.sitionix.forgeagent.it.infra.Ag
                 }
             };
             final var repositoryProxy = new org.springframework.aop.framework.ProxyFactory(
-                    new com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresAgentExecutionSessionRepository(new JdbcTemplate(limited)));
+                    new com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresAgentExecutionSessionRepository(new JdbcTemplate(limited),
+                            new com.sitionix.forgeagent.infrastructure.postgres.adapter.PostgresDialogueRepository(new JdbcTemplate(limited))));
             repositoryProxy.setProxyTargetClass(true);
             repositoryProxy.addAdvice(new org.springframework.transaction.interceptor.TransactionInterceptor(
                     new org.springframework.jdbc.datasource.DataSourceTransactionManager(limited),

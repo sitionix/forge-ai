@@ -100,7 +100,8 @@ public final class CodexAgentExecutor implements AgentExecutor {
                     : userOutputSchema;
             final CodexTurnRequest request = new CodexTurnRequest(
                     this.userInput(claim),
-                    WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions()),
+                    claim.dialogueContext() == null ? WorkflowExecutionDeveloperInstructions.compose(claim.agentInstructions())
+                            : DialogueExecutionDeveloperInstructions.compose(claim.agentInstructions()),
                     claim.executionModel().modelId(),
                     claim.executionModel().effortId(),
                     effectiveOutputSchema,
@@ -383,53 +384,8 @@ public final class CodexAgentExecutor implements AgentExecutor {
     }
 
     private String userInput(final NodeExecutionClaim claim) {
-        try {
-            final ObjectNode input = this.objectMapper.createObjectNode();
-            final NodeInputEnvelope envelope = claim.inputEnvelope();
-            if (envelope.originalTask() != null && !envelope.originalTask().isBlank()) {
-                input.put("task", envelope.originalTask());
-            }
-            if (envelope.entryInputPort() != null) {
-                final ObjectNode entryInput = input.putObject("entryInput");
-                entryInput.put("id", envelope.entryInputPort().sourcePortId().toString());
-                entryInput.put("name", envelope.entryInputPort().name());
-                entryInput.put("description", envelope.entryInputPort().description());
-            }
-            final ArrayNode contributions = input.putArray("contributions");
-            for (final NodeInputContribution contribution : envelope.contributions()) {
-                final ObjectNode contributionNode = this.objectMapper.createObjectNode();
-                contributionNode.put("sourceNodeRunId", contribution.sourceNodeRunId().toString());
-                contributionNode.put("sourceConnectionId", contribution.sourceConnectionId().toString());
-                if (contribution.sourceRepositoryId() == null) {
-                    contributionNode.putNull("sourceRepositoryId");
-                } else {
-                    contributionNode.put("sourceRepositoryId", contribution.sourceRepositoryId().toString());
-                }
-                contributionNode.set("payload", this.parsePayload(contribution.payload()));
-                contributions.add(contributionNode);
-            }
-            if (claim.availableOutputs().size() > 1) {
-                final ArrayNode availableOutputs = input.putArray("availableOutputs");
-                for (final RunPort outputPort : claim.availableOutputs()) {
-                    final ObjectNode outputNode = this.objectMapper.createObjectNode();
-                    outputNode.put("id", outputPort.sourcePortId().toString());
-                    outputNode.put("name", outputPort.name());
-                    outputNode.put("description", outputPort.description());
-                    availableOutputs.add(outputNode);
-                }
-            }
-            return this.objectMapper.writeValueAsString(input);
-        } catch (final JsonProcessingException e) {
-            throw new IllegalStateException("Codex execution failed.", e);
-        }
-    }
-
-    private JsonNode parsePayload(final NodeRunOutput output) {
-        try {
-            return this.objectMapper.readTree(output.jsonValue());
-        } catch (final JsonProcessingException e) {
-            throw new IllegalStateException("Codex execution failed.", e);
-        }
+        if (claim.dialogueContext() != null) return claim.dialogueContext().requestJson();
+        return com.sitionix.forgeagent.application.runtime.NodeExecutionInputJson.build(this.objectMapper,claim.inputEnvelope(),claim.availableOutputs()).toString();
     }
 
     private JsonNode parseOutputSchema(final NodeExecutionClaim claim) {
@@ -453,8 +409,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
         schema.put("type", "object");
         schema.put("additionalProperties", false);
         final ObjectNode definitions = schema.putObject("$defs");
-        final ObjectNode payloadSchema = userOutputSchema.deepCopy();
-        this.rewriteLocalReferences(payloadSchema, true);
+        final ObjectNode payloadSchema = com.sitionix.forgeagent.application.runtime.JsonSchemaEmbedding.embed(userOutputSchema,PAYLOAD_SCHEMA_POINTER);
         definitions.set(PAYLOAD_SCHEMA_DEFINITION, payloadSchema);
         final ObjectNode properties = schema.putObject("properties");
         properties.putObject("payload").put("$ref", PAYLOAD_SCHEMA_POINTER);
@@ -469,25 +424,6 @@ public final class CodexAgentExecutor implements AgentExecutor {
         forgeSchema.set("required", this.objectMapper.createArrayNode().add("outputPortId"));
         schema.set("required", this.objectMapper.createArrayNode().add("payload").add("__forge"));
         return schema;
-    }
-
-    private void rewriteLocalReferences(final JsonNode node, final boolean inheritedForgeRoot) {
-        if (node.isObject()) {
-            final ObjectNode object = (ObjectNode) node;
-            final boolean usesForgeRoot = inheritedForgeRoot && !object.has("$id");
-            final JsonNode reference = object.get("$ref");
-            if (usesForgeRoot && reference != null && reference.isTextual()) {
-                final String value = reference.textValue();
-                if ("#".equals(value)) {
-                    object.put("$ref", PAYLOAD_SCHEMA_POINTER);
-                } else if (value.startsWith("#/")) {
-                    object.put("$ref", PAYLOAD_SCHEMA_POINTER + value.substring(1));
-                }
-            }
-            object.fields().forEachRemaining(entry -> this.rewriteLocalReferences(entry.getValue(), usesForgeRoot));
-        } else if (node.isArray()) {
-            node.forEach(child -> this.rewriteLocalReferences(child, inheritedForgeRoot));
-        }
     }
 
     private AgentExecutionResult parseExecutionResult(final String outputText,

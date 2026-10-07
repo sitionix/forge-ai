@@ -70,7 +70,7 @@ public class AgentExecutionRecoveryService {
                     if (nodeRun.routingCompletedAt() == null) this.completionProcessor.process(nodeRun.id());
                 }
                 case FAILED, BLOCKED -> this.coordinator.reconcile(nodeRun.workflowRunId());
-                case PENDING, RUNNING, WAITING_FOR_MANUAL, CANCELLED -> {
+                case PENDING, RUNNING, WAITING_FOR_MANUAL, WAITING_FOR_DIALOGUE, CANCELLED -> {
                     // Recovery does not restart active work or recreate cancelled downstream work.
                 }
             }

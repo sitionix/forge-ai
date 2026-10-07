@@ -51,6 +51,21 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class ForgeAgentClientAdapter implements ForgeAgentClient {
+    @Override public com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.State getDialogue(UUID runId, UUID nodeRunId) { return DialogueClientMapper.map(clientCallExecutor.execute(() -> httpClient.getDialogue(runId,nodeRunId))); }
+    @Override public com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.MessagePage listDialogueMessages(UUID runId, UUID nodeRunId, long afterSequence, int limit) { return DialogueClientMapper.map(clientCallExecutor.execute(() -> httpClient.listDialogueMessages(runId,nodeRunId,afterSequence,limit))); }
+    @Override public com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.CommandReceipt sendDialogueMessage(UUID runId, UUID nodeRunId, com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.SendRequest request) {
+ var response = clientCallExecutor.execute(() -> httpClient.sendDialogueMessage(runId,nodeRunId,new com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.SendRequest(request.requestId(), request.expectedRevision(), request.text())));
+ return new com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.CommandReceipt(DialogueClientMapper.map(response.getBody()),response.getStatusCode().value()==202);
+ }
+    @Override public com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.CommandReceipt summarizeDialogue(UUID runId, UUID nodeRunId, com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.SummaryRequest request) {
+ var response = clientCallExecutor.execute(() -> httpClient.summarizeDialogue(runId,nodeRunId,new com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.SummaryRequest(request.requestId(), request.expectedRevision())));
+ return new com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.CommandReceipt(DialogueClientMapper.map(response.getBody()),response.getStatusCode().value()==202);
+ }
+    @Override public com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.State completeDialogue(UUID runId, UUID nodeRunId, com.sitionix.forgeai.domain.model.agentproxy.AgentDialogue.CompleteRequest request) {
+ var response = clientCallExecutor.execute(() -> httpClient.completeDialogue(runId,nodeRunId,new com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.CompleteRequest(request.requestId(), request.expectedRevision(), request.summaryRevisionId(), request.outputPortId())));
+ return DialogueClientMapper.map(response);
+ }
+
 
     @Override
     public com.sitionix.forgeai.domain.model.agentproxy.AgentProjectAsset getProjectAsset(

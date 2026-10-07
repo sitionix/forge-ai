@@ -31,6 +31,12 @@ public class WorkflowExecutionCoordinator {
     private final Clock clock;
     private final AgentExecutionSessionRepository sessionRepository;
     private final McpGatewayService gateway;
+    private com.sitionix.forgeagent.application.dialogue.DialogueRecoveryHandler dialogueRecovery;
+
+    @Autowired(required = false)
+    void setDialogueRecovery(com.sitionix.forgeagent.application.dialogue.DialogueRecoveryHandler handler) {
+        this.dialogueRecovery = handler;
+    }
 
     @Autowired
     public WorkflowExecutionCoordinator(final WorkflowRunRepository workflowRunRepository,
@@ -159,6 +165,11 @@ public class WorkflowExecutionCoordinator {
         return this.nodeRunRepository.findByWorkflowRunId(workflowRun.id()).stream()
                 .filter(nodeRun -> nodeRun.status().active())
                 .map(nodeRun -> {
+                    if (nodeRun.nodeType() == com.sitionix.forgeagent.domain.model.NodeType.DIALOGUE && dialogueRecovery != null) {
+                        dialogueRecovery.cancel(nodeRun);
+                        this.nodeRunRepository.save(this.withCancelled(nodeRun,now));
+                        return true;
+                    }
                     if (nodeRun.contextTrackingVersion() != null) {
                         var allocation = this.sessionRepository.findByNodeRunId(nodeRun.id());
                         boolean cancelled = this.sessionRepository.cancel(nodeRun.id());
