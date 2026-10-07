@@ -20,8 +20,18 @@ public record NodeExecutionClaim(
         NodeInputEnvelope inputEnvelope,
         List<RunPort> availableOutputs,
         ExecutionWorkspace executionWorkspace,
-        AgentSessionExecutionClaim agentSessionClaim
+        AgentSessionExecutionClaim agentSessionClaim,
+        com.sitionix.forgeagent.application.dialogue.DialogueExecutionContext dialogueContext
 ) {
+    public NodeExecutionClaim(UUID workflowRunId, UUID nodeRunId, UUID sourceAgentId, String workflowInput,
+                              String agentName, String agentInstructions, AgentOutputSchema outputSchema,
+                              NodeRunExecutionModel executionModel, NodeInputEnvelope inputEnvelope,
+                              List<RunPort> availableOutputs, ExecutionWorkspace executionWorkspace,
+                              AgentSessionExecutionClaim agentSessionClaim) {
+        this(workflowRunId,nodeRunId,sourceAgentId,workflowInput,agentName,agentInstructions,outputSchema,
+                executionModel,inputEnvelope,availableOutputs,executionWorkspace,agentSessionClaim,null);
+    }
+
     public NodeExecutionClaim(UUID workflowRunId, UUID nodeRunId, UUID sourceAgentId, String workflowInput,
                               String agentName, String agentInstructions, AgentOutputSchema outputSchema,
                               NodeRunExecutionModel executionModel, NodeInputEnvelope inputEnvelope,

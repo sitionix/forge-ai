@@ -407,6 +407,20 @@ public class PostgresAgentExecutionSessionRepository implements AgentExecutionSe
         return true;
     }
 
+    @Override
+    @Transactional
+    public boolean closeDialogueSession(final UUID nodeRunId, final AgentExecutionTerminalOutcome outcome) {
+        final var owners = this.jdbc.query("SELECT id FROM agent_execution_sessions WHERE dialogue_node_run_id=? AND lease_owner_id IS NULL FOR UPDATE",
+                (rs,row) -> rs.getObject(1,UUID.class),nodeRunId);
+        if (owners.isEmpty()) return false;
+        final UUID sessionId = owners.getFirst();
+        if (outcome == AgentExecutionTerminalOutcome.SUCCEEDED && this.hasPendingTurns(sessionId)) return false;
+        this.jdbc.update("UPDATE agent_execution_turns SET status=?,finished_at=clock_timestamp(),updated_at=clock_timestamp() WHERE agent_session_id=? AND status='QUEUED'",
+                outcome.name(),sessionId);
+        return this.jdbc.update("UPDATE agent_execution_sessions SET status='CLOSED',terminal_outcome=?,closed_at=COALESCE(closed_at,clock_timestamp()),updated_at=clock_timestamp() WHERE id=? AND status<>'CLOSED'",
+                outcome.name(),sessionId)==1;
+    }
+
     private AgentExecutionSession session(final ResultSet rs, final int row) throws SQLException {
         return new AgentExecutionSession(rs.getObject("id", UUID.class), rs.getObject("workflow_run_id", UUID.class),
                 rs.getObject("source_node_id", UUID.class), rs.getObject("source_agent_id", UUID.class), rs.getObject("repository_id", UUID.class),

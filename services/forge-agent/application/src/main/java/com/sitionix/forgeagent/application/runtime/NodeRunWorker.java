@@ -25,6 +25,7 @@ public class NodeRunWorker {
     private final AgentSessionLeaseService sessionLeaseService;
     private final AgentExecutionRecoveryService recoveryService;
     private final com.sitionix.forgeagent.application.dialogue.DialogueCommands dialogueCommands;
+    private final com.sitionix.forgeagent.application.dialogue.DialogueTurnWorker dialogueWorker;
 
     public NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
                          ExecutorService executorService, ScheduledExecutorService heartbeatExecutor,
@@ -38,11 +39,21 @@ public class NodeRunWorker {
                          AgentSessionLeaseService sessionLeaseService, AgentExecutionRecoveryService recoveryService,
                          ManualNodeRunLifecycle manualLifecycle,
                          com.sitionix.forgeagent.application.dialogue.DialogueCommands dialogueCommands) {
+        this(nodeRunRepository,lifecycle,agentExecutor,executorService,heartbeatExecutor,sessionLeaseService,recoveryService,manualLifecycle,dialogueCommands,null);
+    }
+
+    public NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
+                         ExecutorService executorService, ScheduledExecutorService heartbeatExecutor,
+                         AgentSessionLeaseService sessionLeaseService, AgentExecutionRecoveryService recoveryService,
+                         ManualNodeRunLifecycle manualLifecycle,
+                         com.sitionix.forgeagent.application.dialogue.DialogueCommands dialogueCommands,
+                         com.sitionix.forgeagent.application.dialogue.DialogueTurnWorker dialogueWorker) {
         this.nodeRunRepository=nodeRunRepository; this.lifecycle=lifecycle; this.agentExecutor=agentExecutor;
         this.executorService=executorService; this.heartbeatExecutor=heartbeatExecutor; this.sessionLeaseService=sessionLeaseService;
         this.recoveryService=recoveryService;
         this.manualLifecycle=manualLifecycle;
         this.dialogueCommands=dialogueCommands;
+        this.dialogueWorker=dialogueWorker;
     }
 
     NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
@@ -63,6 +74,7 @@ public class NodeRunWorker {
                 }
             });
         }
+        if (this.dialogueWorker != null) this.dialogueWorker.poll();
     }
 
     private void submit(final NodeExecutionClaim claim) {

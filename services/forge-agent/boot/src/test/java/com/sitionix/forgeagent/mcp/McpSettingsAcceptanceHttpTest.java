@@ -288,7 +288,7 @@ class McpSettingsAcceptanceHttpTest {
         var session=new AgentExecutionSession(sessionId,workflowId,UUID.randomUUID(),UUID.randomUUID(),null,"codex",null,null,NodeContextMode.REUSE_WITHIN_WORKFLOW_NODE,
             AgentExecutionSessionStatus.ACTIVE,null,nodeId,"stage5-fixture",1L,now.plusSeconds(240),null,null,now,now,null,null);
         var turn=new AgentExecutionTurn(turnId,sessionId,nodeId,null,1,AgentExecutionTurnStatus.ACTIVE,null,null,null,null,null,now,null,now,now);
-        when(sessions.findSession(sessionId)).thenReturn(Optional.of(session));when(sessions.findByNodeRunId(nodeId)).thenReturn(Optional.of(new AgentExecutionAllocation(session,turn)));
+        when(sessions.findSession(sessionId)).thenReturn(Optional.of(session));when(sessions.findByExecutionTurnId(turnId)).thenReturn(Optional.of(new AgentExecutionAllocation(session,turn)));
         when(sessions.lockCurrentLease(sessionId,"stage5-fixture",1L)).thenReturn(true);
         when(nodes.findById(nodeId)).thenReturn(Optional.of(new NodeRun(nodeId,workflowId,UUID.randomUUID(),UUID.randomUUID(),"fixture","read-only",null,NodeInputMode.DEPENDENCIES_ONLY,
             new NodePosition(1,1),UUID.randomUUID(),null,null,null,null,NodeRunStatus.RUNNING,null,null,null,now,now,null,null)));

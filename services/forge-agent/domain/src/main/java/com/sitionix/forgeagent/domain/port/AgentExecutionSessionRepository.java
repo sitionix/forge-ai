@@ -35,4 +35,5 @@ public interface AgentExecutionSessionRepository {
     Optional<AgentExecutionRecoveryClaim> claimExpiredRecovery(String ownerId);
     boolean reconcileRecovery(AgentExecutionRecoveryClaim claim, AgentExecutionRecoveryReconciliation reconciliation);
     boolean cancel(UUID nodeRunId);
+    boolean closeDialogueSession(UUID nodeRunId, com.sitionix.forgeagent.domain.model.AgentExecutionTerminalOutcome outcome);
 }

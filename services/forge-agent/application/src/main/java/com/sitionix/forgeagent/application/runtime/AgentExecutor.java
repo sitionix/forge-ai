@@ -7,6 +7,10 @@ public interface AgentExecutor {
 
     AgentExecutionResult execute(NodeExecutionClaim claim);
 
+    default AgentExecutionResult executeDialogue(final com.sitionix.forgeagent.application.dialogue.DialogueExecutionRequest request) {
+        return this.execute(request.executionClaim());
+    }
+
     default void cancel(final NodeExecutionClaim claim) {
         // Most executors do not own an external process. Providers with a cancellation
         // boundary override this so lease fencing can stop active side effects.

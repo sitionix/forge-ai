@@ -186,9 +186,10 @@ public class McpGatewayService implements McpGatewayRuntime {
         var node = nodes.findById(nodeRunId).orElse(null);
         if (node == null || node.status() != NodeRunStatus.RUNNING
                 || !session.workflowRunId().equals(node.workflowRunId())) return null;
-        var allocation = sessions.findByNodeRunId(nodeRunId).orElse(null);
+        var allocation = sessions.findByExecutionTurnId(turnId).orElse(null);
         if (allocation == null || allocation.turn() == null
                 || !turnId.equals(allocation.turn().id())
+                || !nodeRunId.equals(allocation.turn().nodeRunId())
                 || allocation.session() == null || !sessionId.equals(allocation.session().id())) return null;
         boolean starting = (session.status() == AgentExecutionSessionStatus.CREATING
                 || session.status() == AgentExecutionSessionStatus.RESUMING)

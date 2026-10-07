@@ -30,6 +30,10 @@ public class DialogueInvocationLock {
         }
     }
 
+    public static boolean activeWorkflow(final WorkflowRun run) {
+        return run.status() == WorkflowRunStatus.QUEUED || run.status() == WorkflowRunStatus.RUNNING;
+    }
+
     public static void requireActive(final Target target) {
         if (target.run().status() != WorkflowRunStatus.QUEUED && target.run().status() != WorkflowRunStatus.RUNNING) {
             throw new ConflictException("WORKFLOW_RUN_NOT_ACTIVE", "The workflow run is no longer active.");

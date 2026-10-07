@@ -84,13 +84,13 @@
 
 **Interfaces:** `DialogueRepository.find(UUID nodeRunId) -> Optional<DialogueSnapshot>`, `lock(UUID nodeRunId) -> DialogueSnapshot`; aggregate writes лише у owning workflow/node transaction. Execution port: `allocateDialogueTurn(NodeRun node, UUID dialogueTurnId, String providerId) -> AgentExecutionAllocation`, `findByExecutionTurnId(UUID turnId) -> Optional<AgentExecutionAllocation>`, `acquireTurn(UUID turnId, String ownerId) -> Optional<AgentSessionExecutionClaim>`. Ordinary find/acquire за NodeRun explicitly exclude dialogue turns.
 
-- [ ] Написати failing IT `multipleDialogueTurnsShareOneInvocationSession`, `ordinaryTurnRemainsUnique`, `dialogueBindingRejectsWrongOwner`, `reactivatedNodeHasIndependentConversation`.
-- [ ] Запустити `mvn -pl services/forge-agent/boot -am -DskipTests package`, потім focused IT без skipTests; failure має доводити відсутній storage/binding, не незапущений PostgreSQL.
-- [ ] Додати aggregate storage з append-only message sequence, immutable revisions, command IDs/payload fingerprints і unique queued/active DialogueTurn.
-- [ ] Замінити ordinary UNIQUE node_run_id частковим index; додати exact dialogue_turn_id FK/uniqueness і session ownership checks. Зберегти single active writer та session sequence constraints.
-- [ ] Оновити ordinary lookups/claim; усунути неоднозначний findFirst для multiple-turn NodeRun. Dialogue session keyed конкретним invocation.
-- [ ] Запустити `mvn -pl services/forge-agent/boot -am -DskipTests=false -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=ForgeAgentDialogueStorageIT,ForgeAgentManualFlowIT -Dfailsafe.failIfNoSpecifiedTests=false verify`; перевірити всі IT результати.
-- [ ] Закомітити storage/binding після green.
+- [x] Написати failing IT `multipleDialogueTurnsShareOneInvocationSession`, `ordinaryTurnRemainsUnique`, `dialogueBindingRejectsWrongOwner`, `reactivatedNodeHasIndependentConversation`.
+- [x] Запустити `mvn -pl services/forge-agent/boot -am -DskipTests package`, потім focused IT без skipTests; failure має доводити відсутній storage/binding, не незапущений PostgreSQL.
+- [x] Додати aggregate storage з append-only message sequence, immutable revisions, command IDs/payload fingerprints і unique queued/active DialogueTurn.
+- [x] Замінити ordinary UNIQUE node_run_id частковим index; додати exact dialogue_turn_id FK/uniqueness і session ownership checks. Зберегти single active writer та session sequence constraints.
+- [x] Оновити ordinary lookups/claim; усунути неоднозначний findFirst для multiple-turn NodeRun. Dialogue session keyed конкретним invocation.
+- [x] Запустити `mvn -pl services/forge-agent/boot -am -DskipTests=false -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=ForgeAgentDialogueStorageIT,ForgeAgentManualFlowIT -Dfailsafe.failIfNoSpecifiedTests=false verify`; перевірити всі IT результати.
+- [x] Закомітити storage/binding після green.
 
 ## Task 3: Команди переписки й ревізії
 
@@ -101,12 +101,12 @@
 
 **Interfaces:** `get(UUID runId, UUID nodeRunId) -> DialogueSnapshot`; `messages(UUID runId, UUID nodeRunId, long afterSequence, int limit) -> DialogueMessagePage`; `send(UUID runId, UUID nodeRunId, UUID requestId, long expectedRevision, String text) -> DialogueSnapshot`; `summarize(UUID runId, UUID nodeRunId, UUID requestId, long expectedRevision) -> DialogueSnapshot`. `initialize(UUID nodeRunId)` створює exact INITIAL turn один раз. Виходи send/summary — вже committed authoritative snapshot.
 
-- [ ] Написати failing tests: whitespace-only, 16 000/16 001 code points включно з emoji, preserved newlines, max turn budget 100.
-- [ ] Написати failing IT: lost-response retry зі старою revision; same ID/different payload conflict; concurrent send/summary; USER message і queued turn зберігаються разом; нове повідомлення інвалідує summary.
-- [ ] Запустити focused application unit + CommandsIT за Maven командами Tasks 1/2 зі зміненими test names; прочитати RED.
-- [ ] Реалізувати validation, command fingerprint, lock order workflow → node → dialogue → session/turn; dedup виконується перед revision check.
-- [ ] Додати INITIAL dispatch через Dialogue lifecycle delegation з NodeRunWorker. У WAITING state не залишати lease або pending provider process.
-- [ ] Прогнати unit/IT до green і закомітити.
+- [x] Написати failing tests: whitespace-only, 16 000/16 001 code points включно з emoji, preserved newlines, max turn budget 100.
+- [x] Написати failing IT: lost-response retry зі старою revision; same ID/different payload conflict; concurrent send/summary; USER message і queued turn зберігаються разом; нове повідомлення інвалідує summary.
+- [x] Запустити focused application unit + CommandsIT за Maven командами Tasks 1/2 зі зміненими test names; прочитати RED.
+- [x] Реалізувати validation, command fingerprint, lock order workflow → node → dialogue → session/turn; dedup виконується перед revision check.
+- [x] Додати INITIAL dispatch через Dialogue lifecycle delegation з NodeRunWorker. У WAITING state не залишати lease або pending provider process.
+- [x] Прогнати unit/IT до green і закомітити.
 
 ## Task 4: Багатораундовий запуск через наявний Codex і MCP
 

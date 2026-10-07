@@ -45,9 +45,21 @@ class ForgeAgentWorkerConfiguration {
                                 final AgentSessionLeaseService sessionLeaseService,
                                 final AgentExecutionRecoveryService recoveryService,
                                 final com.sitionix.forgeagent.application.runtime.ManualNodeRunLifecycle manualLifecycle,
-                                final com.sitionix.forgeagent.application.dialogue.DialogueCommands dialogueCommands) {
+                                final com.sitionix.forgeagent.application.dialogue.DialogueCommands dialogueCommands,
+                                final com.sitionix.forgeagent.application.dialogue.DialogueTurnWorker dialogueWorker) {
         return new NodeRunWorker(nodeRunRepository, lifecycle, agentExecutor, nodeRunExecutorService,
-                agentSessionHeartbeatExecutor, sessionLeaseService, recoveryService, manualLifecycle, dialogueCommands);
+                agentSessionHeartbeatExecutor, sessionLeaseService, recoveryService, manualLifecycle, dialogueCommands, dialogueWorker);
+    }
+
+    @Bean
+    @ConditionalOnBean(AgentExecutor.class)
+    com.sitionix.forgeagent.application.dialogue.DialogueTurnWorker dialogueTurnWorker(
+            final com.sitionix.forgeagent.domain.port.dialogue.DialogueRepository dialogues,
+            final com.sitionix.forgeagent.application.dialogue.DialogueTurnLifecycle lifecycle,
+            final AgentExecutor executor, final AgentSessionLeaseService leases,
+            final ExecutorService nodeRunExecutorService, final ScheduledExecutorService agentSessionHeartbeatExecutor) {
+        return new com.sitionix.forgeagent.application.dialogue.DialogueTurnWorker(dialogues,lifecycle,executor,leases,
+                nodeRunExecutorService,agentSessionHeartbeatExecutor);
     }
 
     @Bean
