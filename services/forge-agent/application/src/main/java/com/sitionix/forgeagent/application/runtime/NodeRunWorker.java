@@ -24,15 +24,25 @@ public class NodeRunWorker {
     private final ScheduledExecutorService heartbeatExecutor;
     private final AgentSessionLeaseService sessionLeaseService;
     private final AgentExecutionRecoveryService recoveryService;
+    private final com.sitionix.forgeagent.application.dialogue.DialogueCommands dialogueCommands;
 
     public NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
                          ExecutorService executorService, ScheduledExecutorService heartbeatExecutor,
                          AgentSessionLeaseService sessionLeaseService, AgentExecutionRecoveryService recoveryService,
                          ManualNodeRunLifecycle manualLifecycle) {
+        this(nodeRunRepository,lifecycle,agentExecutor,executorService,heartbeatExecutor,sessionLeaseService,recoveryService,manualLifecycle,null);
+    }
+
+    public NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
+                         ExecutorService executorService, ScheduledExecutorService heartbeatExecutor,
+                         AgentSessionLeaseService sessionLeaseService, AgentExecutionRecoveryService recoveryService,
+                         ManualNodeRunLifecycle manualLifecycle,
+                         com.sitionix.forgeagent.application.dialogue.DialogueCommands dialogueCommands) {
         this.nodeRunRepository=nodeRunRepository; this.lifecycle=lifecycle; this.agentExecutor=agentExecutor;
         this.executorService=executorService; this.heartbeatExecutor=heartbeatExecutor; this.sessionLeaseService=sessionLeaseService;
         this.recoveryService=recoveryService;
         this.manualLifecycle=manualLifecycle;
+        this.dialogueCommands=dialogueCommands;
     }
 
     NodeRunWorker(NodeRunRepository nodeRunRepository, NodeRunLifecycle lifecycle, AgentExecutor agentExecutor,
@@ -49,7 +59,7 @@ public class NodeRunWorker {
                 switch (node.nodeType()) {
                     case AGENT -> this.lifecycle.tryStart(nodeRunId).ifPresent(this::submit);
                     case MANUAL -> this.manualLifecycle.waitForSelection(nodeRunId);
-                    case DIALOGUE -> { /* DialogueTurnWorker owns this invocation. */ }
+                    case DIALOGUE -> { if (this.dialogueCommands != null) this.dialogueCommands.initialize(nodeRunId); }
                 }
             });
         }
