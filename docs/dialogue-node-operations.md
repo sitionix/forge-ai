@@ -78,3 +78,5 @@ This first version has polling, text messages and explicit outcomes. Attachments
 Prepare summary creates a version that can be reviewed. Choosing an outcome opens an inline confirmation showing the exact draft, output name, description and disposition. Confirm outcome submits that version; if polling receives a newer revision, the confirmation is invalidated and must be opened again. Completed nodes show the final draft, chosen output, summary revision and completion time after reload.
 
 The activity selector switches between persisted provider turns and keeps the selected turn during polling. Conversation messages remain in the Dialogue panel; provider events for the selected turn appear in Agent activity.
+
+Dialogue uses a provider-compatible reply schema and validates the returned reply against the full server contract. The internal `uniqueItems` constraint on decision message references is enforced on the server because strict Structured Outputs does not support it. User business schemas retain their original constraints.

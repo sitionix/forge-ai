@@ -33,6 +33,13 @@ final class DialogueReplyContract {
 
     private DialogueReplyContract() { }
 
+    static JsonNode providerSchema(final ObjectMapper json, final AgentOutputSchema business) {
+        final JsonNode schema = schema(json, business);
+        // Structured Outputs does not accept uniqueItems. Keep it in server validation.
+        ((ObjectNode) schema.at("/properties/decisions/items/properties/userMessageIds")).remove("uniqueItems");
+        return schema;
+    }
+
     static JsonNode schema(final ObjectMapper json, final AgentOutputSchema business) {
         try {
             final ObjectNode envelope = (ObjectNode)json.readTree(ENVELOPE);

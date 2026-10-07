@@ -44,4 +44,11 @@ class DialogueTurnResultPolicyTest {
         assertThat(policy.validate(schema,DialogueTurnKind.SUMMARY,VALID,Set.of())).isNotNull();
         assertThatThrownBy(() -> policy.validate(schema,DialogueTurnKind.SUMMARY,VALID.replace("\"Task\"","7"),Set.of())).hasMessageContaining("Dialogue");
     }
+    @Test void providerSchemaOmitsUnsupportedUniqueItemsWhileServerRejectsDuplicateReferences() throws Exception {
+        var providerSchema = json.readTree(policy.replySchema(business).jsonObject());
+        assertThat(providerSchema.at("/properties/decisions/items/properties/userMessageIds").has("uniqueItems")).isFalse();
+        UUID id = UUID.randomUUID();
+        String duplicate = VALID.replace("\"decisions\":[]", "\"decisions\":[{\"id\":\"d1\",\"text\":\"Approved\",\"userMessageIds\":[\"" + id + "\",\"" + id + "\"]}]");
+        assertThatThrownBy(() -> policy.validate(business,DialogueTurnKind.CHAT,duplicate,Set.of(id))).hasMessageContaining("Dialogue");
+    }
 }

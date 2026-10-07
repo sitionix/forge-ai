@@ -22,7 +22,7 @@ public class DialogueTurnResultPolicy {
                     .add(iri -> { throw new IllegalArgumentException("External schema resources are not allowed."); })));
 
     public AgentOutputSchema replySchema(final AgentOutputSchema business) {
-        return new AgentOutputSchema(DialogueReplyContract.schema(json,business).toString());
+        return new AgentOutputSchema(DialogueReplyContract.providerSchema(json,business).toString());
     }
 
     public JsonNode validate(final AgentOutputSchema business, final DialogueTurnKind kind,

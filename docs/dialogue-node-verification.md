@@ -12,7 +12,7 @@ Console підтримує створення ноди, переписку, іс
 
 - Console: **752/752**, 39 файлів; TypeScript typecheck і production build пройшли.
 - Фокусовані інтеграційні тести Agent/Nexus та mapper після останніх виправлень: Maven BUILD SUCCESS.
-- Повний фінальний Maven verify: **BUILD SUCCESS**. Agent — **1713 tests: 1702 passed, 11 skipped, 0 failures/errors**; Nexus — **393/393**. Прогін включає unit та integration suites і фінальну збірку.
+- Повний фінальний Maven verify: **BUILD SUCCESS**. Agent — **1715 tests: 1703 passed, 12 skipped, 0 failures/errors**; Nexus — **393/393**. Прогін включає unit та integration suites і фінальну збірку.
 - Flow integration: INITIAL → CHAT → CHAT → SUMMARY → ACCEPT/DEFER; той самий conversation, різні turns, точний downstream envelope; REWORK створює нову ноду/сесію, повтор старого completion не повторює маршрутизацію.
 - Restart integration: очікування відповіді, queued CHAT, expired active turn з пізнім callback та незавершена маршрутизація completion переживають реальний перезапуск Spring application із тією самою БД.
 - Migration integration: V43 → V46 зберігає старі Manual nodes/ports/context. Legacy migration assertions перевіряють усі історичні значення й окремо дозволяють тільки навмисно додану nullable Dialogue binding.
@@ -64,3 +64,7 @@ Attachments, streaming та синхронізація Notion board залиша
 Smoke потребує selected/cloned repository за чинним task/workspace контрактом. Використано окремий публічний octocat/Hello-World checkout через звичайний API; робочі репозиторії Ancestor та MCP permissions не змінені.
 
 Повторний повний Agent verify після додавання CLI 0.160.1: BUILD SUCCESS, 1713 tests / 0 failures / 0 errors / 11 skipped. Команда: `mvn -B -Dapi.version=1.44 -pl services/forge-agent/boot -am verify`. Повний попередній Agent/Nexus прогін: `mvn -B -Dapi.version=1.44 -pl services/forge-agent/boot,services/forge-nexus/boot -am verify`.
+
+Живий provider також виявив несумісний `uniqueItems` у внутрішньому Dialogue envelope. Provider schema прибирає тільки цей keyword; серверна схема зберігає його й відхиляє повтори `userMessageIds`. Бізнес-схема агента не послаблюється. RED → GREEN regression і opt-in `CodexDialogueReplySchemaE2ETest` на справжньому gpt-6.1-sol пройшли. Обмеження provider schema звірені з [офіційною документацією Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+Остаточний повний Agent verify після provider schema виправлення: BUILD SUCCESS, 1715 tests / 0 failures / 0 errors / 12 skipped. Native schema тест запускався окремо з `-Dforge.codex.live-dialogue-e2e=true`; у звичайному suite він пропущений разом із іншими opt-in live тестами.
