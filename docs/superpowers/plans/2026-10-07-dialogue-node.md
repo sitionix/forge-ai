@@ -65,12 +65,12 @@
 
 **Interfaces:** Produces NodeType.DIALOGUE, NodeRunStatus.WAITING_FOR_DIALOGUE, internal NodeContextMode.DIALOGUE_WITHIN_NODE_RUN, nullable `dialogueDisposition` на NodePort/RunPort. Старі constructors зберігають ordinary defaults. Dialogue validation має один ACCEPT, GLOBAL scope, target того самого проєкту; mode DIALOGUE не дозволений ordinary nodes.
 
-- [ ] Написати failing tests `dialogueRequiresGlobalAgentAndExactlyOneAccept`, `dialogueDispositionRoundTripsThroughSnapshot`, `waitingDialoguePreventsWorkflowCompletion`; перевірити також MANUAL target prohibition та ordinary null disposition.
-- [ ] Запустити `mvn -pl services/forge-agent/application -am -Dtest=WorkflowGraphValidatorTest,QuiescenceWorkflowCompletionPolicyTest -Dsurefire.failIfNoSpecifiedTests=false test`; зафіксувати failure через відсутню Dialogue поведінку.
-- [ ] Додати типізовані поля й snapshot propagation; pending Dialogue не алокує ordinary one-turn execution у NodeRunFactory.
-- [ ] Додати міграцію V44 за актуальним номером: persisted enums/constraints, nullable port disposition та dialogue context mode. Старі міграції не редагувати.
-- [ ] Прогнати foundation IT: `mvn -pl services/forge-agent/boot -am -Dtest=WorkflowGraphValidatorTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=ForgeAgentDialogueFoundationIT -Dfailsafe.failIfNoSpecifiedTests=false verify`.
-- [ ] Закомітити лише foundation зміни після green.
+- [x] Написати failing tests `dialogueRequiresGlobalAgentAndExactlyOneAccept`, `dialogueDispositionRoundTripsThroughSnapshot`, `waitingDialoguePreventsWorkflowCompletion`; перевірити також MANUAL target prohibition та ordinary null disposition.
+- [x] Запустити `mvn -pl services/forge-agent/application -am -Dtest=WorkflowGraphValidatorTest,QuiescenceWorkflowCompletionPolicyTest -Dsurefire.failIfNoSpecifiedTests=false test`; зафіксувати failure через відсутню Dialogue поведінку.
+- [x] Додати типізовані поля й snapshot propagation; pending Dialogue не алокує ordinary one-turn execution у NodeRunFactory.
+- [x] Додати міграцію V44 за актуальним номером: persisted enums/constraints, nullable port disposition та dialogue context mode. Старі міграції не редагувати.
+- [x] Прогнати foundation IT: `mvn -pl services/forge-agent/boot -am -Dtest=WorkflowGraphValidatorTest -Dsurefire.failIfNoSpecifiedTests=false -Dit.test=ForgeAgentDialogueFoundationIT -Dfailsafe.failIfNoSpecifiedTests=false verify`.
+- [x] Закомітити лише foundation зміни після green.
 
 ## Task 2: Dialogue storage і точна прив'язка execution turns
 
