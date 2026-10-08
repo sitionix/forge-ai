@@ -45,6 +45,19 @@ public class McpOAuthHttpConfiguration {
                 if (response.getStatusCode().is3xxRedirection())
                     throw new org.springframework.security.oauth2.core.OAuth2AuthorizationException(
                             new org.springframework.security.oauth2.core.OAuth2Error("invalid_token_response"));
+                // Spring delegates non-400 errors to its generic HTTP handler,
+                // losing OAuth error codes in providers' JSON 401 responses.
+                if (response.getStatusCode().value() == 401) {
+                    org.springframework.security.oauth2.core.OAuth2Error error;
+                    try {
+                        error = new org.springframework.security.oauth2.core.http.converter.OAuth2ErrorHttpMessageConverter()
+                                .read(org.springframework.security.oauth2.core.OAuth2Error.class, response);
+                    } catch (org.springframework.http.converter.HttpMessageNotReadableException | IllegalArgumentException malformed) {
+                        throw new org.springframework.security.oauth2.core.OAuth2AuthorizationException(
+                                new org.springframework.security.oauth2.core.OAuth2Error("invalid_token_response"));
+                    }
+                    throw new org.springframework.security.oauth2.core.OAuth2AuthorizationException(error);
+                }
                 super.handleError(response);
             }
         });

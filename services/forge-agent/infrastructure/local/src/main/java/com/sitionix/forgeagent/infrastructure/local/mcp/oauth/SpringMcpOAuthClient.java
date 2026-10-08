@@ -71,7 +71,13 @@ public final class SpringMcpOAuthClient implements McpOAuthClient {
                 null, null, previous.grantedScopes() == null ? config.scopes() : previous.grantedScopes());
         var refresh = new OAuth2RefreshToken(previous.refreshToken(), null, previous.refreshExpiresAt());
         var converter = new OAuth2RefreshTokenGrantRequestEntityConverter();
-        converter.addParametersConverter(request -> resource(config));
+        converter.addParametersConverter(request -> {
+            var parameters = resource(config);
+            // Spring's refresh converter adds client_id only for client_secret_post.
+            // Public MCP clients still identify the registration without a secret.
+            if ("none".equals(config.clientAuthenticationMethod())) parameters.add("client_id", config.clientId());
+            return parameters;
+        });
         var client = new DefaultRefreshTokenTokenResponseClient();
         client.setRestOperations(rest); client.setRequestEntityConverter(grant -> redacted(converter.convert(grant)));
         try {
