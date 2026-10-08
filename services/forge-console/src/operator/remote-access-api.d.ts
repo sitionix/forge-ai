@@ -16,7 +16,7 @@ export interface RemoteControl {
   pendingSessions: number; pendingInvitations: number; diagnostic: string | null;
 }
 export class RemoteAccessApi {
-  constructor(options?: {fetcher?: (url: string, init: RequestInit) => Promise<Response>; location?: Pick<Location, 'pathname'>});
+  constructor(options?: {fetcher?: (url: string, init: RequestInit) => Promise<Response>; location?: Pick<Location, 'pathname'>; invitationTimeoutMs?: number});
   clear(): void;
   operatorSession(signal?: AbortSignal): Promise<{csrfToken: string}>;
   login(secret: string, signal?: AbortSignal): Promise<{csrfToken: string}>;
