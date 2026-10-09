@@ -640,7 +640,7 @@ class CodexAppServerTurnClientTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"0.157.0", "0.160.0", "0.160.1"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"0.157.0", "0.160.0", "0.160.1", "0.162.0"})
     void durableExecutionPersistsThreadBeforeTurnStartAndTurnBeforeNotifications(String version) throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
@@ -726,27 +726,36 @@ class CodexAppServerTurnClientTest {
     }
 
     @Test
-    void durableExecutionFailsClosedOnUnauditedCliVersionBeforeThreadStart() throws Exception {
+    void durableResumeAcceptsCurrentCliAndPreservesExistingThreadIdentity() throws Exception {
         final FakeCodexProcess process = new FakeCodexProcess(false, true);
         final CodexAppServerClient client = this.client(new FakeStarter(process), this.properties());
-        final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeDurable(
-                new CodexTurnRequest("Continue.", "Instructions.", "model-a", null,
-                        this.schemaUnchecked(), this.workspace()),
-                null,
-                new CodexExecutionIdentityCallbacks() {
-                    public void conversationStarted(final String id, final String version) { }
-                    public void turnStarted(final String id) { }
-                }
-        ));
-        final JsonNode initialize = this.readRequest(process);
-        process.writeStdout("{\"id\":\"" + initialize.path("id").asText()
-                + "\",\"result\":{\"userAgent\":\"codex/0.155.0\"}}");
-        this.readRequest(process);
-
-        assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
-                .hasRootCauseMessage("Codex durable context requires audited CLI versions 0.157.0, 0.160.0, 0.160.1; found 0.155.0");
-        assertThat(process.pendingClientRequestBytes()).isZero();
-        client.close();
+        try {
+            final List<String> turns = new ArrayList<>();
+            final CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> client.executeDurable(
+                    new CodexTurnRequest("Continue.", "Instructions.", "model-a", null,
+                            this.schemaUnchecked(), this.workspace()),
+                    "thread-existing", "0.162.0",
+                    new CodexExecutionIdentityCallbacks() {
+                        public void conversationStarted(final String id, final String version) {
+                            throw new AssertionError("Resume must not create a replacement conversation");
+                        }
+                        public void turnStarted(final String id) { turns.add(id); }
+                    }));
+            this.initialize(process, "0.162.0");
+            final JsonNode resume = this.readRequest(process);
+            assertThat(resume.path("method").asText()).isEqualTo("thread/resume");
+            assertThat(resume.path("params").path("threadId").asText()).isEqualTo("thread-existing");
+            this.replyThread(process, resume, "thread-existing");
+            final JsonNode turn = this.readRequest(process);
+            assertThat(turn.path("params").path("threadId").asText()).isEqualTo("thread-existing");
+            this.replyTurn(process, turn, "turn-resumed");
+            this.complete(process, "thread-existing", "turn-resumed",
+                    "{\"summary\":\"OK\",\"riskLevel\":\"LOW\"}");
+            assertThat(result.get(1, TimeUnit.SECONDS)).contains("OK");
+            assertThat(turns).containsExactly("turn-resumed");
+        } finally {
+            client.close();
+        }
     }
 
     @Test
