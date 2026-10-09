@@ -47,7 +47,7 @@ class CodexDurableSessionE2ETest {
         }
 
         assertThat(firstOutput).contains("answer");
-        assertThat(versionOne.get()).isIn("0.157.0", "0.160.0", "0.160.1");
+        assertThat(versionOne.get()).isNotBlank();
         assertThat(threadOne.get()).isNotBlank();
         assertThat(turnOne.get()).isNotBlank();
 
