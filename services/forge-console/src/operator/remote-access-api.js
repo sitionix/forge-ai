@@ -9,24 +9,28 @@ const messages = {
 export class RemoteAccessApi {
   #csrf = null;
   #authGeneration = 0;
-  constructor({ fetcher = globalThis.fetch.bind(globalThis), location = globalThis.location } = {}) {
+  constructor({ fetcher = globalThis.fetch.bind(globalThis), location = globalThis.location, invitationTimeoutMs = 30000 } = {}) {
     this.fetcher = fetcher;
+    this.invitationTimeoutMs = invitationTimeoutMs;
     this.base = `${contextPathFromLocation(location)}/api/v1/infrastructure/agents/remote-access`;
   }
   clear() { this.#csrf = null; this.#authGeneration += 1; }
-  async request(method, path, body, signal, login = false) {
+  async request(method, path, body, signal, login = false, timeoutMs = null) {
     if (method !== 'GET' && !login && !this.#csrf) throw this.failure(401);
     const generation = this.#authGeneration;
     const headers = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (method !== 'GET' && !login) headers['X-CSRF-TOKEN'] = this.#csrf;
+    const deadline = timeoutMs === null ? null : AbortSignal.timeout(timeoutMs);
+    const requestSignal = deadline && signal ? AbortSignal.any([signal, deadline]) : deadline || signal;
     let response;
     try {
       response = await this.fetcher(this.base + path, {
         method, headers, body: body === undefined ? undefined : JSON.stringify(body),
-        signal, cache: 'no-store', credentials: 'same-origin', redirect: 'error', mode: 'same-origin',
+        signal: requestSignal, cache: 'no-store', credentials: 'same-origin', redirect: 'error', mode: 'same-origin',
       });
     } catch (error) {
+      if (deadline?.aborted && !signal?.aborted) throw this.failure(503);
       if (error?.name === 'AbortError') throw new DOMException('Request cancelled', 'AbortError');
       throw this.failure(503);
     }
@@ -69,7 +73,7 @@ export class RemoteAccessApi {
   disable(signal) { return this.request('POST', '/control/disable', undefined, signal); }
   invitations(signal) { return this.request('GET', '/invitations', undefined, signal).then(r => r.body); }
   sessions(signal) { return this.request('GET', '/sessions', undefined, signal).then(r => r.body); }
-  invite(advertisedHost, signal) { return this.request('POST', '/invitations', advertisedHost ? {advertisedHost} : {}, signal); }
+  invite(advertisedHost, signal) { return this.request('POST', '/invitations', advertisedHost ? {advertisedHost} : {}, signal, false, this.invitationTimeoutMs); }
   cancel(id, signal) { return this.request('DELETE', `/invitations/${encodeURIComponent(id)}`, undefined, signal); }
   connect(pairingToken, signal) { return this.request('POST', '/sessions', {pairingToken}, signal); }
   check(id, signal) { return this.request('POST', `/sessions/${encodeURIComponent(id)}/check`, undefined, signal); }
