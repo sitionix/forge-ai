@@ -197,12 +197,6 @@ final class CodexAppServerClient implements CodexClient {
     }
 
     private void validateDurableVersion(final String providerVersion, final String expectedProviderVersion) {
-        if (!supportsDurableVersion(providerVersion)) {
-            throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,
-                    "Codex durable context requires audited CLI versions 0.157.0, 0.160.0, 0.160.1"
-                            + "; found " + providerVersion
-            );
-        }
         if (expectedProviderVersion != null && !expectedProviderVersion.isBlank()
                 && !expectedProviderVersion.equals(providerVersion)) {
             throw new CodexExecutionException(CodexExecutionFailurePhase.IDENTITY,
