@@ -165,8 +165,11 @@ final class CodexTurnStateTracker {
             return;
         }
         execution.bindTurnId(turnId);
-        final String message = this.nonBlank(params.path("error").path("message"));
-        execution.fail(this.executionFailed(message == null ? this.nonBlank(params.path("message")) : message));
+        final ObjectNode error = params.path("error").isObject() ? params.path("error").deepCopy() : params.deepCopy();
+        if (this.nonBlank(error.path("message")) == null && this.nonBlank(params.path("message")) != null)
+            error.put("message", params.path("message").asText());
+        execution.fail(CodexTransportException.providerFailure(error,
+                params.path("willRetry").isBoolean() ? params.path("willRetry").asBoolean() : null));
     }
 
     private void handleTurnCompleted(final JsonNode params) {
@@ -186,7 +189,9 @@ final class CodexTurnStateTracker {
             return;
         }
         execution.bindTurnId(turnId);
-        this.complete(execution, this.resolveStatus(params), this.providerFailure(params));
+        final String status = this.resolveStatus(params);
+        if ("completed".equals(status)) this.complete(execution, status, null);
+        else execution.fail(CodexTransportException.providerFailure(params.path("turn").path("error"), null));
     }
 
     private void handleTurnStarted(final JsonNode params) {
@@ -284,10 +289,6 @@ final class CodexTurnStateTracker {
             throw this.executionFailed();
         }
         return status;
-    }
-
-    private String providerFailure(final JsonNode params) {
-        return this.nonBlank(params.path("turn").path("error").path("message"));
     }
 
     private boolean willRetry(final JsonNode params) {

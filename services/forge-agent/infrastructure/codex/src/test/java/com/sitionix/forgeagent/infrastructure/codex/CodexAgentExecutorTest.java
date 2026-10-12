@@ -95,7 +95,7 @@ class CodexAgentExecutorTest {
                 .thenReturn(new McpExecutionPreparation(selection, grants));
         when(codex.executeDurable(any(), any(), any(), any(McpRuntimeLaunchGrants.class), any()))
                 .thenReturn("{\"summary\":\"Done\",\"riskLevel\":\"LOW\"}")
-                .thenThrow(new CodexTransportException("synthetic-secret-canary"));
+                .thenThrow(new CodexTransportException("Provider unavailable TOKEN=synthetic-secret-canary"));
         var executor = new CodexAgentExecutor(this.objectMapper, codex, null, null, null,
                 selectionService, new CodexAppServerProperties());
 
@@ -105,6 +105,7 @@ class CodexAgentExecutorTest {
                 org.mockito.ArgumentMatchers.eq(grants), any());
         verify(selectionService).revoke(claim.agentSessionClaim());
         assertThatThrownBy(() -> executor.execute(claim))
+                .hasMessage("Provider unavailable TOKEN=[REDACTED]")
                 .hasMessageNotContaining("synthetic-secret-canary");
         verify(selectionService, org.mockito.Mockito.times(2)).revoke(claim.agentSessionClaim());
     }
@@ -132,8 +133,9 @@ class CodexAgentExecutorTest {
         verify(selectionService, never()).revoke(any());
     }
 
-    @Test
-    void mcpEnabledProviderFailureKeepsNormalFailureSemanticsAndHidesProviderText() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void mcpEnabledProviderFailureKeepsNormalFailureSemanticsAndSafeProviderReason(boolean cleanupFails) {
         var selectionService = mock(McpExecutionSelectionService.class);
         var codex = mock(CodexClient.class);
         var claim = this.trackedClaim("thread-existing");
@@ -148,16 +150,31 @@ class CodexAgentExecutorTest {
                 .thenReturn(new McpExecutionPreparation(selection, grants));
         when(codex.executeDurable(any(), any(), any(), any(McpRuntimeLaunchGrants.class), any()))
                 .thenThrow(new CodexExecutionException(
-                        CodexExecutionFailurePhase.TURN_EXECUTION, "synthetic-secret-canary"));
+                        CodexExecutionFailurePhase.TURN_EXECUTION, "Invalid model TOKEN=synthetic-secret-canary"));
+        if (cleanupFails) org.mockito.Mockito.doThrow(new IllegalStateException("Cleanup rejected TOKEN=cleanup-secret"))
+                .when(selectionService).revoke(claim.agentSessionClaim());
         var executor = new CodexAgentExecutor(this.objectMapper, codex, null, null, null,
                 selectionService, new CodexAppServerProperties());
 
         assertThatThrownBy(() -> executor.execute(claim))
-                .isInstanceOf(CodexTransportException.class)
+                .isInstanceOf(CodexExecutionException.class)
                 .isNotInstanceOf(com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException.class)
-                .hasMessage("Codex execution failed.")
+                .hasMessage("Invalid model TOKEN=[REDACTED]")
                 .hasMessageNotContaining("synthetic-secret-canary");
         verify(selectionService).revoke(claim.agentSessionClaim());
+    }
+
+    @Test
+    void contextResumeFailureKeepsItsUpstreamCodeReasonAndExistingRecoveryCode() throws Exception {
+        this.client.durableFailure = new CodexExecutionException(CodexExecutionFailurePhase.THREAD_RESUME,
+                "Request rejected", CodexTransportException.providerFailure(objectMapper.readTree("""
+                        {"codexErrorInfo":"badRequest","message":"Request rejected"}
+                        """), null));
+        assertThatThrownBy(() -> executor.execute(trackedClaim("thread-existing")))
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.ConflictException.class)
+                .hasMessageContaining("THREAD_RESUME", "badRequest", "Request rejected")
+                .satisfies(error -> assertThat(((com.sitionix.forgeagent.domain.exception.ForgeAgentException) error).code())
+                        .isEqualTo("AGENT_CONTEXT_RESUME_FAILED"));
     }
 
     @Test
@@ -175,13 +192,13 @@ class CodexAgentExecutorTest {
         when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
                 .thenReturn(new McpExecutionPreparation(selection, grants));
         when(codex.executeDurable(any(), any(), any(), any(McpRuntimeLaunchGrants.class), any()))
-                .thenThrow(new CodexMcpExecutionException("synthetic-secret-canary"));
+                .thenThrow(new CodexMcpExecutionException("Gateway unavailable TOKEN=synthetic-secret-canary"));
         var executor = new CodexAgentExecutor(this.objectMapper, codex, null, null, null,
                 selectionService, new CodexAppServerProperties());
 
         assertThatThrownBy(() -> executor.execute(claim))
                 .isInstanceOf(com.sitionix.forgeagent.domain.exception.InfrastructureExecutionException.class)
-                .hasMessage("MCP execution failed.")
+                .hasMessage("MCP initialization failed: Gateway unavailable TOKEN=[REDACTED]")
                 .hasMessageNotContaining("synthetic-secret-canary");
         verify(selectionService).revoke(claim.agentSessionClaim());
     }
@@ -228,17 +245,18 @@ class CodexAgentExecutorTest {
     }
 
     @Test
-    void failedMcpPreparationDoesNotStartCodexOrExposeCause() {
+    void failedMcpPreparationDoesNotStartCodexAndPreservesSafeReason() {
         var selectionService = mock(McpExecutionSelectionService.class);
         var codex = mock(CodexClient.class);
         var claim = this.trackedClaim("thread-existing");
         when(selectionService.prepare(org.mockito.ArgumentMatchers.eq(claim), any()))
-                .thenThrow(new IllegalStateException("synthetic-secret-canary"));
+                .thenThrow(new IllegalStateException("Connection missing TOKEN=synthetic-secret-canary"));
         var executor = new CodexAgentExecutor(this.objectMapper, codex, null, null, null,
                 selectionService, new CodexAppServerProperties());
 
         assertThatThrownBy(() -> executor.execute(claim))
-                .hasMessage("MCP execution preparation failed.")
+                .hasMessage("MCP execution preparation failed: Connection missing TOKEN=[REDACTED]")
+                .hasMessageNotContaining("synthetic-secret-canary")
                 .hasNoCause();
         verify(codex, never()).execute(any());
     }

@@ -10,6 +10,49 @@ class CodexTurnStateTrackerTest {
     private final ObjectMapper json=new ObjectMapper();
 
     @Test
+    void providerErrorStillUsesTopLevelReasonWhenNestedErrorHasOnlyACode() throws Exception {
+        var tracker = new CodexTurnStateTracker();
+        var state = tracker.register("thread-1");
+        tracker.bindTurnId(state, "turn-1");
+        tracker.handleNotification("error", json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-1","message":"Provider rejected request",
+                 "error":{"codexErrorInfo":"badRequest"}}
+                """));
+        assertThatThrownBy(() -> state.result().join()).cause().hasMessage("Provider rejected request");
+    }
+
+    @Test
+    void providerFailureKeepsItsCodeAndSafeReasonInTheExecutionException() throws Exception {
+        var tracker = new CodexTurnStateTracker();
+        var state = tracker.register("thread-1");
+        tracker.bindTurnId(state, "turn-1");
+        tracker.handleNotification("error", json.readTree("""
+                {"threadId":"thread-1","turnId":"turn-1","willRetry":false,"error":{
+                 "message":"Sign in again. TOKEN=fixture-secret","codexErrorInfo":"unauthorized"}}
+                """));
+        assertThatThrownBy(() -> state.result().join()).cause()
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.ForgeAgentException.class)
+                .hasMessage("Sign in again. TOKEN=[REDACTED]")
+                .satisfies(error -> assertThat(((com.sitionix.forgeagent.domain.exception.ForgeAgentException) error).code())
+                        .isEqualTo("unauthorized"));
+    }
+
+    @Test
+    void failedTurnCompletionKeepsAnUpstreamCodeWithoutAnErrorNotification() throws Exception {
+        var tracker = new CodexTurnStateTracker();
+        var state = tracker.register("thread-1");
+        tracker.bindTurnId(state, "turn-1");
+        tracker.handleNotification("turn/completed", json.readTree("""
+                {"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","error":{
+                 "message":"Bad model","codexErrorInfo":{"badRequest":{"httpStatusCode":400}}}}}
+                """));
+        assertThatThrownBy(() -> state.result().join()).cause()
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.ForgeAgentException.class)
+                .satisfies(error -> assertThat(((com.sitionix.forgeagent.domain.exception.ForgeAgentException) error).code())
+                        .isEqualTo("badRequest"));
+    }
+
+    @Test
     void notificationsAreBufferedUntilThePersistedTurnIdentityIsBound() throws Exception {
         final CodexTurnStateTracker tracker=new CodexTurnStateTracker();
         final CodexExecutionState state=tracker.register("thread-1");

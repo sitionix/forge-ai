@@ -129,8 +129,18 @@ function preformatted(value, className = '') {
   return `<pre${className ? ` class="${className}"` : ''}>${escapeHtml(safeStructuredValue(value))}</pre>`;
 }
 
+function diagnosticMetadata(payload) {
+  return [
+    payload.upstreamCode ?? payload.code ?? payload.providerCode,
+    payload.origin,
+    payload.stage,
+    typeof payload.willRetry === 'boolean' ? `Provider will retry: ${payload.willRetry ? 'yes' : 'no'}` : null
+  ].filter((value) => value !== undefined && value !== null && value !== '').map((value) => metadata(value)).join('');
+}
+
 function renderTurn(event) {
-  return eventRow(event, 'Turn', '');
+  const payload = objectValue(event.payload);
+  return eventRow(event, 'Turn', `${paragraph(payload.message)}${diagnosticMetadata(payload)}`);
 }
 
 function planGlyph(status) {
@@ -207,7 +217,7 @@ function renderToolCall(event, payload) {
   const response = payload.responseSummary === undefined || payload.responseSummary === null
     ? ''
     : `<details class="agent-activity-tool-response"><summary>Response</summary>${preformatted(payload.responseSummary)}</details>`;
-  return eventRow(event, 'Tool call', `${identity}${response}`);
+  return eventRow(event, 'Tool call', `${identity}${paragraph(payload.message)}${diagnosticMetadata(payload)}${response}`);
 }
 
 function renderAgentMessage(event, payload) {
@@ -216,7 +226,7 @@ function renderAgentMessage(event, payload) {
 }
 
 function renderMessage(event, payload, title) {
-  return eventRow(event, title, paragraph(payload.message));
+  return eventRow(event, title, `${paragraph(payload.message)}${diagnosticMetadata(payload)}`);
 }
 
 function renderContextCompaction(event, payload) {
