@@ -7,7 +7,8 @@ final class CodexMcpExecutionException extends CodexTransportException {
     }
 
     CodexMcpExecutionException(final String message, final Throwable cause) {
-        super(message, cause);
+        super(message + (cause == null || cause.getMessage() == null ? "" : ": "
+                + com.sitionix.forgeagent.domain.model.ExecutionDiagnosticText.summary(cause.getMessage())), cause);
     }
 
     static boolean causedBy(final Throwable failure) {

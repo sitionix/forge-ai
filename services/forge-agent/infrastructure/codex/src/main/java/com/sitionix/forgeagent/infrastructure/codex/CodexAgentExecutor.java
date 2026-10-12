@@ -90,8 +90,11 @@ public final class CodexAgentExecutor implements AgentExecutor {
                     : this.mcpSelectionService.prepare(claim, Instant.now().plus(this.properties.getTurnTimeout()));
             prepared = hasMcpContext(candidate) ? candidate : null;
         } catch (RuntimeException failure) {
-            throw new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "MCP execution preparation failed.");
+            var authorization = com.sitionix.forgeagent.domain.exception.LlmAuthorizationException.find(failure);
+            if (authorization != null) throw authorization;
+            throw this.mcpFailure("MCP execution preparation failed", failure);
         }
+        RuntimeException primaryFailure = null;
         try {
             final JsonNode userOutputSchema = this.parseOutputSchema(claim);
             final boolean selectionRequired = claim.availableOutputs().size() > 1;
@@ -199,7 +202,8 @@ public final class CodexAgentExecutor implements AgentExecutor {
                             : exception.phase() == CodexExecutionFailurePhase.THREAD_START
                                 ? "Could not start the agent context."
                                 : "Provider execution identity did not match the Forge session.";
-                    throw new ConflictException(code, message);
+                    throw new ConflictException(code, message + " Stage " + exception.phase().name()
+                            + "; upstream code " + exception.code() + ": " + exception.getMessage());
                 } catch (RuntimeException exception) {
                     throw exception;
                 } finally {
@@ -209,6 +213,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
             }
             return this.parseExecutionResult(outputText, claim.availableOutputs(), selectionRequired);
         } catch (RuntimeException failure) {
+            primaryFailure = failure;
             var authorization = com.sitionix.forgeagent.domain.exception.LlmAuthorizationException.find(failure);
             if (authorization != null) throw authorization;
             if (CodexMcpExecutionException.causedBy(failure)) {
@@ -220,20 +225,28 @@ public final class CodexAgentExecutor implements AgentExecutor {
                             diagnostic.getClass().getSimpleName(), frames.length == 0 ? "unknown" : frames[0]);
                     diagnostic = diagnostic.getCause();
                 }
-                throw new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "MCP execution failed.");
-            }
-            if (prepared != null && failure instanceof CodexTransportException) {
-                throw new CodexTransportException("Codex execution failed.");
+                throw this.mcpFailure("MCP initialization failed", failure);
             }
             throw failure;
         } finally {
             if (prepared != null && claim.agentSessionClaim() != null) {
                 try { this.mcpSelectionService.revoke(claim.agentSessionClaim()); }
                 catch (RuntimeException failure) {
-                    throw new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "MCP grant cleanup failed.");
+                    final var cleanup = this.mcpFailure("MCP grant cleanup failed", failure);
+                    if (primaryFailure == null) throw cleanup;
+                    log.warn("MCP grant cleanup failed nodeRunId={} workflowRunId={} stage=CLEANUP code={} reason={}",
+                            claim.nodeRunId(), claim.workflowRunId(), cleanup.code(), cleanup.getMessage());
+                    primaryFailure.addSuppressed(cleanup);
                 }
             }
         }
+    }
+
+    private InfrastructureExecutionException mcpFailure(final String stageMessage, final RuntimeException failure) {
+        final var safe = com.sitionix.forgeagent.domain.model.NodeRunFailure.from(failure, "No reason supplied.");
+        return new InfrastructureExecutionException("AGENT_EXECUTOR_FAILED".equals(safe.code())
+                ? "MCP_EXECUTION_FAILED" : safe.code(),
+                com.sitionix.forgeagent.domain.model.ExecutionDiagnosticText.summary(stageMessage + ": " + safe.message()));
     }
 
     private static boolean hasMcpContext(final McpExecutionPreparation prepared) {

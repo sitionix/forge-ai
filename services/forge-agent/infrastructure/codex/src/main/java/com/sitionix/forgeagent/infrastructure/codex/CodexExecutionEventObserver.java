@@ -78,7 +78,7 @@ final class CodexExecutionEventObserver {
     synchronized void fail(final RuntimeException failure) {
         if (this.callbacks == null || !this.active || this.completed) return;
         this.completed = true;
-        this.callbacks.eventCaptureCompleted(this.mapper.turnFailed(this.turnId, failure.getMessage(), Instant.now()));
+        this.callbacks.eventCaptureCompleted(this.mapper.turnFailed(this.turnId, failure, Instant.now()));
     }
 
     synchronized void discard() {

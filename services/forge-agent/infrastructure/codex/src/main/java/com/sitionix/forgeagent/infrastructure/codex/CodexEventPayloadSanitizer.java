@@ -8,7 +8,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 final class CodexEventPayloadSanitizer {
     static final int MAX_TEXT_BYTES = 65_536;
@@ -16,11 +15,6 @@ final class CodexEventPayloadSanitizer {
     private static final Set<String> SENSITIVE_KEYS = Set.of(
             "authorization", "password", "passwd", "secret", "token", "access_token",
             "refresh_token", "api_key", "apikey", "approvaltoken", "approval_token");
-    private static final Pattern SECRET_ASSIGNMENT = Pattern.compile(
-            "(?i)(\\b[A-Z0-9_-]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTHORIZATION)[A-Z0-9_-]*\\s*=\\s*)([^\\s]+)");
-    private static final Pattern BEARER = Pattern.compile("(?i)\\bBearer\\s+[A-Za-z0-9._~+/=-]+");
-    private static final Pattern PRIVATE_KEY = Pattern.compile(
-            "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----");
 
     JsonNode sanitize(final JsonNode source) {
         return this.sanitize(source, null);
@@ -41,10 +35,7 @@ final class CodexEventPayloadSanitizer {
     }
 
     String sanitizeText(final String value) {
-        if (value == null) return null;
-        String sanitized = PRIVATE_KEY.matcher(value).replaceAll(REDACTED);
-        sanitized = BEARER.matcher(sanitized).replaceAll("Bearer " + REDACTED);
-        return SECRET_ASSIGNMENT.matcher(sanitized).replaceAll("$1" + REDACTED);
+        return com.sitionix.forgeagent.domain.model.ExecutionDiagnosticText.sanitize(value);
     }
 
     private JsonNode sanitize(final JsonNode source, final String fieldName) {

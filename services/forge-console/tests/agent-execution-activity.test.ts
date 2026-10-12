@@ -31,6 +31,27 @@ function event(
 }
 
 describe('agent execution activity presentation', () => {
+  it.each(['ERROR', 'TURN', 'TOOL_CALL'])('renders %s failure reason and truthful diagnostic metadata safely', (type) => {
+    const html = renderAgentExecutionActivityEvent(event(1, type, {
+      message: 'Sign in again <script>unsafe</script>',
+      providerCode: 'UNAUTHORIZED', upstreamCode: 'unauthorized', origin: 'PROVIDER',
+      stage: 'TURN_EXECUTION', willRetry: false, requestBody: 'private body'
+    }, { status: 'FAILED' }));
+    expect(html).toContain('Sign in again &lt;script&gt;unsafe&lt;/script&gt;');
+    expect(html).toContain('unauthorized');
+    expect(html).toContain('PROVIDER');
+    expect(html).toContain('TURN_EXECUTION');
+    expect(html).toContain('Provider will retry: no');
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('private body');
+  });
+
+  it('renders retryability only when the provider supplied it', () => {
+    expect(renderAgentExecutionActivityEvent(event(1, 'ERROR', { message: 'Overloaded', willRetry: true })))
+      .toContain('Provider will retry: yes');
+    expect(renderAgentExecutionActivityEvent(event(1, 'ERROR', { message: 'Unknown', providerCode: 'UNKNOWN' })))
+      .not.toContain('Provider will retry:');
+  });
   it('maps capture statuses to user-facing labels and tones', () => {
     expect(captureStatusPresentation('NOT_STARTED')).toEqual({ label: 'Waiting', tone: 'waiting' });
     expect(captureStatusPresentation('ACTIVE')).toEqual({ label: 'Live', tone: 'live' });

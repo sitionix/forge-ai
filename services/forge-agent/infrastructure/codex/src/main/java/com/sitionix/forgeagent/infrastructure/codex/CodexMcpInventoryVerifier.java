@@ -74,7 +74,7 @@ final class CodexMcpInventoryVerifier {
                 page = transport.request(CodexProtocol.MCP_SERVER_STATUS_LIST, params, Duration.ofNanos(remaining));
             } catch (RuntimeException failure) {
                 log.warn("MCP preflight rejected reason=STATUS_REQUEST_FAILED exceptionClass={}", failure.getClass().getSimpleName());
-                throw mismatch();
+                throw new CodexMcpExecutionException("Codex MCP inventory status request failed", failure);
             }
             if (page == null || !page.isObject() || !page.path("data").isArray()) {
                 log.warn("MCP preflight rejected reason=INVALID_STATUS_PAGE");

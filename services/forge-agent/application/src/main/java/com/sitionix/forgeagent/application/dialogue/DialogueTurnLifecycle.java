@@ -103,8 +103,8 @@ public class DialogueTurnLifecycle {
         final var snapshot = dialogues.lock(claim.nodeRunId());
         if (!current(target,snapshot,request)) return;
         leases.lockCurrent(claim.agentSessionClaim());
-        final String code = error instanceof ForgeAgentException typed ? typed.code() : "AGENT_EXECUTOR_FAILED";
-        final var failure = new NodeRunFailure(code,"Dialogue agent turn failed.");
+        final var failure = NodeRunFailure.from(error, "Dialogue agent turn failed; no reason supplied.");
+        final String code = failure.code();
         dialogues.finishTurn(claim.dialogueContext().dialogueTurnId(),DialogueTurnStatus.FAILED,null,code,failure.message());
         leases.finish(claim.agentSessionClaim(),AgentExecutionTurnStatus.FAILED,code,failure.message(),true);
         this.failed(target,snapshot,failure);

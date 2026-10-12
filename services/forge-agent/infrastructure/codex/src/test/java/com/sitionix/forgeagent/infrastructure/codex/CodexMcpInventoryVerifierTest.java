@@ -25,6 +25,21 @@ class CodexMcpInventoryVerifierTest {
             new McpExecutionSelection.Entry(alias, connectionId,
                     "Search", Set.of(new McpAllowedTool("search", "sha256:fingerprint")))), List.of());
 
+    @Test void inventoryRequestFailureRetainsActualUpstreamReasonAndCode() throws Exception {
+        try (var harness = new Harness()) {
+            var result = CompletableFuture.supplyAsync(() -> verifier.verify(harness.transport, "thread-a",
+                    selected, Duration.ofSeconds(1)));
+            var request = harness.request();
+            harness.process.writeStdout("{\"id\":\"" + request.path("id").asText()
+                    + "\",\"error\":{\"code\":-32601,\"message\":\"Status method unavailable TOKEN=fixture-secret\"}}");
+            assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS)).cause()
+                    .isInstanceOf(CodexMcpExecutionException.class)
+                    .hasMessageContaining("status request failed", "Status method unavailable", "[REDACTED]")
+                    .hasMessageNotContaining("fixture-secret")
+                    .satisfies(error -> assertThat(((CodexMcpExecutionException) error).code()).isEqualTo("-32601"));
+        }
+    }
+
     @Test void exactInventoryIsEffective() throws Exception {
         try (var harness = new Harness()) {
             var result = CompletableFuture.supplyAsync(() -> verifier.verify(harness.transport, "thread-a",
@@ -170,8 +185,10 @@ class CodexMcpInventoryVerifierTest {
         try (var harness = new Harness()) {
             var result = CompletableFuture.supplyAsync(() -> verifier.verify(harness.transport, "thread-a",
                     selected, Duration.ofMillis(20)));
-            assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS))
-                    .hasRootCauseMessage("Codex MCP inventory did not match issued grants");
+            assertThatThrownBy(() -> result.get(1, TimeUnit.SECONDS)).cause()
+                    .isInstanceOf(CodexMcpExecutionException.class)
+                    .hasMessageContaining("Codex MCP inventory status request failed")
+                    .hasMessageContaining("Codex request timed out method=mcpServerStatus/list");
         }
     }
 

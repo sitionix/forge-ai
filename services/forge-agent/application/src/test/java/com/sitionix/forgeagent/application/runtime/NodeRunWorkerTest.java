@@ -56,17 +56,17 @@ class NodeRunWorkerTest {
     private NodeRunWorker worker;
 
     @Test
-    void mcpFailureDoesNotPersistRawExceptionMessage() {
+    void mcpFailurePersistsSafeActionableReason() {
         when(this.nodeRunRepository.findPendingIds()).thenReturn(List.of(NODE_RUN_A));
         when(this.lifecycle.tryStart(NODE_RUN_A)).thenReturn(Optional.of(this.claim(NODE_RUN_A)));
         when(this.agentExecutor.execute(this.claim(NODE_RUN_A)))
-                .thenThrow(new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "synthetic-secret-canary"));
+                .thenThrow(new InfrastructureExecutionException("MCP_EXECUTION_FAILED", "Gateway unavailable TOKEN=synthetic-secret-canary"));
 
         this.worker.poll();
         this.executorService.close();
 
         verify(this.lifecycle).fail(NODE_RUN_A,
-                new NodeRunFailure("MCP_EXECUTION_FAILED", "MCP execution failed."));
+                new NodeRunFailure("MCP_EXECUTION_FAILED", "Gateway unavailable TOKEN=[REDACTED]"));
     }
 
     @BeforeEach
@@ -80,6 +80,19 @@ class NodeRunWorkerTest {
                         null, null, EXECUTION_MODEL, java.time.Instant.EPOCH, null, null, null)));
         this.executorService = Executors.newVirtualThreadPerTaskExecutor();
         this.worker = new NodeRunWorker(this.nodeRunRepository, this.lifecycle, this.agentExecutor, this.executorService, this.recoveryService, this.manualLifecycle);
+    }
+
+    @Test
+    void domainBlockedOutputRemainsASuccessfulExecution() {
+        var claim = this.claim(NODE_RUN_A);
+        var result = new AgentExecutionResult(new NodeRunOutput("{\"outcome\":\"BLOCKED\"}"), null);
+        when(nodeRunRepository.findPendingIds()).thenReturn(List.of(NODE_RUN_A));
+        when(lifecycle.tryStart(NODE_RUN_A)).thenReturn(Optional.of(claim));
+        when(agentExecutor.execute(claim)).thenReturn(result);
+        worker.poll();
+        executorService.close();
+        verify(lifecycle).succeed(NODE_RUN_A, result);
+        verify(lifecycle, never()).fail(org.mockito.ArgumentMatchers.eq(NODE_RUN_A), org.mockito.ArgumentMatchers.any());
     }
 
     @Test

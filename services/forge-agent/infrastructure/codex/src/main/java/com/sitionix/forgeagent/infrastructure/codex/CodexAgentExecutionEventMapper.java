@@ -32,7 +32,6 @@ final class CodexAgentExecutionEventMapper {
     private final ObjectMapper objectMapper;
     private final CodexEventPayloadSanitizer sanitizer = new CodexEventPayloadSanitizer();
     private Map<String, Set<String>> activeMcpTools = Map.of();
-    private boolean mcpMode;
 
     CodexAgentExecutionEventMapper(final ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
@@ -40,7 +39,6 @@ final class CodexAgentExecutionEventMapper {
 
     void allowMcpTools(final Map<String, Set<String>> tools) {
         this.activeMcpTools = Map.copyOf(tools);
-        this.mcpMode = true;
     }
 
     AgentExecutionEventCandidate mcpDiagnostic(final McpExecutionSelection.Diagnostic diagnostic,
@@ -50,6 +48,8 @@ final class CodexAgentExecutionEventMapper {
         payload.put("connectionId", diagnostic.connectionId().toString());
         payload.put("code", code);
         payload.put("message", "MCP connection or approved tool unavailable.");
+        payload.put("origin", "MCP");
+        payload.put("stage", "INITIALIZATION");
         return this.event(AgentExecutionEventType.WARNING, null, null,
                 "mcp:" + diagnostic.connectionId() + ":" + code, payload, observedAt);
     }
@@ -65,8 +65,32 @@ final class CodexAgentExecutionEventMapper {
     AgentExecutionEventCandidate turnFailed(final String turnId, final String message, final Instant observedAt) {
         final ObjectNode payload = this.objectMapper.createObjectNode();
         payload.put("providerTurnId", turnId);
-        if (this.mcpMode) payload.put("message", "MCP execution failed.");
-        else if (message != null && !message.isBlank()) this.putBounded(payload, "message", message);
+        if (message != null && !message.isBlank()) this.putBounded(payload, "message", message);
+        payload.put("origin", "UNKNOWN");
+        payload.put("stage", "TURN_EXECUTION");
+        return this.event(AgentExecutionEventType.TURN, AgentExecutionEventStatus.FAILED, null,
+                "turn:" + turnId + ":failed", payload, observedAt);
+    }
+
+    AgentExecutionEventCandidate turnFailed(final String turnId, final RuntimeException failure, final Instant observedAt) {
+        final ObjectNode payload = this.objectMapper.createObjectNode();
+        payload.put("providerTurnId", turnId);
+        this.putBounded(payload, "message", failure.getMessage() == null || failure.getMessage().isBlank()
+                ? "Agent execution failed; no reason supplied." : failure.getMessage());
+        final String code = failure instanceof com.sitionix.forgeagent.domain.exception.ForgeAgentException typed
+                ? typed.code() : "AGENT_EXECUTOR_FAILED";
+        payload.put("code", code);
+        payload.put("origin", "UNKNOWN");
+        payload.put("stage", failure instanceof CodexExecutionException typed ? typed.phase().name() : "TURN_EXECUTION");
+        if (failure instanceof CodexTransportException typed) {
+            payload.put("origin", typed.origin());
+            if (typed.upstreamCode() != null) payload.put("upstreamCode", typed.upstreamCode());
+            if (typed.willRetry() != null) payload.put("willRetry", typed.willRetry());
+        }
+        if (CodexMcpExecutionException.causedBy(failure)) {
+            payload.put("origin", "MCP");
+            payload.put("stage", "INITIALIZATION");
+        }
         return this.event(AgentExecutionEventType.TURN, AgentExecutionEventStatus.FAILED, null,
                 "turn:" + turnId + ":failed", payload, observedAt);
     }
@@ -221,6 +245,15 @@ final class CodexAgentExecutionEventMapper {
         payload.put("tool", name.length() > 128 ? name.substring(0, 128) : name);
         payload.put("providerStatus", outcome);
         payload.put("responseSummary", outcome);
+        if (completed && (failed || "tool_error".equals(outcome))) {
+            payload.put("origin", "MCP");
+            payload.put("stage", "TOOL_EXECUTION");
+            final JsonNode error = item.path("error");
+            final String message = firstText(error, "message");
+            if (message != null) this.putBounded(payload, "message", message);
+            final String code = CodexTransportException.upstreamCode(error);
+            if (code != null) payload.put("upstreamCode", code);
+        }
         return Optional.of(this.event(AgentExecutionEventType.TOOL_CALL,
                 !completed ? AgentExecutionEventStatus.STARTED
                         : failed ? AgentExecutionEventStatus.FAILED : AgentExecutionEventStatus.COMPLETED,
@@ -276,21 +309,21 @@ final class CodexAgentExecutionEventMapper {
                 && params.path("willRetry").asBoolean();
         final AgentExecutionEventStatus status = type == AgentExecutionEventType.ERROR && !retrying
                 ? AgentExecutionEventStatus.FAILED : null;
-        if (this.mcpMode) {
-            final ObjectNode payload = this.objectMapper.createObjectNode();
-            payload.put("message", "Provider diagnostic during MCP-enabled execution.");
-            payload.put("providerCode", ProviderDiagnosticCode.from(
-                    params.path("error").path("codexErrorInfo")).name());
-            if (type == AgentExecutionEventType.ERROR && params.path("willRetry").isBoolean()) {
-                payload.put("willRetry", retrying);
-            }
-            return Optional.of(this.event(type, status, null, null, payload, observedAt));
-        }
         final String message = firstText(params.path("error"), "message");
         final String resolved = message == null ? firstText(params, "message", "summary") : message;
-        if (resolved == null) return Optional.empty();
+        if (resolved == null && type != AgentExecutionEventType.ERROR) return Optional.empty();
         final ObjectNode payload = this.objectMapper.createObjectNode();
-        this.putBounded(payload, "message", resolved);
+        this.putBounded(payload, "message", resolved == null ? "Provider execution failed; no reason supplied." : resolved);
+        payload.put("origin", "PROVIDER");
+        payload.put("stage", "TURN_EXECUTION");
+        this.copySanitizedText(params, payload, "threadId", "providerThreadId");
+        this.copySanitizedText(params, payload, "turnId", "providerTurnId");
+        if (type == AgentExecutionEventType.ERROR) {
+            final JsonNode error = params.path("error").isObject() ? params.path("error") : params;
+            payload.put("providerCode", ProviderDiagnosticCode.from(error.path("codexErrorInfo")).name());
+            final String code = CodexTransportException.upstreamCode(error);
+            if (code != null) payload.put("upstreamCode", code);
+        }
         if (type == AgentExecutionEventType.ERROR && params.path("willRetry").isBoolean()) {
             payload.put("willRetry", retrying);
         }
