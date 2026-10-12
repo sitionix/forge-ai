@@ -2,9 +2,85 @@ package com.sitionix.forgeagent.application.runtime;
 
 import static org.junit.jupiter.api.Assertions.*;
 import com.sitionix.forgeagent.domain.model.NodeRunFailure;
+import com.sitionix.forgeagent.domain.model.ExecutionDiagnosticText;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 class NodeRunFailureTest {
+    @Test
+    void reviewCredentialFormsAreRedactedWithoutRemovingSurroundingDiagnostics() {
+        String message = "Rejected body: \"{\\\"token\\\":\\\"escaped-canary\\\"}\"; "
+                + "headers={Authorization=[Custom custom-canary], requestId=turn-1}; "
+                + "https://host/path?api%5Fkey=encoded-canary&safe=1";
+        for (String input : new String[]{message, message.replace("\\", "\\\\").replace("\"", "\\\"")}) {
+            for (String safe : new String[]{ExecutionDiagnosticText.sanitize(input), new NodeRunFailure("OTHER", input).message()}) {
+                for (String secret : new String[]{"escaped-canary", "custom-canary", "encoded-canary"})
+                    assertFalse(safe.contains(secret), secret);
+                for (String expected : new String[]{"Rejected body", "requestId=turn-1", "https://host/path", "safe=1"})
+                    assertTrue(safe.contains(expected), expected);
+            }
+        }
+    }
+
+    @Test
+    void completeStructuredSecretValuesAndEncodedQueryKeysAreRedacted() {
+        String message = "Tool rejected {\"token\":[\"first-canary\",{\"nested\":\"second-canary\"}],\"requestId\":\"turn-1\"}; "
+                + "headers={Authorization={scheme=Custom, value=object-canary}, requestId=turn-1}; "
+                + "https://host/path?%61%70%69%5F%6B%65%79=encoded-canary&key=query-canary&safe=1";
+        String safe = ExecutionDiagnosticText.sanitize(message);
+        for (String secret : new String[]{"first-canary", "second-canary", "object-canary", "encoded-canary", "query-canary"})
+            assertFalse(safe.contains(secret), secret);
+        assertTrue(safe.contains("Tool rejected"));
+        assertTrue(safe.contains("requestId=turn-1"));
+        assertTrue(safe.contains("safe=1"));
+    }
+
+    @Test
+    void completeAuthorizationHeadersAndRecognizedProviderTokensRemainRedacted() {
+        String pat = "github_pat_" + "p".repeat(40);
+        String safe = ExecutionDiagnosticText.sanitize("Request rejected " + pat + "\n"
+                + "Authorization: Digest username=fixture, nonce=digest-canary, response=response-canary\n"
+                + "requestId=turn-1 https://host/path?X-Amz-Signature=signature-canary&safe=1");
+        for (String secret : new String[]{pat, "digest-canary", "response-canary", "signature-canary"})
+            assertFalse(safe.contains(secret), secret);
+        assertTrue(safe.contains("Request rejected"));
+        assertTrue(safe.contains("requestId=turn-1"));
+        assertTrue(safe.contains("safe=1"));
+    }
+
+    @Test
+    void opaqueHeaderValuesRemainFullyRedactedWhileQueryParametersKeepTheirBoundaries() {
+        String safe = ExecutionDiagnosticText.sanitize("Request rejected\n"
+                + "Authorization: Custom prefix{auth-canary}auth-tail-canary\n"
+                + "Cookie: sid=prefix{cookie-canary}cookie-tail-canary; other=second-canary\n"
+                + "requestId=turn-1 https://host/path?authorization=query-auth-canary&cookie=query-cookie-canary&safe=1");
+        for (String secret : new String[]{"auth-canary", "auth-tail-canary", "cookie-canary", "cookie-tail-canary",
+                "second-canary", "query-auth-canary", "query-cookie-canary"}) assertFalse(safe.contains(secret), secret);
+        assertTrue(safe.contains("Request rejected"));
+        assertTrue(safe.contains("requestId=turn-1"));
+        assertTrue(safe.contains("safe=1"));
+        assertEquals("Rejected {\"authorization\":[REDACTED],\"requestId\":\"turn-1\"}",
+                ExecutionDiagnosticText.sanitize("Rejected {\"authorization\":null,\"requestId\":\"turn-1\"}"));
+    }
+
+    @Test
+    void largeNonUrlTextDoesNotStallSynchronousDiagnosticHandling() {
+        for (String character : new String[]{"x", "\\", "token"}) {
+            String text = character.repeat(64_000 / character.length());
+            assertTimeout(Duration.ofSeconds(2), () -> assertEquals(text, ExecutionDiagnosticText.sanitize(text)));
+        }
+    }
+
+    @Test
+    void terminalCodesHonorTheExisting120CharacterPersistenceLimit() {
+        assertEquals("x".repeat(120), ExecutionDiagnosticText.code("x".repeat(120)));
+        for (int length : new int[]{121, 128}) {
+            String code = "x".repeat(length);
+            assertNull(ExecutionDiagnosticText.code(code));
+            assertEquals("AGENT_EXECUTOR_FAILED", new NodeRunFailure(code, "Request rejected").code());
+        }
+    }
+
     @Test
     void terminalSummaryPreservesTheReasonButRedactsCredentialForms() {
         var failure = new NodeRunFailure("unauthorized", "Sign in again. "

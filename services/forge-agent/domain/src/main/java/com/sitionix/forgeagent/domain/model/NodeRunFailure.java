@@ -5,6 +5,7 @@ public record NodeRunFailure(
         String message
 ) {
     public NodeRunFailure {
+        if (code != null && code.length() > 120) code = "AGENT_EXECUTOR_FAILED";
         message = ExecutionDiagnosticText.summary(message);
     }
 

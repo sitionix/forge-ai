@@ -19,6 +19,56 @@ class CodexAgentExecutionEventMapperTest {
     private final CodexAgentExecutionEventMapper mapper = new CodexAgentExecutionEventMapper(this.json);
 
     @Test
+    void reviewedCredentialFormsAreSafeAcrossProviderTerminalAndApprovedToolEvents() throws Exception {
+        mapper.allowMcpTools(Map.of("forge_fixture", Set.of("search")));
+        String message = "Rejected body: \"{\\\"token\\\":\\\"escaped-canary\\\"}\"; "
+                + "headers={Authorization=[Custom custom-canary], requestId=turn-1}; "
+                + "https://host/path?api%5Fkey=encoded-canary&safe=1";
+        var params = json.createObjectNode().put("threadId", "t").put("turnId", "u").put("willRetry", false);
+        params.putObject("error").put("codexErrorInfo", "badRequest").put("message", message);
+        var tracker = new CodexTurnStateTracker();
+        var state = tracker.register("t");
+        tracker.bindTurnId(state, "u");
+        tracker.handleNotification("error", params);
+        var failure = org.junit.jupiter.api.Assertions.assertThrows(java.util.concurrent.CompletionException.class,
+                () -> state.result().join());
+        var terminal = com.sitionix.forgeagent.domain.model.NodeRunFailure.from((RuntimeException) failure.getCause(), "fallback");
+        var toolParams = json.createObjectNode().put("threadId", "t").put("turnId", "u");
+        var tool = toolParams.putObject("item").put("id", "m1").put("type", "mcpToolCall")
+                .put("server", "forge_fixture").put("tool", "search").put("status", "failed");
+        tool.putObject("error").put("message", message);
+        tool.putObject("arguments").put("query", "argument-canary");
+        tool.putObject("result").put("text", "result-canary");
+        var providerEvent = mapper.map("error", params, OBSERVED_AT).orElseThrow();
+        var toolEvent = mapper.map("item/completed", toolParams, OBSERVED_AT).orElseThrow();
+        for (String safe : new String[]{providerEvent.payload(), terminal.message(), toolEvent.payload()}) {
+            assertThat(safe).doesNotContain("escaped-canary", "custom-canary", "encoded-canary", "argument-canary", "result-canary")
+                    .contains("Rejected body", "requestId=turn-1", "https://host/path", "safe=1");
+        }
+        assertThat(terminal.code()).isEqualTo("badRequest");
+        assertThat(payload(providerEvent).path("willRetry").asBoolean()).isFalse();
+        assertThat(toolEvent.providerEventKey()).isEqualTo("item:m1:completed");
+    }
+
+    @Test
+    void diagnosticCodesSurviveWhileTerminalCodesStayWithinPersistenceWidth() throws Exception {
+        for (int length : new int[]{120, 121, 128}) {
+            String upstreamCode = "x".repeat(length);
+            var error = json.createObjectNode().put("code", upstreamCode).put("message", "Request rejected");
+            var failure = CodexTransportException.providerFailure(error, false);
+            var terminal = com.sitionix.forgeagent.domain.model.NodeRunFailure.from(failure, "fallback");
+            assertThat(terminal.code()).isEqualTo(length <= 120 ? upstreamCode : "AGENT_EXECUTOR_FAILED");
+            var params = json.createObjectNode().put("threadId", "t").put("turnId", "u");
+            params.set("error", error);
+            assertThat(payload(mapper.map("error", params, OBSERVED_AT).orElseThrow()).path("upstreamCode").asText())
+                    .isEqualTo(upstreamCode);
+            var failedTurn = payload(mapper.turnFailed("u", failure, OBSERVED_AT));
+            assertThat(failedTurn.path("code").asText()).isEqualTo(terminal.code());
+            assertThat(failedTurn.path("upstreamCode").asText()).isEqualTo(upstreamCode);
+        }
+    }
+
+    @Test
     void mcpEnabledProviderFailurePreservesReasonCodeCorrelationAndRetryability() throws Exception {
         this.mapper.allowMcpTools(Map.of("forge_allowed", Set.of("search")));
         final var event = map("error", """

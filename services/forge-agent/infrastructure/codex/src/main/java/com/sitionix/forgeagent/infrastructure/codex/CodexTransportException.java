@@ -30,11 +30,12 @@ class CodexTransportException extends com.sitionix.forgeagent.domain.exception.F
 
     static CodexTransportException providerFailure(final com.fasterxml.jackson.databind.JsonNode error,
                                                    final Boolean willRetry) {
-        final String code = upstreamCode(error);
+        final String upstreamCode = upstreamCode(error);
+        final String code = com.sitionix.forgeagent.domain.model.ExecutionDiagnosticText.code(upstreamCode);
         final String message = error.path("message").isTextual() ? error.path("message").asText() : null;
         return new CodexTransportException(code == null ? "AGENT_EXECUTOR_FAILED" : code,
                 message == null || message.isBlank() ? "Codex execution failed." : message,
-                null, code, willRetry, "PROVIDER");
+                null, upstreamCode, willRetry, "PROVIDER");
     }
 
     static String upstreamCode(final com.fasterxml.jackson.databind.JsonNode error) {
@@ -43,7 +44,7 @@ class CodexTransportException extends com.sitionix.forgeagent.domain.exception.F
                 : info.isObject() && info.size() == 1 ? info.fieldNames().next()
                 : error.path("code").isTextual() || error.path("code").isIntegralNumber()
                     ? error.path("code").asText() : null;
-        return com.sitionix.forgeagent.domain.model.ExecutionDiagnosticText.code(candidate);
+        return com.sitionix.forgeagent.domain.model.ExecutionDiagnosticText.diagnosticCode(candidate);
     }
 
     String upstreamCode() { return this.upstreamCode; }

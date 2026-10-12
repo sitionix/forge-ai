@@ -11,12 +11,12 @@ import com.sitionix.forgeagent.domain.port.dialogue.DialogueRepository;
 import java.time.*;
 import java.util.*;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 class DialogueTurnLifecycleFailureTest {
     @ParameterizedTest
-    @ValueSource(strings = {"badRequest", "LLM_BROWSER_DENIED", "INVALID_DIALOGUE_RESULT", "AGENT_EXECUTOR_FAILED"})
+    @MethodSource("failureCodes")
     void safeReasonAndExistingCodeSurviveDialogueSessionAndNodeBoundaries(String code) {
         var dialogues = mock(DialogueRepository.class);
         var nodes = mock(NodeRunRepository.class);
@@ -47,19 +47,26 @@ class DialogueTurnLifecycleFailureTest {
         var lifecycle = new DialogueTurnLifecycle(dialogues, nodes, mock(AgentExecutionSessionRepository.class),
                 locks, leases, mock(ExecutionWorkspaceResolver.class), mock(DialogueExecutionRequestFactory.class),
                 mock(DialogueTurnResultPolicy.class), mock(DialogueTranscript.class), coordinator, Clock.systemUTC());
+        String detail = " TOKEN=fixture-secret; body=\"{\\\"token\\\":\\\"escaped-canary\\\"}\"; "
+                + "headers={Authorization=[Custom custom-canary], requestId=turn-1}; "
+                + "https://host/path?api%5Fkey=encoded-canary&safe=1";
+        String safeDetail = " TOKEN=[REDACTED]; body=\"{\\\"token\\\":[REDACTED]}\"; "
+                + "headers={Authorization=[REDACTED], requestId=turn-1}; "
+                + "https://host/path?api%5Fkey=[REDACTED]&safe=1";
         RuntimeException failure = code.equals("AGENT_EXECUTOR_FAILED")
-                ? new IllegalStateException("Unknown provider failure TOKEN=fixture-secret")
-                : new InfrastructureExecutionException(code, "Request rejected TOKEN=fixture-secret");
+                ? new IllegalStateException("Unknown provider failure" + detail)
+                : new InfrastructureExecutionException(code, "Request rejected" + detail);
         String message = code.equals("AGENT_EXECUTOR_FAILED")
-                ? "Unknown provider failure TOKEN=[REDACTED]" : "Request rejected TOKEN=[REDACTED]";
+                ? "Unknown provider failure" + safeDetail : "Request rejected" + safeDetail;
+        String terminalCode = code.length() <= 120 ? code : "AGENT_EXECUTOR_FAILED";
 
         lifecycle.fail(request, failure);
 
-        verify(dialogues).finishTurn(dialogueId, DialogueTurnStatus.FAILED, null, code, message);
-        verify(leases).finish(session, AgentExecutionTurnStatus.FAILED, code, message, true);
+        verify(dialogues).finishTurn(dialogueId, DialogueTurnStatus.FAILED, null, terminalCode, message);
+        verify(leases).finish(session, AgentExecutionTurnStatus.FAILED, terminalCode, message, true);
         var saved = ArgumentCaptor.forClass(NodeRun.class);
         verify(nodes).saveAndFlush(saved.capture());
-        assertThat(saved.getValue().failure()).isEqualTo(new NodeRunFailure(code, message));
+        assertThat(saved.getValue().failure()).isEqualTo(new NodeRunFailure(terminalCode, message));
         assertThat(saved.getValue().status()).isEqualTo(NodeRunStatus.FAILED);
         assertThat(saved.getValue().output()).isNull();
         verify(coordinator).reconcile(run);
@@ -71,5 +78,10 @@ class DialogueTurnLifecycleFailureTest {
         verify(leases, never()).finish(any(), any(), any(), any(), anyBoolean());
         verify(nodes, never()).saveAndFlush(any());
         verify(coordinator, never()).reconcile(any(WorkflowRun.class));
+    }
+
+    private static java.util.stream.Stream<String> failureCodes() {
+        return java.util.stream.Stream.of("badRequest", "LLM_BROWSER_DENIED", "INVALID_DIALOGUE_RESULT", "AGENT_EXECUTOR_FAILED",
+                "x".repeat(120), "x".repeat(121), "x".repeat(128));
     }
 }
