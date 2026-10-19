@@ -1,0 +1,5 @@
+{
+  "code": "INVALID_TRIGGER_BINDING",
+  "message": "Configuration does not belong to the selected connection.",
+  "correlationId": "trigger-invalid"
+}

@@ -25,12 +25,69 @@ import com.sitionix.forgeai.infrastructure.agentclient.dto.AssetMonitoringReques
 import com.sitionix.forgeai.infrastructure.agentclient.dto.AgentExecutionEventPageResponse;
 import com.sitionix.forgeai.infrastructure.agentclient.dto.RecoveredNodeRunRetryResponse;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
 import org.springframework.http.HttpStatus;
 
 public final class ForgeAgentWireMockEndpoints {
+    public static Endpoint<Void, TriggerClientDtos.Connection[]> triggerConnections() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/trigger-connections", HttpMethod.GET,
+                Void.class, TriggerClientDtos.Connection[].class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("trigger-connections-response.json"));
+    }
+
+    public static Endpoint<Void, TriggerClientDtos.Configuration[]> triggerConfigurations() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/trigger-connections/{connectionId}/configurations", HttpMethod.GET,
+                Void.class, TriggerClientDtos.Configuration[].class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("trigger-configurations-response.json"));
+    }
+
+    public static Endpoint<Void, TriggerClientDtos.Binding> triggerBinding(final String variant) {
+        return Endpoint.createContract(
+                "/api/v1/workflows/{workflowId}/nodes/{nodeId}/trigger-binding", HttpMethod.GET,
+                Void.class, TriggerClientDtos.Binding.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("trigger-" + variant + "-response.json"));
+    }
+
+    public static Endpoint<TriggerClientDtos.Selection, TriggerClientDtos.Binding> saveTriggerBinding(final String variant) {
+        return Endpoint.createContract(
+                "/api/v1/workflows/{workflowId}/nodes/{nodeId}/trigger-binding", HttpMethod.PUT,
+                TriggerClientDtos.Selection.class, TriggerClientDtos.Binding.class,
+                (WiremockDefault) context -> context.plainUrl().matchesJson("trigger-" + variant + "-request.json").responseStatus(200).responseBody("trigger-" + variant + "-response.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> triggerConnectionsError() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/trigger-connections", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(404).responseBody("trigger-not-found-response.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> triggerConfigurationsError() {
+        return Endpoint.createContract(
+                "/api/v1/projects/{projectId}/trigger-connections/{connectionId}/configurations", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(404).responseBody("trigger-not-found-response.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> triggerBindingError() {
+        return Endpoint.createContract(
+                "/api/v1/workflows/{workflowId}/nodes/{nodeId}/trigger-binding", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(404).responseBody("trigger-not-found-response.json"));
+    }
+
+    public static Endpoint<TriggerClientDtos.Selection, InfrastructureErrorResponse> saveTriggerBindingError() {
+        return Endpoint.createContract(
+                "/api/v1/workflows/{workflowId}/nodes/{nodeId}/trigger-binding", HttpMethod.PUT,
+                TriggerClientDtos.Selection.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context.plainUrl().matchesJson("trigger-configured-request.json").responseStatus(400).responseBody("trigger-invalid-response.json"));
+    }
+
     public static Endpoint<Void, com.sitionix.forgeai.infrastructure.agentclient.dto.McpProbeInboundResponse> testMcpConnection() {
         return Endpoint.createContract("/api/v1/integrations/mcp/connections/{id}/test", HttpMethod.POST,
                 Void.class, com.sitionix.forgeai.infrastructure.agentclient.dto.McpProbeInboundResponse.class,

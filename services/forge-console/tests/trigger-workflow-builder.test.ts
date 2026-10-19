@@ -17,6 +17,9 @@ describe('Trigger workflow infrastructure',()=>{
  it('adds a non-agent entry and saves a connection selection independently of nodes',async()=>{
   const t=setup();t.builder.addTriggerNode();const node=t.builder.workflow.nodes[0];
   expect(node).toMatchObject({nodeType:'TRIGGER',targetId:null});
+  expect(t.builder.workflow.taskInputPortId).toBe(node.inputs[0].id);
+  expect(t.builder.workflow.taskOutputPortId).toBe(node.outputs[0].id);
+  expect(t.doc.getElementById('agentsV2NodeEditorDialog')?.hasAttribute('open')).toBe(true);
   expect(t.doc.querySelector('[data-task-input]')).toBeNull();
   expect(t.doc.querySelector('[data-node-input-port]')).toBeNull();
   t.builder.openNodeEditor(node.id);await flush();
@@ -78,5 +81,75 @@ describe('Trigger editing recovery',()=>{
   t.builder.openNodeEditor(node.id);await flush();
   expect((t.doc.querySelector('[data-trigger-connection]') as HTMLSelectElement).value).toBe('');
   t.builder.close();t.builder.dispose();t.dom.window.close();
+ });
+});
+
+
+describe('Trigger creation failures', () => {
+ it.each([
+  ['empty workflow', false, 0],
+  ['existing workflow', true, 0],
+  ['input UUID', true, 1],
+  ['output UUID', true, 2],
+ ])('preserves the graph when UUID generation fails: %s', (_name, existing, failureIndex) => {
+  const t = setup();
+  try {
+   if (existing) {
+    t.builder.addManualNode();
+    t.builder.addManualNode();
+    const [first, second] = t.builder.workflow.nodes;
+    t.builder.workflow.connections = [{id:'edge', sourceOutputPortId:first.outputs[0].id, targetInputPortId:second.inputs[0].id}];
+    t.builder.workflow.taskInputPortId = first.inputs[0].id;
+    // Leave output unset: failure must not assign the previous node's output.
+    t.builder.workflow.taskOutputPortId = null;
+   }
+   const before = structuredClone(t.builder.workflow);
+   const editor = vi.spyOn(t.builder, 'openNodeEditor');
+   let call = 0;
+   vi.spyOn(t.builder, 'randomUuid').mockImplementation(() => {
+    if (call++ === failureIndex) throw new Error('UUID unavailable');
+    return `new-${call}`;
+   });
+   expect(() => t.builder.addTriggerNode()).not.toThrow();
+   expect(t.builder.workflow).toEqual(before);
+   expect(editor).not.toHaveBeenCalled();
+   expect(t.doc.getElementById('agentsV2NodeEditorDialog')?.hasAttribute('open')).toBe(false);
+   expect(t.doc.getElementById('agentsV2WorkflowBuilderError')?.textContent).toContain('UUID unavailable');
+  } finally { t.builder.close(); t.dom.window.close(); }
+ });
+
+ it.each(['node', 'input', 'output', 'generated ports'])('rejects a duplicate %s UUID without graph changes', collision => {
+  const t = setup();
+  try {
+   t.builder.addManualNode();
+   const existing = t.builder.workflow.nodes[0];
+   t.builder.workflow.taskInputPortId = existing.inputs[0].id;
+   t.builder.workflow.taskOutputPortId = existing.outputs[0].id;
+   const before = structuredClone(t.builder.workflow);
+   const editor = vi.spyOn(t.builder, 'openNodeEditor');
+   const ids = collision === 'node' ? [existing.id, 'new-input', 'new-output']
+    : collision === 'input' ? ['new-node', existing.inputs[0].id, 'new-output']
+    : collision === 'output' ? ['new-node', 'new-input', existing.outputs[0].id]
+    : ['new-node', 'same-port', 'same-port'];
+   vi.spyOn(t.builder, 'randomUuid').mockImplementation(() => ids.shift());
+   expect(() => t.builder.addTriggerNode()).not.toThrow();
+   expect(t.builder.workflow).toEqual(before);
+   expect(editor).not.toHaveBeenCalled();
+   expect(t.doc.getElementById('agentsV2NodeEditorDialog')?.hasAttribute('open')).toBe(false);
+   expect(t.doc.getElementById('agentsV2WorkflowBuilderError')?.textContent).toContain('duplicate ID');
+  } finally { t.builder.close(); t.dom.window.close(); }
+ });
+
+ it('returns the created preset node and null on failure', () => {
+  const t = setup();
+  try {
+   const preset = {inputs:[{name:'Input'}], outputs:[{name:'Output'}]};
+   const created = t.builder.addPresetNode('MANUAL', null, preset);
+   expect(created).toBe(t.builder.workflow.nodes[0]);
+   vi.spyOn(t.builder, 'randomUuid').mockImplementation(() => { throw new Error('UUID unavailable'); });
+   expect(t.builder.addPresetNode('MANUAL', null, preset)).toBeNull();
+   t.builder.close();
+   expect(t.builder.addPresetNode('MANUAL', null, preset)).toBeNull();
+  } finally { t.builder.close(); t.dom.window.close(); }
  });
 });

@@ -1,0 +1,12 @@
+[
+  {
+    "id": "55555555-5555-4555-8555-555555555555",
+    "displayName": "Integration A",
+    "enabled": true
+  },
+  {
+    "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "displayName": "Integration B",
+    "enabled": false
+  }
+]

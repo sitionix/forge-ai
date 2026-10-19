@@ -25,12 +25,69 @@ import com.sitionix.forgeai.api.agentproxy.AgentAssetMonitoringRequest;
 import com.sitionix.forgeai.api.agentproxy.AgentExecutionEventPageResponse;
 import com.sitionix.forgeai.api.agentproxy.AgentRecoveredNodeRunRetryResponse;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.sitionix.forgeai.domain.model.trigger.TriggerModels;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
 import org.springframework.http.HttpStatus;
 
 public final class NexusAgentMockMvcEndpoints {
+    public static Endpoint<Void, TriggerModels.Connection[]> triggerConnections() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/trigger-connections", HttpMethod.GET,
+                Void.class, TriggerModels.Connection[].class,
+                (MockmvcDefault) context -> context.expectStatus(200).expectResponse("trigger-connections-response.json"));
+    }
+
+    public static Endpoint<Void, TriggerModels.Configuration[]> triggerConfigurations() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/trigger-connections/{connectionId}/configurations", HttpMethod.GET,
+                Void.class, TriggerModels.Configuration[].class,
+                (MockmvcDefault) context -> context.expectStatus(200).expectResponse("trigger-configurations-response.json"));
+    }
+
+    public static Endpoint<Void, TriggerModels.Binding> triggerBinding(final String variant) {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/workflows/{workflowId}/nodes/{nodeId}/trigger-binding", HttpMethod.GET,
+                Void.class, TriggerModels.Binding.class,
+                (MockmvcDefault) context -> context.expectStatus(200).expectResponse("trigger-" + variant + "-response.json"));
+    }
+
+    public static Endpoint<TriggerModels.Selection, TriggerModels.Binding> saveTriggerBinding(final String variant) {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/workflows/{workflowId}/nodes/{nodeId}/trigger-binding", HttpMethod.PUT,
+                TriggerModels.Selection.class, TriggerModels.Binding.class,
+                (MockmvcDefault) context -> context.withRequest("trigger-" + variant + "-request.json").expectStatus(200).expectResponse("trigger-" + variant + "-response.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> triggerConnectionsError() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/trigger-connections", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(404).expectResponse("trigger-not-found-response.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> triggerConfigurationsError() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/projects/{projectId}/trigger-connections/{connectionId}/configurations", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(404).expectResponse("trigger-not-found-response.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> triggerBindingError() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/workflows/{workflowId}/nodes/{nodeId}/trigger-binding", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(404).expectResponse("trigger-not-found-response.json"));
+    }
+
+    public static Endpoint<TriggerModels.Selection, InfrastructureErrorResponse> saveTriggerBindingError() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/agents/workflows/{workflowId}/nodes/{nodeId}/trigger-binding", HttpMethod.PUT,
+                TriggerModels.Selection.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.withRequest("trigger-configured-request.json").expectStatus(400).expectResponse("trigger-invalid-response.json"));
+    }
+
     public static Endpoint<Void, com.sitionix.forgeai.api.mcp.McpProbeResponse> testMcpConnection(int status) {
         return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}/test", HttpMethod.POST,
                 Void.class, com.sitionix.forgeai.api.mcp.McpProbeResponse.class,

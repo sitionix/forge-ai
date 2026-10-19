@@ -52,6 +52,70 @@ class NexusAgentProxyIT {
     @Autowired
     private NexusProxyTestManager testManager;
 
+    @Test
+    void triggerConnectionsForwardProjectAndPreserveTypedSummaries() {
+        verify(ForgeAgentWireMockEndpoints.triggerConnections(), NexusAgentMockMvcEndpoints.triggerConnections(),
+                WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())),
+                PathParams.create().add("projectId", PROJECT_ID));
+    }
+
+    @Test
+    void triggerConfigurationsForwardProjectAndConnectionAndPreserveOwnership() {
+        verify(ForgeAgentWireMockEndpoints.triggerConfigurations(), NexusAgentMockMvcEndpoints.triggerConfigurations(),
+                WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString()))
+                        .add("connectionId", equalTo(CONNECTION_ID.toString())),
+                PathParams.create().add("projectId", PROJECT_ID).add("connectionId", CONNECTION_ID));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"configured", "connection-only", "unbound"})
+    void triggerBindingPreservesConnectionAndNullableConfiguration(final String variant) {
+        verify(ForgeAgentWireMockEndpoints.triggerBinding(variant), NexusAgentMockMvcEndpoints.triggerBinding(variant),
+                WireMockPathParams.create().add("workflowId", equalTo(RUN_ID.toString()))
+                        .add("nodeId", equalTo(NODE_RUN_ID.toString())),
+                PathParams.create().add("workflowId", RUN_ID).add("nodeId", NODE_RUN_ID));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"configured", "connection-only", "unbound"})
+    void saveTriggerBindingForwardsTypedSelectionIncludingNulls(final String variant) {
+        verify(ForgeAgentWireMockEndpoints.saveTriggerBinding(variant), NexusAgentMockMvcEndpoints.saveTriggerBinding(variant),
+                WireMockPathParams.create().add("workflowId", equalTo(RUN_ID.toString()))
+                        .add("nodeId", equalTo(NODE_RUN_ID.toString())),
+                PathParams.create().add("workflowId", RUN_ID).add("nodeId", NODE_RUN_ID));
+    }
+
+    @Test
+    void triggerConnectionsPreserveUpstreamNotFound() {
+        verify(ForgeAgentWireMockEndpoints.triggerConnectionsError(), NexusAgentMockMvcEndpoints.triggerConnectionsError(),
+                WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString())),
+                PathParams.create().add("projectId", PROJECT_ID));
+    }
+
+    @Test
+    void triggerConfigurationsPreserveUpstreamNotFound() {
+        verify(ForgeAgentWireMockEndpoints.triggerConfigurationsError(), NexusAgentMockMvcEndpoints.triggerConfigurationsError(),
+                WireMockPathParams.create().add("projectId", equalTo(PROJECT_ID.toString()))
+                        .add("connectionId", equalTo(CONNECTION_ID.toString())),
+                PathParams.create().add("projectId", PROJECT_ID).add("connectionId", CONNECTION_ID));
+    }
+
+    @Test
+    void triggerBindingPreservesUpstreamNotFound() {
+        verify(ForgeAgentWireMockEndpoints.triggerBindingError(), NexusAgentMockMvcEndpoints.triggerBindingError(),
+                WireMockPathParams.create().add("workflowId", equalTo(RUN_ID.toString()))
+                        .add("nodeId", equalTo(NODE_RUN_ID.toString())),
+                PathParams.create().add("workflowId", RUN_ID).add("nodeId", NODE_RUN_ID));
+    }
+
+    @Test
+    void saveTriggerBindingPreservesUpstreamValidationError() {
+        verify(ForgeAgentWireMockEndpoints.saveTriggerBindingError(), NexusAgentMockMvcEndpoints.saveTriggerBindingError(),
+                WireMockPathParams.create().add("workflowId", equalTo(RUN_ID.toString()))
+                        .add("nodeId", equalTo(NODE_RUN_ID.toString())),
+                PathParams.create().add("workflowId", RUN_ID).add("nodeId", NODE_RUN_ID));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"agent-manual-selection-missing-port-request.json",
             "agent-manual-selection-null-port-request.json", "agent-manual-selection-invalid-port-request.json"})

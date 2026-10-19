@@ -1,0 +1,5 @@
+{
+  "code": "MCP_CONNECTION_NOT_FOUND",
+  "message": "MCP connection was not found.",
+  "correlationId": "trigger-not-found"
+}

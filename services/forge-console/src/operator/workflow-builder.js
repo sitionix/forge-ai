@@ -191,8 +191,8 @@ export class WorkflowBuilder {
     if (!this.workflow || this.workflow.nodes.some(node => node.nodeType === 'TRIGGER')) {
       this.showError('This workflow already has a Trigger.'); return;
     }
-    this.addPresetNode('TRIGGER', null, {inputs:[{name:'Start',description:'Trigger entry.'}], outputs:[{name:'Item',description:'Item supplied by the trigger.'}]});
-    const node = this.workflow.nodes.at(-1);
+    const node = this.addPresetNode('TRIGGER', null, {inputs:[{name:'Start',description:'Trigger entry.'}], outputs:[{name:'Item',description:'Item supplied by the trigger.'}]});
+    if (!node) return;
     this.workflow.taskInputPortId = node.inputs[0].id;
     if (!this.workflow.taskOutputPortId) this.workflow.taskOutputPortId = node.outputs[0].id;
     this.render(); this.openNodeEditor(node.id);
@@ -204,7 +204,7 @@ export class WorkflowBuilder {
 
   addPresetNode(nodeType, targetId, preset) {
     if (!this.workflow) {
-      return;
+      return null;
     }
     this.showError('');
     let nodeId;
@@ -216,16 +216,16 @@ export class WorkflowBuilder {
       outputs = preset.outputs.map((port, order) => ({ ...port, id: this.randomUuid(), order }));
     } catch (error) {
       this.showError(error.message || 'Node UUID generation unavailable.');
-      return;
+      return null;
     }
     const ids = [nodeId, ...inputs.map((port) => port.id), ...outputs.map((port) => port.id)];
     if (new Set(ids).size !== ids.length || ids.some((id) =>
       this.workflow.nodes.some((node) => node.id === id) || this.portById(id))) {
       this.showError('Node UUID generation produced a duplicate ID.');
-      return;
+      return null;
     }
     const index = this.workflow.nodes.length;
-    this.workflow.nodes.push({
+    const node = {
       id: nodeId,
       nodeType,
       targetId,
@@ -240,8 +240,10 @@ export class WorkflowBuilder {
         x: NODE_START_X + (index % 3) * NODE_HORIZONTAL_STEP,
         y: NODE_START_Y + Math.floor(index / 3) * NODE_VERTICAL_STEP
       }
-    });
+    };
+    this.workflow.nodes.push(node);
     this.render();
+    return node;
   }
 
   removeNode(nodeId) {
