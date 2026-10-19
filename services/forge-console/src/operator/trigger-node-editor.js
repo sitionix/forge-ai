@@ -2,7 +2,8 @@ import { escapeHtml } from './dom-render-helpers.js';
 
 // Connection-owned configurations are separate from the common node model.
 export class TriggerNodeEditor {
-  constructor({document, api, onValidity}) {
+  constructor({document, api, onValidity, onAddConfiguration=()=>{}}) {
+    this.onAddConfiguration=onAddConfiguration;
     this.document = document; this.api = api; this.onValidity = onValidity;
     this.version = 0; this.drafts = new Map(); this.connectionNames = new Map();
   }
@@ -79,12 +80,13 @@ export class TriggerNodeEditor {
       </label>
       <p class="field-hint" role="status">${this.loading ? 'Loading trigger settings…' : this.selection.connectionId && !this.configurations.length && !this.error ? 'No configurations for this connection yet.' : !this.selection.connectionId ? 'Select a connection to see its configurations.' : ''}</p>
       ${this.error ? `<div class="error-box" role="alert">${escapeHtml(this.error)}</div><button class="button small secondary" type="button" data-trigger-retry>Retry</button>` : ''}
-      <button class="button secondary" type="button" data-add-trigger-configuration disabled title="Configuration creation will be added in a later step.">+ Add configuration</button>
-      <p class="field-hint">Configuration creation and automatic execution will be added later.</p>`;
+      <button class="button secondary" type="button" data-add-trigger-configuration ${this.loading || !this.selection.connectionId ? 'disabled' : ''} title="Create a configuration in this connection’s settings.">+ Add configuration</button>
+      <p class="field-hint">Create configurations in connection settings, then reopen this editor to refresh the list. Automatic execution is not available yet.</p>`;
     body.querySelector('[data-trigger-connection]')?.addEventListener('change', event => this.changeConnection(event.target.value));
     body.querySelector('[data-trigger-configuration]')?.addEventListener('change', event => {
       this.selection.configurationId = event.target.value || null;
     });
+    body.querySelector('[data-add-trigger-configuration]')?.addEventListener('click',()=>this.onAddConfiguration(this.selection.connectionId));
     body.querySelector('[data-trigger-retry]')?.addEventListener('click', () => {
       if (this.selection.connectionId && this.connections.some(c => c.id === this.selection.connectionId)) {
         this.error = ''; this.loading = true; const version = ++this.version; this.render(); this.loadConfigurations(version);

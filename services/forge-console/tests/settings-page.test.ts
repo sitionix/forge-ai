@@ -78,4 +78,16 @@ describe('Settings integrations',()=>{
  it('shows feature unavailable with explicit read retry',async()=>{
  const {page,fetcher}=setup([],503);await tick();expect(document.querySelector('#mcpError')?.textContent).toContain('unavailable');expect((document.querySelector('#mcpRetry') as HTMLElement).hidden).toBe(false);(document.querySelector('#mcpRetry') as HTMLButtonElement).click();await tick();expect(fetcher.mock.calls.filter(([url])=>url.endsWith('/connections'))).toHaveLength(2);expect(fetcher.mock.calls.filter(([url])=>url.includes('/available?'))).toHaveLength(1);page.dispose();
  });
+ it('keeps the configuration editor usable when connection removal is cancelled',async()=>{
+  const {page,fetcher}=setup([connection]);await tick();const controller=page as any;
+  await controller.details(connection.id);
+  vi.spyOn(controller.api,'getTriggerConfiguration').mockResolvedValue({id:'config',name:'Keep this draft',definition:null});
+  await controller.triggerConfigurations.edit('config');
+  const confirm=vi.spyOn(window,'confirm').mockReturnValueOnce(false);
+  await controller.mutate('remove');
+  expect(controller.triggerConfigurations.draft?.name).toBe('Keep this draft');
+  expect(controller.triggerConfigurations.container).toBe(document.getElementById('mcpTriggerConfigurations'));
+  expect(fetcher.mock.calls.some(([,request])=>request?.method==='DELETE')).toBe(false);
+  confirm.mockRestore();page.dispose();
+ });
 });

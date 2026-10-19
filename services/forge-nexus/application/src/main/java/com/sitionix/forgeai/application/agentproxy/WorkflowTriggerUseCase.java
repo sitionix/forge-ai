@@ -12,4 +12,9 @@ public class WorkflowTriggerUseCase implements ManageWorkflowTriggers {
  public List<TriggerModels.Configuration> configurations(UUID projectId,UUID connectionId){return client.configurations(projectId,connectionId);}
  public TriggerModels.Binding binding(UUID workflowId,UUID nodeId){return client.binding(workflowId,nodeId);}
  public TriggerModels.Binding save(UUID workflowId,UUID nodeId,TriggerModels.Selection selection){return client.save(workflowId,nodeId,selection);}
+
+ public List<TriggerModels.Configuration> configurationList(UUID connectionId){return client.configurationList(connectionId);}
+ public TriggerModels.Document configuration(UUID connectionId,UUID id){return client.configuration(connectionId,id);}
+ public TriggerModels.Document createConfiguration(UUID connectionId,TriggerModels.DefinitionRequest request){return client.createConfiguration(connectionId,request);}
+ public TriggerModels.Document updateConfiguration(UUID connectionId,UUID id,TriggerModels.DefinitionRequest request){return client.updateConfiguration(connectionId,id,request);}
 }

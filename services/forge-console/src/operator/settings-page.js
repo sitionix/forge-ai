@@ -1,3 +1,4 @@
+import {TriggerConfigurationEditor} from './trigger-configuration-editor.js';
 import {McpConnectionForm} from './mcp-connection-form.js';
 import {McpApi} from './mcp-api.js';
 import {McpCatalogConnect} from './mcp-catalog-connect.js';
@@ -11,6 +12,7 @@ export class SettingsPage {
   constructor({document,window,fetcher}) {
     this.document=document;this.window=window;
     this.api=new McpApi({fetcher,location:window.location});
+    this.triggerConfigurations=new TriggerConfigurationEditor({document,window,api:this.api});
     this.requests=new RequestCoordinator();this.listeners=new window.AbortController();
     this.disposed=false;this.selection=0;this.selected=null;this.pending=false;
     this.llm=new LlmProvidersView({document,window,api:new LlmApi({fetcher,location:window.location}),
@@ -30,7 +32,7 @@ export class SettingsPage {
     this.listen('mcpDetailsPanel','cancel',event=>{event.preventDefault();this.closeDetails();});
     this.listen('mcpDetailsRetry','click',()=>{if(this.detailsId) void this.details(this.detailsId);});
     this.listen('mcpCustom','click',()=>void this.add());
-    this.listen('mcpEdit','click',()=>{if(this.selected && !this.pending) {this.hideDetails();this.form.openEdit(this.selected.connection,this.selected.tools,this.selected.projects);}});
+    this.listen('mcpEdit','click',()=>{if(this.selected && !this.pending && this.triggerConfigurations.confirmDiscard()) {this.triggerConfigurations.close();this.hideDetails();this.form.openEdit(this.selected.connection,this.selected.tools,this.selected.projects);}});
     this.listen('mcpTest','click',()=>void this.mutate('test'));
     this.listen('mcpToggle','click',()=>void this.mutate('toggle'));
     this.listen('mcpRemove','click',()=>void this.mutate('remove'));
@@ -52,7 +54,12 @@ export class SettingsPage {
     target.textContent=error?.status===404?'MCP integrations are unavailable on this installation.':error?.message||'MCP operation failed. Refresh confirmed state.';
     target.hidden=false;this.element(details?'mcpDetailsRetry':'mcpRetry').hidden=false;this.notice('');
   }
-  async start() { return this.refresh(); }
+  async start() {
+    const loaded=await this.refresh();const query=new URLSearchParams(this.window.location.search);
+    const id=query.get('connectionId');
+    if(loaded && id && !this.disposed) {await this.details(id);if(query.get('createTrigger')==='1' && this.selected) this.triggerConfigurations.startNew();}
+    return loaded;
+  }
   openCatalog(reload=true) {
     if(this.disposed || this.pending || this.form.active) return;
     this.closeDetails();
@@ -64,6 +71,8 @@ export class SettingsPage {
   showDetails() {if(this.form.active) return;this.closeCatalog();const dialog=this.element('mcpDetailsPanel');dialog.hidden=false;if(!dialog.open) dialog.showModal();}
   hideDetails() {this.element('mcpDetailsPanel').close();this.element('mcpDetailsPanel').hidden=true;}
   closeDetails() {
+    if(!this.disposed && !this.triggerConfigurations.confirmDiscard())return false;
+    this.triggerConfigurations.close();
     const id=this.detailsId;
     this.selection+=1;this.requests.abort('details');this.selected=null;this.detailsId=null;this.hideDetails();
     [...this.element('mcpConnections').querySelectorAll('[data-connection-id]')].find(row=>row.dataset.connectionId===id)?.focus();
@@ -79,7 +88,7 @@ export class SettingsPage {
   }
   async refresh(resetDetails=true) {
     if(this.disposed) return;this.clearError();this.notice('Loading connections…');
-    if(resetDetails) this.closeDetails();
+    if(resetDetails && this.closeDetails()===false)return false;
     try {
       const result=await this.requests.run('list',({signal})=>this.api.list(signal));
       if(!result.applied) return;
@@ -87,7 +96,9 @@ export class SettingsPage {
     } catch(error) { this.error(error); }
   }
   async details(id,{open=true}={}) {
-    if(this.disposed) return;this.selection+=1;this.selected=null;this.detailsId=id;this.clearError();
+    if(!this.triggerConfigurations.confirmDiscard())return;
+    this.triggerConfigurations.close();
+    if(this.disposed) return;this.selection+=1;const selection=this.selection;this.selected=null;this.detailsId=id;this.clearError();
     this.element('mcpDetails').replaceChildren();this.actionButtons(true);
     if(open) this.showDetails();this.notice('Loading connection…');
     try {
@@ -98,6 +109,8 @@ export class SettingsPage {
       if(!result.applied) return;
       this.selected=result.value;
       renderMcpDetails(this.element('mcpDetails'),result.value.connection,result.value.tools,result.value.projects);
+      await this.triggerConfigurations.open(result.value.connection,result.value.tools,this.element('mcpTriggerConfigurations'));
+      if(this.disposed || this.selection!==selection)return;
       this.element('mcpToggle').textContent=result.value.connection.enabled?'Disable':'Enable';this.actionButtons(this.pending);this.notice('');
     } catch(error) { this.error(error); }
   }
@@ -118,6 +131,8 @@ export class SettingsPage {
     if(this.pending || this.disposed || !this.selected) return;
     const connection=this.selected.connection;const selection=this.selection;
     if(action==='remove' && !this.window.confirm('Remove this connection and revoke its runtime access? This cannot be undone.')) return;
+    if(!this.triggerConfigurations.confirmDiscard())return;
+    this.triggerConfigurations.close();
     this.pending=true;this.clearError();
     this.actionButtons(true);this.element('mcpAdd').disabled=true;
     try {
@@ -136,6 +151,6 @@ export class SettingsPage {
     }
   }
   dispose() {
-    if(this.disposed) return;this.disposed=true;this.llm.dispose();this.catalogConnect.dispose();this.form.dispose();this.closeCatalog();this.catalog.dispose();this.requests.dispose();this.listeners.abort();this.resetView();this.notice('');
+    if(this.disposed) return;this.disposed=true;this.triggerConfigurations.dispose();this.llm.dispose();this.catalogConnect.dispose();this.form.dispose();this.closeCatalog();this.catalog.dispose();this.requests.dispose();this.listeners.abort();this.resetView();this.notice('');
   }
 }

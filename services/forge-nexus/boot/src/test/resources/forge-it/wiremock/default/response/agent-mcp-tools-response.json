@@ -1,1 +1,35 @@
-[{"name":"read","description":"Read data","schemaFingerprint":"sha256:one"}]
+[
+  {
+    "name": "read",
+    "description": "Read data",
+    "schemaFingerprint": "sha256:one",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "default": 0
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+]

@@ -52,6 +52,53 @@ class NexusAgentProxyIT {
     @Autowired
     private NexusProxyTestManager testManager;
 
+    @Test void listAuthoredTriggersUsesTypedConnectionScopedProxy() {
+        verify(ForgeAgentWireMockEndpoints.listAuthoredTriggers(), NexusAgentMockMvcEndpoints.listAuthoredTriggers(),
+                WireMockPathParams.create().add("connectionId", equalTo(CONNECTION_ID.toString())),
+                PathParams.create().add("connectionId", CONNECTION_ID));
+    }
+
+    @Test void getAuthoredTriggerUsesTypedConnectionScopedProxy() {
+        verify(ForgeAgentWireMockEndpoints.getAuthoredTrigger(), NexusAgentMockMvcEndpoints.getAuthoredTrigger(),
+                WireMockPathParams.create().add("connectionId", equalTo(CONNECTION_ID.toString()))
+                        .add("id", equalTo(REPOSITORY_ID.toString())),
+                PathParams.create().add("connectionId", CONNECTION_ID).add("id", REPOSITORY_ID));
+    }
+
+    @Test void createAuthoredTriggerUsesTypedConnectionScopedProxy() {
+        verify(ForgeAgentWireMockEndpoints.createAuthoredTrigger(), NexusAgentMockMvcEndpoints.createAuthoredTrigger(),
+                WireMockPathParams.create().add("connectionId", equalTo(CONNECTION_ID.toString())),
+                PathParams.create().add("connectionId", CONNECTION_ID));
+    }
+
+    @Test void updateAuthoredTriggerUsesTypedConnectionScopedProxy() {
+        verify(ForgeAgentWireMockEndpoints.updateAuthoredTrigger(), NexusAgentMockMvcEndpoints.updateAuthoredTrigger(),
+                WireMockPathParams.create().add("connectionId", equalTo(CONNECTION_ID.toString()))
+                        .add("id", equalTo(REPOSITORY_ID.toString())),
+                PathParams.create().add("connectionId", CONNECTION_ID).add("id", REPOSITORY_ID));
+    }
+
+    @Test void missingAuthoredTriggerUsesTypedConnectionScopedProxy() {
+        verify(ForgeAgentWireMockEndpoints.missingAuthoredTrigger(), NexusAgentMockMvcEndpoints.missingAuthoredTrigger(),
+                WireMockPathParams.create().add("connectionId", equalTo(CONNECTION_ID.toString()))
+                        .add("id", equalTo(REPOSITORY_ID.toString())),
+                PathParams.create().add("connectionId", CONNECTION_ID).add("id", REPOSITORY_ID));
+    }
+
+    @Test void invalidAuthoredTriggerUsesTypedConnectionScopedProxy() {
+        verify(ForgeAgentWireMockEndpoints.invalidAuthoredTrigger(), NexusAgentMockMvcEndpoints.invalidAuthoredTrigger(),
+                WireMockPathParams.create().add("connectionId", equalTo(CONNECTION_ID.toString()))
+                        .add("id", equalTo(REPOSITORY_ID.toString())),
+                PathParams.create().add("connectionId", CONNECTION_ID).add("id", REPOSITORY_ID));
+    }
+
+    @Test
+    void discoveredMcpSchemasSurviveTheTypedProxy() {
+        verify(ForgeAgentWireMockEndpoints.listMcpTools(), NexusAgentMockMvcEndpoints.listMcpTools(200),
+                WireMockPathParams.create().add("id", equalTo(CONNECTION_ID.toString())),
+                PathParams.create().add("id", CONNECTION_ID));
+    }
+
     @Test
     void triggerConnectionsForwardProjectAndPreserveTypedSummaries() {
         verify(ForgeAgentWireMockEndpoints.triggerConnections(), NexusAgentMockMvcEndpoints.triggerConnections(),

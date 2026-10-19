@@ -87,7 +87,7 @@ public final class SdkMcpRemoteClient implements McpRemoteProbe, McpRemoteToolCl
             String protocolVersion = initialize(client);
             initialized = true;
             return new McpProbeReport(protocolVersion, listTools(client::listTools).stream()
-                    .map(tool -> new McpToolSummary(tool.name(), tool.description(), fingerprint(tool.inputSchema())))
+                    .map(tool -> new McpToolSummary(tool.name(), tool.description(), fingerprint(tool.inputSchema()), tool.inputSchema(), tool.outputSchema()))
                     .toList());
         } catch (McpProbeException exception) {
             throw exception;

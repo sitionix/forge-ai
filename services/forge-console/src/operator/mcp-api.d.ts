@@ -1,4 +1,4 @@
-export interface McpTool { name: string; description?: string | null; schemaFingerprint: string; }
+export interface McpTool { name: string; description?: string | null; schemaFingerprint: string; inputSchema?:Record<string,any>|null;outputSchema?:Record<string,any>|null; }
 export interface McpApproval { name: string; schemaFingerprint: string; }
 export interface McpProject { id: string; name?: string; displayName?: string; }
 export interface McpAvailableServer { name:string;title?:string|null;description?:string|null;version:string;endpoint:string;iconUrl?:string|null; }
@@ -38,4 +38,8 @@ export class McpApi {
   setEnabled(id:string,enabled:boolean,signal?:AbortSignal):Promise<McpConnection>;
   remove(id:string,signal?:AbortSignal):Promise<void>;
   projects(signal?:AbortSignal):Promise<McpProject[]>;
+  listTriggerConfigurations(connectionId:string,signal?:AbortSignal):Promise<Array<{id:string;connectionId:string;name:string}>>;
+  getTriggerConfiguration(connectionId:string,id:string,signal?:AbortSignal):Promise<any>;
+  createTriggerConfiguration(connectionId:string,request:any,signal?:AbortSignal):Promise<any>;
+  updateTriggerConfiguration(connectionId:string,id:string,request:any,signal?:AbortSignal):Promise<any>;
 }

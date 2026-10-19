@@ -77,7 +77,10 @@ export class WorkflowBuilder {
     this.nodeEditorDraft = null;
     this.nodeEditorEditingPortKey = null;
     this.saving = false;
-    this.triggerEditor = new TriggerNodeEditor({document:this.document, api:this.api, onValidity:valid => { this.byId("agentsV2NodeEditorSave").disabled = !valid; }});
+    this.triggerEditor = new TriggerNodeEditor({document:this.document, api:this.api, onAddConfiguration:connectionId=>{
+      const url=new URL('settings.html',this.window.location.href);url.searchParams.set('connectionId',connectionId);url.searchParams.set('createTrigger','1');
+      this.window.open(url.href,'_blank','noopener');
+    }, onValidity:valid => { this.byId("agentsV2NodeEditorSave").disabled = !valid; }});
   }
 
   bind() {

@@ -14,4 +14,13 @@ public class WorkflowTriggerClientAdapter implements WorkflowTriggerClient {
  public TriggerModels.Binding save(UUID workflowId,UUID nodeId,TriggerModels.Selection selection){
   return executor.execute(()->http.saveTriggerBinding(workflowId,nodeId,new TriggerClientDtos.Selection(selection.connectionId(),selection.configurationId()))).toDomain();
  }
+
+ public List<TriggerModels.Configuration> configurationList(UUID connectionId){return executor.execute(()->http.authoredTriggerConfigurations(connectionId)).stream().map(TriggerClientDtos.Configuration::toDomain).toList();}
+ public TriggerModels.Document configuration(UUID connectionId,UUID id){return executor.execute(()->http.authoredTriggerConfiguration(connectionId,id)).toDomain();}
+ public TriggerModels.Document createConfiguration(UUID connectionId,TriggerModels.DefinitionRequest request){
+  return executor.execute(()->http.createTriggerConfiguration(connectionId,new TriggerClientDtos.DefinitionRequest(request.name(),request.definition()))).toDomain();
+ }
+ public TriggerModels.Document updateConfiguration(UUID connectionId,UUID id,TriggerModels.DefinitionRequest request){
+  return executor.execute(()->http.updateTriggerConfiguration(connectionId,id,new TriggerClientDtos.DefinitionRequest(request.name(),request.definition()))).toDomain();
+ }
 }

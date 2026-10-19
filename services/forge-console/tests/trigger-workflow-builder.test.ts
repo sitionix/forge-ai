@@ -44,7 +44,7 @@ describe('Trigger workflow infrastructure',()=>{
   resolve([{id:'ca',connectionId:'a',name:'Stale configuration'}]);await flush();
   expect(t.doc.querySelector('[data-trigger-configuration]')?.textContent).not.toContain('Stale configuration');
   expect(t.doc.getElementById('agentsV2NodeEditorBody')?.textContent).toContain('No configurations');
-  expect((t.doc.querySelector('[data-add-trigger-configuration]') as HTMLButtonElement).disabled).toBe(true);
+  expect((t.doc.querySelector('[data-add-trigger-configuration]') as HTMLButtonElement).disabled).toBe(false);
   t.builder.close();t.dom.window.close();
  });
  it('keeps the draft selection and shows an error when binding persistence fails',async()=>{
@@ -151,5 +151,19 @@ describe('Trigger creation failures', () => {
    t.builder.close();
    expect(t.builder.addPresetNode('MANUAL', null, preset)).toBeNull();
   } finally { t.builder.close(); t.dom.window.close(); }
+ });
+});
+
+describe('Trigger configuration navigation',()=>{
+ it('opens the selected connection authoring in a separate tab without saving or discarding the workflow',async()=>{
+  const t=setup();const open=vi.spyOn(t.dom.window,'open').mockImplementation(()=>null);
+  t.builder.addTriggerNode();await flush();
+  const select=t.doc.querySelector('[data-trigger-connection]') as HTMLSelectElement;
+  select.value='a';select.dispatchEvent(new t.dom.window.Event('change'));await flush();
+  const before=structuredClone(t.builder.workflow);
+  (t.doc.querySelector('[data-add-trigger-configuration]') as HTMLButtonElement).click();
+  expect(open).toHaveBeenCalledWith('http://localhost/settings.html?connectionId=a&createTrigger=1','_blank','noopener');
+  expect(t.builder.workflow).toEqual(before);expect(t.api.updateWorkflow).not.toHaveBeenCalled();
+  t.builder.close();t.dom.window.close();
  });
 });

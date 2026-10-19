@@ -77,4 +77,9 @@ export class McpApi {
   setEnabled(id,enabled,signal) { return this.request('PUT',`${this.connections}/${encodeURIComponent(id)}/enabled`,{enabled},signal); }
   remove(id,signal) { return this.request('DELETE',`${this.connections}/${encodeURIComponent(id)}`,undefined,signal); }
   projects(signal) { return this.request('GET','/infrastructure/agents/projects',undefined,signal); }
+
+  listTriggerConfigurations(connectionId,signal) {return this.request('GET',`${this.connections}/${encodeURIComponent(connectionId)}/trigger-configurations`,undefined,signal);}
+  getTriggerConfiguration(connectionId,id,signal) {return this.request('GET',`${this.connections}/${encodeURIComponent(connectionId)}/trigger-configurations/${encodeURIComponent(id)}`,undefined,signal);}
+  createTriggerConfiguration(connectionId,request,signal) {return this.request('POST',`${this.connections}/${encodeURIComponent(connectionId)}/trigger-configurations`,request,signal);}
+  updateTriggerConfiguration(connectionId,id,request,signal) {return this.request('PUT',`${this.connections}/${encodeURIComponent(connectionId)}/trigger-configurations/${encodeURIComponent(id)}`,request,signal);}
 }

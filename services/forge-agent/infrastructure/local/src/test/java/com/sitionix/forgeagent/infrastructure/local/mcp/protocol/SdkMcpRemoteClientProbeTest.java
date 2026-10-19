@@ -56,6 +56,7 @@ class SdkMcpRemoteClientProbeTest {
             assertThat(report.tools()).extracting("name").containsExactly("read", "write");
             assertThat(report.tools().getFirst().schemaFingerprint()).startsWith("sha256:");
             assertThat(report.tools().get(1).schemaFingerprint()).isNotEqualTo(report.tools().getFirst().schemaFingerprint());
+            assertThat(report.tools().getFirst().inputSchema()).containsEntry("type", "object");
             assertThat(pages.get()).isEqualTo(2);
             pages.set(0);
             var approved = probe.discoverApprovedTools(URI.create("http://127.0.0.1:" + port + "/mcp"),
