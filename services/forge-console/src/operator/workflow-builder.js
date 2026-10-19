@@ -1,3 +1,4 @@
+import { TriggerNodeEditor } from './trigger-node-editor.js';
 import { escapeHtml } from './dom-render-helpers.js';
 const NODE_WIDTH = 252;
 const NODE_MIN_HEIGHT = 132;
@@ -76,6 +77,7 @@ export class WorkflowBuilder {
     this.nodeEditorDraft = null;
     this.nodeEditorEditingPortKey = null;
     this.saving = false;
+    this.triggerEditor = new TriggerNodeEditor({document:this.document, api:this.api, onValidity:valid => { this.byId("agentsV2NodeEditorSave").disabled = !valid; }});
   }
 
   bind() {
@@ -107,14 +109,22 @@ export class WorkflowBuilder {
     }
     this.byId('agentsV2BuilderBack')?.addEventListener('click', () => this.onBack());
     this.byId('agentsV2WorkflowSave')?.addEventListener('click', () => this.save());
+    this.document.querySelector('[data-add-trigger-node]')?.addEventListener('click', () => this.addTriggerNode());
     this.document.querySelector('[data-add-manual-node]')?.addEventListener('click', () => this.addManualNode());
     this.byId('agentsV2NodeEditorCancel')?.addEventListener('click', () => this.closeNodeEditor());
     this.byId('agentsV2NodeEditorClose')?.addEventListener('click', () => this.closeNodeEditor());
     this.byId('agentsV2NodeEditorSave')?.addEventListener('click', () => this.saveNodeEditor());
     this.byId('agentsV2NodeEditorBody')?.addEventListener('click', (event) => this.onNodeEditorClick(event));
+    this.handleNodeEditorCancel = event => { event.preventDefault(); this.closeNodeEditor(); };
+    this.handleNodeEditorClose = () => { if (!this.byId('agentsV2NodeEditorDialog').open && this.nodeEditorNodeId) this.closeNodeEditor(); };
+    this.byId('agentsV2NodeEditorDialog')?.addEventListener('cancel', this.handleNodeEditorCancel);
+    this.byId('agentsV2NodeEditorDialog')?.addEventListener('close', this.handleNodeEditorClose);
   }
 
   dispose() {
+    this.triggerEditor.close();
+    this.byId('agentsV2NodeEditorDialog')?.removeEventListener('cancel', this.handleNodeEditorCancel);
+    this.byId('agentsV2NodeEditorDialog')?.removeEventListener('close', this.handleNodeEditorClose);
     this.document.removeEventListener('pointermove', this.handlePointerMove);
     this.document.removeEventListener('pointerup', this.handlePointerUp);
     this.document.removeEventListener('pointercancel', this.handlePointerCancel);
@@ -129,6 +139,7 @@ export class WorkflowBuilder {
   open(workflow, project, agents) {
     this.workflow = this.cloneWorkflow(workflow);
     this.project = project;
+    this.triggerEditor.reset(workflow.id, project?.id, workflow.nodes || []);
     this.agents = agents || [];
     this.nodeDrag = null;
     this.canvasPan = null;
@@ -176,13 +187,24 @@ export class WorkflowBuilder {
     ] });
   }
 
+  addTriggerNode() {
+    if (!this.workflow || this.workflow.nodes.some(node => node.nodeType === 'TRIGGER')) {
+      this.showError('This workflow already has a Trigger.'); return;
+    }
+    const node = this.addPresetNode('TRIGGER', null, {inputs:[{name:'Start',description:'Trigger entry.'}], outputs:[{name:'Item',description:'Item supplied by the trigger.'}]});
+    if (!node) return;
+    this.workflow.taskInputPortId = node.inputs[0].id;
+    if (!this.workflow.taskOutputPortId) this.workflow.taskOutputPortId = node.outputs[0].id;
+    this.render(); this.openNodeEditor(node.id);
+  }
+
   addManualNode(preset = DEFAULT_MANUAL_PRESET) {
     this.addPresetNode('MANUAL', null, preset);
   }
 
   addPresetNode(nodeType, targetId, preset) {
     if (!this.workflow) {
-      return;
+      return null;
     }
     this.showError('');
     let nodeId;
@@ -194,16 +216,16 @@ export class WorkflowBuilder {
       outputs = preset.outputs.map((port, order) => ({ ...port, id: this.randomUuid(), order }));
     } catch (error) {
       this.showError(error.message || 'Node UUID generation unavailable.');
-      return;
+      return null;
     }
     const ids = [nodeId, ...inputs.map((port) => port.id), ...outputs.map((port) => port.id)];
     if (new Set(ids).size !== ids.length || ids.some((id) =>
       this.workflow.nodes.some((node) => node.id === id) || this.portById(id))) {
       this.showError('Node UUID generation produced a duplicate ID.');
-      return;
+      return null;
     }
     const index = this.workflow.nodes.length;
-    this.workflow.nodes.push({
+    const node = {
       id: nodeId,
       nodeType,
       targetId,
@@ -218,8 +240,10 @@ export class WorkflowBuilder {
         x: NODE_START_X + (index % 3) * NODE_HORIZONTAL_STEP,
         y: NODE_START_Y + Math.floor(index / 3) * NODE_VERTICAL_STEP
       }
-    });
+    };
+    this.workflow.nodes.push(node);
     this.render();
+    return node;
   }
 
   removeNode(nodeId) {
@@ -300,6 +324,7 @@ export class WorkflowBuilder {
   }
 
   renderTaskInput() {
+    if (this.workflow?.nodes.some(node => node.nodeType === 'TRIGGER')) return '';
     return `
       <article class="workflow-task-input" data-task-input style="left:${TASK_INPUT_X}px; top:${TASK_INPUT_Y}px;">
         <span>TASK INPUT</span>
@@ -325,11 +350,11 @@ export class WorkflowBuilder {
     return `
       <article class="workflow-node" data-node-id="${escapeHtml(node.id)}" style="left:${Number(node.position?.x || 0)}px; top:${Number(node.position?.y || 0)}px; --workflow-node-port-rows:${portRows};">
         <div class="workflow-node-port-list input" aria-label="Configured inputs">
-          ${this.renderCompactPorts(inputs, 'input')}
+          ${node.nodeType === 'TRIGGER' ? '' : this.renderCompactPorts(inputs, 'input')}
         </div>
         <div class="workflow-node-content">
-          <strong>${escapeHtml(node.nodeType === 'MANUAL' ? 'Manual' : `${node.nodeType === 'DIALOGUE' ? 'Dialogue · ' : ''}${agent?.name || 'Unknown agent'}`)}</strong>
-          <span>${escapeHtml(node.nodeType === 'MANUAL' ? 'Manual action' : agent?.instructions || 'Reusable agent')}</span>
+          <strong>${escapeHtml(node.nodeType === 'TRIGGER' ? 'Trigger' : node.nodeType === 'MANUAL' ? 'Manual' : `${node.nodeType === 'DIALOGUE' ? 'Dialogue · ' : ''}${agent?.name || 'Unknown agent'}`)}</strong>
+          <span>${escapeHtml(node.nodeType === 'TRIGGER' ? 'Integration trigger · Setup only' : node.nodeType === 'MANUAL' ? 'Manual action' : agent?.instructions || 'Reusable agent')}</span>
           ${node.nodeType !== 'MANUAL' && this.nodeContextMode(node) !== FRESH_CONTEXT_MODE ? '<small class="workflow-node-context-badge">↻ Context</small>' : ''}
         </div>
         <button class="node-delete" type="button" title="Remove node" data-node-remove="${escapeHtml(node.id)}" aria-label="Remove node">×</button>
@@ -381,7 +406,7 @@ export class WorkflowBuilder {
     const taskInputTargetPort = this.workflow?.taskInputPortId
       ? this.portById(this.workflow.taskInputPortId, 'inputs')
       : null;
-    if (taskInputTargetPort) {
+    if (taskInputTargetPort && !this.workflow.nodes.some(node => node.nodeType === 'TRIGGER')) {
       const { path, controlPoint } = this.edgePresentation(this.taskInputRoute(taskInputTargetPort));
       groups.push(`
         <g class="workflow-edge task-input-edge" data-task-input-edge data-edge-target-port="${escapeHtml(this.workflow.taskInputPortId)}">
@@ -769,6 +794,7 @@ export class WorkflowBuilder {
   }
 
   closeNodeEditor() {
+    this.triggerEditor.close();
     this.nodeEditorNodeId = null;
     this.nodeEditorDraft = null;
     this.nodeEditorEditingPortKey = null;
@@ -786,6 +812,7 @@ export class WorkflowBuilder {
     if (!node) {
       return;
     }
+    this.byId('agentsV2NodeEditorSave').disabled = false;
     const manual = node.nodeType === 'MANUAL';
     this.byId('agentsV2NodeEditorSave').classList.toggle('hidden', manual);
     this.byId('agentsV2NodeEditorCancel').textContent = manual ? 'Close' : 'Cancel';
@@ -809,6 +836,11 @@ export class WorkflowBuilder {
           `).join('')}
         </div>`;
       return;
+    }
+    if (node.nodeType === 'TRIGGER') {
+      this.byId('agentsV2NodeEditorTitle').textContent = 'Trigger';
+      this.byId('agentsV2NodeEditorAgent').textContent = 'Start from an integration';
+      this.triggerEditor.open(node.id); return;
     }
     if (node.nodeType === 'DIALOGUE') { this.renderDialogueNodeEditor(node); return; }
     const agent = this.agentById(node.targetId);
@@ -873,7 +905,7 @@ export class WorkflowBuilder {
   }
 
   workspaceConfiguration(node) {
-    const globalAgent = node.nodeType !== 'MANUAL' && this.nodeScopeMode(node) === GLOBAL_SCOPE_MODE;
+    const globalAgent = ['AGENT', 'DIALOGUE'].includes(node.nodeType || 'AGENT') && this.nodeScopeMode(node) === GLOBAL_SCOPE_MODE;
     return {
       includeTaskRepositories: globalAgent ? node.includeTaskRepositories ?? true : true,
       workspaceRepositoryIds: globalAgent ? [...(node.workspaceRepositoryIds || [])] : []
@@ -1136,6 +1168,10 @@ export class WorkflowBuilder {
 
   saveNodeEditor() {
     if (!this.workflow || !this.nodeEditorDraft || !this.nodeEditorNodeId || this.nodeEditorDraft.nodeType === 'MANUAL') {
+      return;
+    }
+    if (this.nodeEditorDraft.nodeType === 'TRIGGER') {
+      if (this.triggerEditor.apply()) { this.closeNodeEditor(); this.render(); }
       return;
     }
     this.syncNodeEditorDraftFromDom();
@@ -1635,6 +1671,7 @@ export class WorkflowBuilder {
     }
     try {
       const saved = await this.api.updateWorkflow(this.workflow.id, request);
+      await this.triggerEditor.saveBindings(saved.id, saved.nodes);
       this.workflow = this.cloneWorkflow(saved);
       await this.onSaved(saved);
       this.render();

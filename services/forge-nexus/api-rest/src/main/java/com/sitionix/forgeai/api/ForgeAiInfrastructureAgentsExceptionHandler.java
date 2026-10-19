@@ -3,6 +3,7 @@ package com.sitionix.forgeai.api;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.api.activeprofile.InfrastructureErrorResponse;
+import com.sitionix.forgeai.api.trigger.WorkflowTriggerController;
 import com.sitionix.forgeai.domain.exception.AgentClientException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,7 @@ import org.springframework.web.client.RestClientException;
     assignableTypes = {
       ForgeAiInfrastructureAgentsController.class,
       ForgeAiDialogueController.class,
+      WorkflowTriggerController.class,
       ForgeAiProjectLogsController.class,
       ForgeAiProjectSshConnectionsController.class,
       ForgeAiProjectServicesController.class,
