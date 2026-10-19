@@ -94,9 +94,19 @@ class NexusAgentProxyIT {
 
     @Test
     void discoveredMcpSchemasSurviveTheTypedProxy() {
-        verify(ForgeAgentWireMockEndpoints.listMcpTools(), NexusAgentMockMvcEndpoints.listMcpTools(200),
-                WireMockPathParams.create().add("id", equalTo(CONNECTION_ID.toString())),
-                PathParams.create().add("id", CONNECTION_ID));
+        final var upstream=this.testManager.wiremock().createMapping(ForgeAgentWireMockEndpoints.listMcpTools())
+                .pathPattern(WireMockPathParams.create().add("id", equalTo(CONNECTION_ID.toString()))).createDefault();
+        this.testManager.mockMvc().ping(NexusAgentMockMvcEndpoints.listMcpTools(200))
+                .withPathParameters(PathParams.create().add("id",CONNECTION_ID)).expectStatus(org.springframework.http.HttpStatus.OK)
+                .andExpectPath(result -> {
+                    var exact=new com.fasterxml.jackson.databind.ObjectMapper().enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+                    var body=exact.readTree(result.getResponse().getContentAsString());
+                    org.assertj.core.api.Assertions.assertThat(body.at("/0/inputSchema/properties/limit/minimum").decimalValue())
+                            .isEqualByComparingTo("0.12345678901234567890123456789");
+                    org.assertj.core.api.Assertions.assertThat(body.at("/0/inputSchema/properties/options/properties/enabled/maximum").decimalValue())
+                            .isEqualByComparingTo("999999999.1234567890123456789");
+                }).assertAndCreate();
+        upstream.verify();
     }
 
     @Test

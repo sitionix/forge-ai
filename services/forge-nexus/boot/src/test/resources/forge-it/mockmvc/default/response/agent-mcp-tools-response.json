@@ -8,13 +8,15 @@
       "properties": {
         "limit": {
           "type": "integer",
-          "default": 0
+          "default": 0,
+          "minimum": 0.12345678901234567890123456789
         },
         "options": {
           "type": "object",
           "properties": {
             "enabled": {
-              "type": "boolean"
+              "type": "number",
+              "maximum": 999999999.1234567890123456789
             }
           }
         }

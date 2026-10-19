@@ -167,3 +167,16 @@ describe('Trigger configuration navigation',()=>{
   t.builder.close();t.dom.window.close();
  });
 });
+
+it('refreshes configurations without losing the connection or unsaved selection and ignores stale refreshes',async()=>{
+ const t=setup();t.builder.addTriggerNode();await flush();
+ const editor=t.builder.triggerEditor;await editor.changeConnection('a');editor.selection.configurationId='ca';
+ t.api.listTriggerConfigurations.mockResolvedValueOnce([{id:'ca',connectionId:'a',name:'Configuration A'},{id:'new',connectionId:'a',name:'New configuration'}]);
+ (t.doc.querySelector('[data-trigger-refresh]') as HTMLButtonElement)?.click();await flush();
+ expect(t.doc.querySelector('[data-trigger-configuration]')?.textContent).toContain('New configuration');
+ expect(editor.selection).toEqual({connectionId:'a',configurationId:'ca'});
+ let resolve!:(v:any)=>void;t.api.listTriggerConfigurations.mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+ (t.doc.querySelector('[data-trigger-refresh]') as HTMLButtonElement).click();await flush();await editor.changeConnection('b');resolve([{id:'late',name:'Stale'}]);await flush();
+ expect(editor.selection.connectionId).toBe('b');expect(t.doc.body.textContent).not.toContain('Stale');
+ t.builder.close();t.dom.window.close();
+});

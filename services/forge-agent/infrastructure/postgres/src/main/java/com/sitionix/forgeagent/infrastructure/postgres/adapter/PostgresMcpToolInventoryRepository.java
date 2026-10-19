@@ -71,7 +71,9 @@ public class PostgresMcpToolInventoryRepository implements McpToolInventoryRepos
         });
     }
 
-    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+    // Match McpProtocolJson: opaque schemas must never round through binary floating point.
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper()
+            .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
     private static java.util.Map<String,Object> schema(String value) {
         if (value == null) return null;
         try { return JSON.readValue(value, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String,Object>>() {}); }

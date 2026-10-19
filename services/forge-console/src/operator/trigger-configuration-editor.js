@@ -19,7 +19,7 @@ export class TriggerConfigurationEditor {
   close() {
     this.container?.replaceChildren();this.connection=null;this.tools=[];
     this.epoch++;this.abort?.abort();this.abort=new this.window.AbortController();
-    this.forms.forEach(form=>form.dispose());this.forms.clear();this.draft=null;this.dirty=false;this.container=null;this.pending=false;
+    this.forms.forEach(form=>form.dispose());this.forms.clear();this.draft=null;this.dirty=false;this.container=null;this.pending=false;this.notice='';
   }
   dispose() {this.close();}
   confirmDiscard() {return !this.dirty || this.window.confirm('Discard unsaved trigger configuration changes?');}
@@ -39,12 +39,14 @@ export class TriggerConfigurationEditor {
     } catch(error) {if(this.epoch===epoch)this.error=error.message || 'Could not load configuration.';}
     if(this.epoch===epoch){this.loading=false;this.render();}
   }
+  clearNotice() {this.notice='';this.container?.querySelector('[data-configuration-notice]')?.remove();}
+  markDirty() {this.dirty=true;this.clearNotice();}
   collect() {
     for(const step of this.draft?.definition.steps || []) {const form=this.forms.get(step.id);if(form)step.arguments=form.readValue();}
   }
   modify(action) {
     if(this.pending || !this.draft || !this.container)return;
-    try {this.collect();action();this.dirty=true;this.error='';this.render();}
+    try {action();this.markDirty();this.error='';this.render();}
     catch(error) {this.showError(error.message);}
   }
   addStep(toolName='') {
@@ -65,7 +67,7 @@ export class TriggerConfigurationEditor {
     for(const step of steps) {
       if(!this.tool(step)?.inputSchema)issues.push('Choose an approved tool with a current schema for every step.');
       for(const binding of step.bindings) {
-        if(!previous.has(binding.sourceStepId))issues.push('A parameter source must refer to an earlier step.');
+        if(!previous.has(binding.sourceStepId))issues.push(`Step ${steps.indexOf(step)+1} (${step.toolName || 'Choose tool'}): parameter ${binding.targetPointer || 'Whole arguments'} has an invalidated source. Choose an earlier step or remove its source.`);
         if(!validPointer(binding.targetPointer) || !validPointer(binding.sourcePointer))issues.push('Choose a parameter and a valid JSON Pointer for its source.');
       }
       previous.add(step.id);
@@ -82,7 +84,7 @@ export class TriggerConfigurationEditor {
       this.collect();if(!this.draft.name.trim())throw new Error('Give this configuration a name.');
       const issues=this.issues();if(issues.length)throw new Error(issues.join(' '));
     } catch(error) {this.showError(error.message);return;}
-    const epoch=this.epoch;this.pending=true;this.showError('');this.controls();
+    const epoch=this.epoch;this.pending=true;this.clearNotice();this.showError('');this.controls();
     const request=copy({name:this.draft.name.trim(),definition:this.draft.definition});
     try {
       const saved=this.draft.id
@@ -117,6 +119,7 @@ export class TriggerConfigurationEditor {
     });parent.append(selector);
     const customInput=this.el('input');customInput.className='text-input';customInput.placeholder='/items/0';customInput.value=pointer;customInput.hidden=!(custom && pointer!=='');
     customInput.setAttribute('aria-label',`${label} JSON Pointer`);customInput.addEventListener('input',()=>onChange(customInput.value));parent.append(customInput);
+    parent.append(this.el('p','A JSON Pointer selects a field in the result. Leave it empty for the whole result; use /field/0 for a nested array item. Escape ~ as ~0 and / as ~1 in field names.','field-hint'));
     if(!schema)parent.append(this.el('p','Output schema is unknown. Choose the whole result or enter a JSON Pointer.','field-hint'));
   }
   renderBinding(parent,step,binding,index,stepIndex) {
@@ -128,7 +131,10 @@ export class TriggerConfigurationEditor {
         const literal=getAt(step.arguments,path);
         if(literal!==undefined && !(path==='' && Object.keys(literal).length===0)
           && !this.window.confirm('Replace this parameter value with a previous step result?'))return;
-        step.arguments=path===''?{}:setAt(step.arguments,path,undefined);binding.targetPointer=path;this.forms.get(step.id)?.dispose();this.forms.delete(step.id);
+        const form=this.forms.get(step.id);
+        if(form)form.replaceValue(path,path===''?{}:undefined);
+        else step.arguments=path===''?{}:setAt(step.arguments,path,undefined);
+        binding.targetPointer=path;
       });
     }));
     const previous=this.draft.definition.steps.slice(0,stepIndex);
@@ -136,19 +142,19 @@ export class TriggerConfigurationEditor {
     if(!previous.some(source=>source.id===binding.sourceStepId))sourceOptions.unshift([binding.sourceStepId || '', 'Choose an earlier step']);
     row.append(this.select('Source step',sourceOptions,binding.sourceStepId,id=>this.modify(()=>{binding.sourceStepId=id;binding.sourcePointer='';})));
     const source=this.draft.definition.steps.find(source=>source.id===binding.sourceStepId);
-    this.resultPath(row,source?this.tool(source)?.outputSchema:null,binding.sourcePointer,value=>{binding.sourcePointer=value;this.dirty=true;},'Source field');
-    row.append(this.button('Remove source',()=>this.modify(()=>{step.bindings.splice(index,1);this.forms.delete(step.id);}), 'link-button'));
+    this.resultPath(row,source?this.tool(source)?.outputSchema:null,binding.sourcePointer,value=>{binding.sourcePointer=value;this.markDirty();},'Source field');
+    row.append(this.button('Remove source',()=>this.modify(()=>{step.bindings.splice(index,1);}), 'link-button'));
   }
   chooseTool(step,name) {
     this.modify(()=>{
       const tool=this.availableTools().find(tool=>tool.name===name && tool.inputSchema);if(!tool)return;
-      if((Object.keys(step.arguments).length || step.bindings.length) && !this.window.confirm('Changing the tool clears its parameters and sources. Continue?'))return;
+      if((Object.keys(step.arguments).length || step.bindings.length || this.forms.get(step.id)?.drafts.size) && !this.window.confirm('Changing the tool clears its parameters and sources. Continue?'))return;
       step.toolName=tool.name;step.schemaFingerprint=tool.schemaFingerprint;step.arguments={};step.bindings=[];this.forms.get(step.id)?.dispose();this.forms.delete(step.id);
     });
   }
   renderStep(parent,step,index) {
-    const section=this.el('section',undefined,'trigger-step');parent.append(section);
-    const header=this.el('div',undefined,'trigger-step-header');section.append(header);header.append(this.el('h4',`Step ${index+1}`));
+    const section=this.el('section',undefined,'trigger-step');section.dataset.stepId=step.id;parent.append(section);
+    const header=this.el('div',undefined,'trigger-step-header');section.append(header);header.append(this.el('h4',`Step ${index+1}${step.toolName?' · '+step.toolName:''}`));
     const up=this.button('↑ Move up',()=>this.moveStep(step.id,-1),'button small secondary');up.disabled=index===0;
     const down=this.button('↓ Move down',()=>this.moveStep(step.id,1),'button small secondary');down.disabled=index===this.draft.definition.steps.length-1;
     header.append(up,down,this.button('Remove step',()=>this.removeStep(step.id),'link-button'));
@@ -166,8 +172,8 @@ export class TriggerConfigurationEditor {
       const container=this.el('div');section.append(container);
       let form=this.forms.get(step.id);
       if(!form){form=new McpSchemaForm({document:this.document,schema:tool.inputSchema,value:step.arguments,
-        boundPaths:step.bindings.map(binding=>binding.targetPointer).filter(value=>value!==null),onChange:value=>{step.arguments=value;this.dirty=true;}});this.forms.set(step.id,form);}
-      form.value=copy(step.arguments);form.render(container);
+        boundPaths:step.bindings.map(binding=>binding.targetPointer).filter(value=>value!==null),onChange:value=>{step.arguments=value;this.markDirty();}});this.forms.set(step.id,form);}
+      form.bound=new Set(step.bindings.map(binding=>binding.targetPointer).filter(value=>value!==null));form.value=copy(step.arguments);form.render(container);
     } else section.append(this.el('p','Choose an approved tool with a schema. Use Test connection to refresh missing schemas separately.','field-hint'));
     const sources=this.el('div');section.append(sources);sources.append(this.el('h5','Parameter sources'));
     step.bindings.forEach((binding,i)=>this.renderBinding(sources,step,binding,i,index));
@@ -176,11 +182,14 @@ export class TriggerConfigurationEditor {
     }),'button small secondary');add.disabled=index===0;sources.append(add);
   }
   render() {
-    if(!this.container)return;this.container.replaceChildren();
+    if(!this.container)return;
+    const focused=this.document.activeElement;
+    const restore=this.container.contains(focused)?{step:focused.closest('[data-step-id]')?.dataset.stepId,path:focused.dataset.schemaPath,presence:focused.dataset.presence,label:focused.getAttribute('aria-label'),text:focused.tagName==='BUTTON'?focused.textContent:null}:null;
+    this.container.replaceChildren();
     this.container.append(this.el('h3','Trigger configurations'),this.el('p','Build reusable steps from this connection’s approved MCP tools. Saving does not execute them.','field-hint'));
     this.errorElement=this.el('div',this.error || '','error-box');this.errorElement.setAttribute('role','alert');this.errorElement.hidden=!this.error;this.container.append(this.errorElement);
     if(this.loading){this.container.append(this.el('p','Loading configurations…','field-hint'));return;}
-    if(this.notice){const notice=this.el('p',this.notice,'field-hint');notice.setAttribute('role','status');this.container.append(notice);}
+    if(this.notice){const notice=this.el('p',this.notice,'field-hint');notice.setAttribute('role','status');notice.dataset.configurationNotice='';this.container.append(notice);}
     const list=this.el('div',undefined,'trigger-configuration-list');this.container.append(list);
     for(const summary of this.summaries)list.append(this.button(summary.name,()=>void this.edit(summary.id),'button secondary'));
     if(!this.summaries.length)list.append(this.el('p','No configurations yet.','field-hint'));
@@ -189,7 +198,7 @@ export class TriggerConfigurationEditor {
     if(!this.draft)return;
     const editor=this.el('div',undefined,'trigger-configuration-editor');this.container.append(editor);
     const label=this.el('label','Configuration name','field-label'),name=this.el('input');name.className='text-input';name.dataset.configurationName='';name.value=this.draft.name;name.maxLength=200;
-    name.addEventListener('input',()=>{this.draft.name=name.value;this.dirty=true;});label.append(name);editor.append(label);
+    name.addEventListener('input',()=>{this.draft.name=name.value;this.markDirty();});label.append(name);editor.append(label);
     if(this.legacy)editor.append(this.el('p','This older configuration has no steps yet. Add steps before saving.','field-hint'));
     if(!this.availableTools().length)editor.append(this.el('p','No approved tools. Approve tools in the connection settings first.','field-hint'));
     else if(!this.availableTools().some(t=>t.inputSchema))editor.append(this.el('p','Tool schemas are missing. Refresh them with Test connection, then reopen this editor.','field-hint'));
@@ -201,11 +210,17 @@ export class TriggerConfigurationEditor {
       const choices=steps.map((step,index)=>[step.id,`Step ${index+1} · ${step.toolName || 'Choose tool'}`]);
       if(!steps.some(step=>step.id===result.stepId))choices.unshift([result.stepId,'Choose an existing step']);
       editor.append(this.select('Result step',choices,result.stepId,id=>this.modify(()=>{result.stepId=id;result.pointer='';})));
-      this.resultPath(editor,this.tool(steps.find(step=>step.id===result.stepId) || {})?.outputSchema,result.pointer,value=>{result.pointer=value;this.dirty=true;},'Result field');
+      this.resultPath(editor,this.tool(steps.find(step=>step.id===result.stepId) || {})?.outputSchema,result.pointer,value=>{result.pointer=value;this.markDirty();},'Result field');
     }
     const issues=this.issues();if(issues.length)editor.append(this.el('p',issues.join(' '),'field-hint'));
     const actions=this.el('div',undefined,'mcp-actions');editor.append(actions);
     actions.append(this.button('Save configuration',()=>void this.save(),'button'),this.button('Cancel',()=>{if(this.confirmDiscard()){this.draft=null;this.dirty=false;this.forms.clear();this.render();}}));
     this.controls();
+    if(restore) {
+      const section=restore.step?[...this.container.querySelectorAll('[data-step-id]')].find(s=>s.dataset.stepId===restore.step):this.container;
+      const candidates=[...(section?.querySelectorAll('input,select,textarea,button')||[])];
+      const match=candidates.find(e=>restore.path!==undefined?e.dataset.schemaPath===restore.path:restore.presence!==undefined?e.dataset.presence===restore.presence:restore.label?e.getAttribute('aria-label')===restore.label:restore.text?e.tagName==='BUTTON'&&e.textContent===restore.text:false);
+      (match || [...this.container.querySelectorAll('button')].find(b=>b.textContent==='+ Add step'))?.focus();
+    }
   }
 }

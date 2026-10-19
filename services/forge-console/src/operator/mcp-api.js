@@ -1,6 +1,7 @@
 import { contextPathFromLocation } from './infrastructure-http-client.js';
 
 const messages = {
+  INVALID_TRIGGER_CONFIGURATION: 'The configuration could not be saved. Check the highlighted parameters, step sources, and current tool approval, then try again. Your draft is preserved.',
   MCP_REGISTRY_UNAVAILABLE: 'MCP catalog unavailable. Retry or add a custom integration.',
   MCP_OAUTH_SETUP_REQUIRED: 'Forge needs a registered OAuth client for this provider. Contact the installation owner.',
   MCP_CUSTOM_REQUIRED: 'Use Add custom MCP for this endpoint or its required credentials.',

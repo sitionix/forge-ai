@@ -23,6 +23,39 @@ class ForgeAgentTriggerConfigurationIT extends AgentManagementFixture {
     @Autowired McpToolInventoryRepository inventory;
     @Autowired ObjectMapper json;
 
+    @Autowired com.sitionix.forgeagent.application.trigger.TriggerConfigurationValidator validator;
+
+    @Test void preservesHighPrecisionNestedSchemaConstraintsThroughPostgresAndApiValidation() throws Exception {
+        var connection=connections.create("Precision fixture",URI.create("https://example.test/precision"),McpAuthType.NONE,
+                McpProjectAccess.all(),null,null,null);
+        var exact=json.copy().enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+        String minimum="0.12345678901234567890123456789";
+        Map<String,Object> schema=exact.readValue("""
+                {"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"},"enabled":{"type":"boolean"},
+                "nested":{"type":"array","items":{"type":"object","properties":{"value":{"type":"number","minimum":0.12345678901234567890123456789,"multipleOf":0.00000000000000000000000000001}}}}},"required":["query"]}
+                """,Map.class);
+        var original=new McpToolSummary("read","Precision fixture","sha256:"+"a".repeat(64),schema,schema);
+        inventory.replace(connection.installationId(),connection.id(),connection.endpoint(),McpAuthType.NONE,null,List.of(original),null);
+        var saved=inventory.list(connection.installationId(),connection.id()).getFirst();
+        assertThat(saved).isEqualTo(original);
+        var api=exact.readTree(exact.writeValueAsString(com.sitionix.forgeagent.api.mcp.McpProbeResponse.tools(List.of(saved))));
+        assertThat(api.at("/0/inputSchema/properties/nested/items/properties/value/minimum").decimalValue()).isEqualByComparingTo(minimum);
+        assertThat(api.at("/0/outputSchema/properties/nested/items/properties/value/multipleOf").decimalValue()).isEqualByComparingTo("0.00000000000000000000000000001");
+        inventory.approve(connection.installationId(),connection.id(),Set.of(new McpAllowedTool("read",saved.schemaFingerprint())));
+        var definition=(com.fasterxml.jackson.databind.node.ObjectNode)exact.readTree("""
+                {"version":1,"steps":[{"id":"11111111-1111-4111-8111-111111111111","toolName":"read","schemaFingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arguments":{"query":"","nested":[{"value":0.12345678901234567890123456789}]},"bindings":[]}],"result":{"stepId":"11111111-1111-4111-8111-111111111111","pointer":""}}
+                """);
+        validator.validate(definition,List.of(saved),Set.of(new McpAllowedTool("read",saved.schemaFingerprint())));
+        ((com.fasterxml.jackson.databind.node.ObjectNode)definition.at("/steps/0/arguments/nested/0")).put("value",new java.math.BigDecimal("0.12345678901234567890123456788"));
+        assertThatThrownBy(()->validator.validate(definition,List.of(saved),Set.of(new McpAllowedTool("read",saved.schemaFingerprint()))))
+                .isInstanceOf(com.sitionix.forgeagent.domain.exception.ValidationException.class);
+        // A pre-schema inventory entry remains readable and approvals retain their original fingerprint semantics.
+        var legacy=new McpToolSummary("legacy",null,"sha256:"+"b".repeat(64));
+        inventory.replace(connection.installationId(),connection.id(),connection.endpoint(),McpAuthType.NONE,null,List.of(saved,legacy),null);
+        assertThat(inventory.list(connection.installationId(),connection.id())).containsExactly(legacy,saved);
+        assertThat(connections.get(connection.id()).allowedTools()).contains(new McpAllowedTool("read",saved.schemaFingerprint()));
+    }
+
     @Test void persistsSchemasAndAuthoredConfigurationAndRejectsInvalidOrForeignUpdates() throws Exception {
         var connection=connections.create("Synthetic configuration",URI.create("https://example.test/mcp"),McpAuthType.NONE,
                 McpProjectAccess.all(),null,null,null);

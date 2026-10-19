@@ -56,3 +56,10 @@ it('catalog Connect sends only name and endpoint with same-origin transaction co
  await api.connectCatalog({displayName:'Example',endpoint:'https://example.org/mcp'});
  expect(fetcher.mock.calls[0]).toEqual(['/fgaisox/api/v1/infrastructure/agents/integrations/mcp/connect',expect.objectContaining({method:'POST',credentials:'same-origin',body:'{"displayName":"Example","endpoint":"https://example.org/mcp"}'})]);
 });
+
+it('explains invalid trigger configurations without exposing upstream diagnostics',async()=>{
+ const {api,fetcher}=setup();fetcher.mockResolvedValueOnce(new Response(JSON.stringify({code:'INVALID_TRIGGER_CONFIGURATION',message:'credential-secret-canary'}),{status:400}));
+ await expect(api.createTriggerConfiguration('c',{})).rejects.toMatchObject({code:'INVALID_TRIGGER_CONFIGURATION',message:expect.stringContaining('parameters')});
+ fetcher.mockResolvedValueOnce(new Response(JSON.stringify({code:'INVALID_TRIGGER_CONFIGURATION',message:'credential-secret-canary'}),{status:400}));
+ await expect(api.createTriggerConfiguration('c',{})).rejects.not.toThrow('credential-secret-canary');
+});

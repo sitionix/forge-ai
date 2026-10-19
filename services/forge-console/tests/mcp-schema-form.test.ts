@@ -57,3 +57,64 @@ describe('MCP schema form',()=>{
   expect(t.form.readValue()).toEqual({enabled:true,term:'visible',count:7});t.dom.window.close();
  });
 });
+
+it.each([
+ [{type:'number',minimum:2},1,'at least'],
+ [{type:'number',exclusiveMaximum:2},2,'less than'],
+ [{type:'number',multipleOf:0.1},0.25,'multiple'],
+ [{type:'string',minLength:3},'a','characters'],
+ [{type:'string',pattern:'^[A-Z]+$'},'abc','pattern'],
+ [{type:'array',minItems:2},[],'items'],
+ [{type:'array',uniqueItems:true},[1,1],'unique'],
+ [{type:'object',minProperties:1},{},'properties'],
+ [{type:'object',properties:{},additionalProperties:false},{extra:1},'not allowed'],
+ [{enum:['a','b']},'other','Choose'],
+])('rejects schema constraint violations with adjacent accessible feedback: %j',(constraint,value,message)=>{
+ const t=setup({type:'object',properties:{value:constraint},required:['value']},{value});
+ expect(()=>t.form.readValue()).toThrow();
+ const error=t.container.querySelector('[data-schema-error="/value"]');expect(error?.textContent).toContain(message);
+ const control=t.container.querySelector('[data-schema-path="/value"]');
+ if(control) {expect(control.getAttribute('aria-invalid')).toBe('true');expect(control.getAttribute('aria-describedby')).toContain(error!.id);}
+ t.dom.window.close();
+});
+it('preserves malformed JSON drafts and errors across structural rerenders',()=>{
+ const t=setup({type:'object',properties:{value:{allOf:[]}},required:['value']},{value:{old:true}});
+ input(t,'/value','{invalid');t.form.render(t.container);
+ expect((t.container.querySelector('[data-schema-path="/value"]') as HTMLTextAreaElement).value).toBe('{invalid');
+ expect(()=>t.form.readValue()).toThrow('JSON');t.dom.window.close();
+});
+it('shows required indicators, schema defaults and constraint guidance',()=>{
+ const t=setup({type:'object',properties:{amount:{title:'Amount',description:'How much',type:'number',default:3,minimum:1,maximum:5}},required:['amount']});
+ expect(t.container.textContent).toContain('Required');expect(t.container.textContent).toContain('Default: 3');expect(t.container.textContent).toContain('Minimum: 1');t.dom.window.close();
+});
+it('keeps invalid array item drafts blocking save when adding or removing siblings',()=>{
+ const t=setup({type:'array',items:{type:'integer'}},[1,2]);input(t,'/1','');
+ [...t.container.querySelectorAll('button')].find(b=>b.textContent==='+ Add item')!.click();expect(()=>t.form.readValue()).toThrow();
+ [...t.container.querySelectorAll('button')].find(b=>b.textContent==='Remove item')!.click();
+ expect((t.container.querySelector('[data-schema-path="/0"]') as HTMLInputElement).value).toBe('');expect(()=>t.form.readValue()).toThrow();
+ (t.container.querySelector('button') as HTMLButtonElement).click();expect(t.form.readValue()).toEqual([0]);t.dom.window.close();
+});
+it('offers JSON for advanced alternatives without rejecting a valid partially understood branch',()=>{
+ const t=setup({oneOf:[{allOf:[{const:'a'}]},{allOf:[{const:'b'}]}]},'a');
+ expect(t.container.textContent).toContain('JSON');expect(t.form.readValue()).toBe('a');t.dom.window.close();
+});
+it('isolates invalid drafts and errors by alternative and restores them when switching back',()=>{
+ const t=setup({oneOf:[{type:'object',properties:{a:{type:'integer'}},required:['a'],additionalProperties:false},{type:'object',properties:{b:{type:'string'}},required:['b'],additionalProperties:false}]},{a:2});
+ input(t,'/a','');const choose=()=>t.container.querySelector('[data-alternative=""]') as HTMLSelectElement;
+ choose().value='1';choose().dispatchEvent(new t.dom.window.Event('change'));expect(t.form.readValue()).toEqual({b:''});
+ choose().value='0';choose().dispatchEvent(new t.dom.window.Event('change'));expect((t.container.querySelector('[data-schema-path="/a"]') as HTMLInputElement).value).toBe('');expect(()=>t.form.readValue()).toThrow();t.dom.window.close();
+});
+it('retains keyboard focus when toggling optional values and switching formats',()=>{
+ const t=setup({type:'object',properties:{optional:{type:'string'}}});
+ const presence=t.container.querySelector('[data-presence="/optional"]') as HTMLSelectElement;presence.focus();presence.value='value';presence.dispatchEvent(new t.dom.window.Event('change'));
+ expect((t.dom.window.document.activeElement as HTMLElement).dataset.presence).toBe('/optional');t.dom.window.close();
+});
+it('restores alternative drafts at the new array index after removing a preceding item',()=>{
+ const item={oneOf:[{type:'object',properties:{a:{type:'integer'}},required:['a'],additionalProperties:false},{type:'object',properties:{b:{type:'string'}},required:['b'],additionalProperties:false}]};
+ const t=setup({type:'array',items:item},[{a:1},{a:2}]);input(t,'/1/a','');
+ let choose=t.container.querySelector('[data-alternative="/1"]') as HTMLSelectElement;choose.value='1';choose.dispatchEvent(new t.dom.window.Event('change'));
+ [...t.container.querySelectorAll('button')].find(b=>b.textContent==='Remove item')!.click();
+ choose=t.container.querySelector('[data-alternative="/0"]') as HTMLSelectElement;choose.value='0';choose.dispatchEvent(new t.dom.window.Event('change'));
+ expect((t.container.querySelector('[data-schema-path="/0/a"]') as HTMLInputElement).value).toBe('');expect(()=>t.form.readValue()).toThrow();
+ input(t,'/0/a','3');expect(t.form.readValue()).toEqual([{a:3}]);t.dom.window.close();
+});

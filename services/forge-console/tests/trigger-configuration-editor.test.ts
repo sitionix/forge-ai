@@ -71,3 +71,62 @@ describe('Trigger configuration authoring',()=>{
   t.editor.dispose();t.dom.window.close();
  });
 });
+
+it('allows structural recovery while retaining invalid and valid drafts in unaffected steps',async()=>{
+ const t=setup();t.tools[0]!.inputSchema={type:'object',properties:{query:{type:'integer'}},required:['query'],additionalProperties:false} as any;
+ vi.spyOn(t.dom.window,'confirm').mockReturnValue(true);
+ await t.editor.open(t.connection,t.tools,t.container);t.editor.startNew();t.editor.addStep('read');t.editor.addStep('read');t.editor.addStep('read');
+ const [first,second,third]=t.editor.draft.definition.steps;
+ const fields=t.container.querySelectorAll('[data-schema-path="/query"]');
+ (fields[0] as HTMLInputElement).value='';fields[0]!.dispatchEvent(new t.dom.window.Event('input'));
+ (fields[1] as HTMLInputElement).value='7';fields[1]!.dispatchEvent(new t.dom.window.Event('input'));
+ (fields[2] as HTMLInputElement).value='';fields[2]!.dispatchEvent(new t.dom.window.Event('input'));
+ t.editor.removeStep(third.id);expect(t.editor.draft.definition.steps).toHaveLength(2);
+ expect((t.container.querySelector('[data-schema-path="/query"]') as HTMLInputElement).value).toBe('');
+ expect(second.arguments.query).toBe(7);expect(()=>t.editor.forms.get(first.id).readValue()).toThrow();
+ t.editor.chooseTool(first,'read');expect(first.arguments).toEqual({});expect(second.arguments.query).toBe(7);
+ t.editor.dispose();t.dom.window.close();
+});
+it('removes a binding despite invalid literal parameters and confirms tool changes without losing cancelled drafts',async()=>{
+ const t=setup();t.tools[0]!.inputSchema={type:'object',properties:{query:{type:'integer'}},required:['query'],additionalProperties:false} as any;
+ const confirm=vi.spyOn(t.dom.window,'confirm').mockReturnValue(false);
+ await t.editor.open(t.connection,t.tools,t.container);t.editor.startNew();t.editor.addStep('read');t.editor.addStep('read');
+ const [first,second]=t.editor.draft.definition.steps;second.bindings=[{targetPointer:'/other',sourceStepId:first.id,sourcePointer:''}];t.editor.render();
+ const field=t.container.querySelector('[data-schema-path="/query"]') as HTMLInputElement;field.value='';field.dispatchEvent(new t.dom.window.Event('input'));
+ [...t.container.querySelectorAll('button')].find(b=>b.textContent==='Remove source')!.click();expect(second.bindings).toHaveLength(0);
+ first.arguments={query:9};t.editor.render();t.editor.chooseTool(first,'read');expect(confirm).toHaveBeenCalled();expect(first.arguments).toEqual({query:9});
+ t.editor.dispose();t.dom.window.close();
+});
+
+it('keeps a malformed draft when tool replacement is cancelled, and permits replacement when confirmed',async()=>{
+ const t=setup();t.tools[0]!.inputSchema={type:'object',properties:{query:{allOf:[{type:'object'}]}},required:['query'],additionalProperties:false} as any;
+ const confirm=vi.spyOn(t.dom.window,'confirm').mockReturnValue(false);
+ await t.editor.open(t.connection,t.tools,t.container);t.editor.startNew();t.editor.addStep('read');
+ const step=t.editor.draft.definition.steps[0];const field=t.container.querySelector('[data-schema-path="/query"]') as HTMLTextAreaElement;
+ field.value='{invalid';field.dispatchEvent(new t.dom.window.Event('input'));t.editor.chooseTool(step,'read');
+ expect(confirm).toHaveBeenCalled();expect((t.container.querySelector('[data-schema-path="/query"]') as HTMLTextAreaElement).value).toBe('{invalid');
+ confirm.mockReturnValue(true);t.editor.chooseTool(step,'read');expect((t.container.querySelector('[data-schema-path="/query"]') as HTMLTextAreaElement).value).toBe('');
+ t.editor.dispose();t.dom.window.close();
+});
+it('retains keyboard focus after changing tools and after removing a step',async()=>{
+ const t=setup();await t.editor.open(t.connection,t.tools,t.container);t.editor.startNew();t.editor.addStep();
+ const tool=t.container.querySelector('select[aria-label="MCP tool"]') as HTMLSelectElement;tool.focus();tool.value='read';tool.dispatchEvent(new t.dom.window.Event('change'));
+ expect(t.dom.window.document.activeElement?.getAttribute('aria-label')).toBe('MCP tool');
+ const remove=[...t.container.querySelectorAll('button')].find(b=>b.textContent==='Remove step')!;remove.focus();remove.click();
+ expect(t.dom.window.document.activeElement?.textContent).toBe('+ Add step');t.editor.dispose();t.dom.window.close();
+});
+it('preserves an invalid sibling JSON draft when binding another parameter',async()=>{
+ const t=setup();t.tools[0]!.inputSchema={type:'object',properties:{query:{allOf:[]},other:{type:'string'}},required:['query'],additionalProperties:false} as any;
+ vi.spyOn(t.dom.window,'confirm').mockReturnValue(true);
+ await t.editor.open(t.connection,t.tools,t.container);t.editor.startNew();t.editor.addStep('read');t.editor.addStep('read');
+ const step=t.editor.draft.definition.steps[1];step.bindings=[{targetPointer:null,sourceStepId:t.editor.draft.definition.steps[0].id,sourcePointer:''}];t.editor.render();
+ const fields=t.container.querySelectorAll('[data-schema-path="/query"]');(fields[1] as HTMLTextAreaElement).value='{bad';fields[1]!.dispatchEvent(new t.dom.window.Event('input'));
+ const target=t.container.querySelector('select[aria-label="Parameter"]') as HTMLSelectElement;target.value='/other';target.dispatchEvent(new t.dom.window.Event('change'));
+ expect((t.container.querySelectorAll('[data-schema-path="/query"]')[1] as HTMLTextAreaElement).value).toBe('{bad');
+ expect(()=>t.editor.forms.get(step.id).readValue()).toThrow();t.editor.dispose();t.dom.window.close();
+});
+it('clears a previous success notice when a later edit fails to save',async()=>{
+ const t=setup();await t.editor.open(t.connection,t.tools,t.container);t.editor.startNew();t.editor.addStep('read');t.editor.draft.name='Saved';await t.editor.save();
+ t.api.updateTriggerConfiguration.mockRejectedValue(new Error('Cannot save'));await t.editor.save();
+ expect(t.container.textContent).not.toContain('Configuration saved.');expect(t.container.textContent).toContain('Cannot save');t.editor.dispose();t.dom.window.close();
+});
