@@ -2,6 +2,10 @@ export function createAgentProjectsApi(http) {
   const root = "/agents";
   const dialoguePath = (runId, nodeRunId) => `${root}/workflow-runs/${encodeURIComponent(runId)}/node-runs/${encodeURIComponent(nodeRunId)}/dialogue`;
   return {
+    listTriggerConnections(projectId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/trigger-connections`); },
+    listTriggerConfigurations(projectId, connectionId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/trigger-connections/${encodeURIComponent(connectionId)}/configurations`); },
+    getTriggerBinding(workflowId, nodeId) { return http.get(`${root}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/trigger-binding`); },
+    saveTriggerBinding(workflowId, nodeId, selection) { return http.put(`${root}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/trigger-binding`, selection); },
     getDialogue(runId, nodeRunId) { return http.get(dialoguePath(runId, nodeRunId)); },
     listDialogueMessages(runId, nodeRunId, afterSequence = 0, limit = 100) { return http.get(`${dialoguePath(runId, nodeRunId)}/messages?afterSequence=${encodeURIComponent(afterSequence)}&limit=${encodeURIComponent(limit)}`); },
     sendDialogueMessage(runId, nodeRunId, request) { return http.post(`${dialoguePath(runId, nodeRunId)}/messages`, request); },

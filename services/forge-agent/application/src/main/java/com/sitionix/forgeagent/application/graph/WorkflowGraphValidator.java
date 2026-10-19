@@ -59,7 +59,7 @@ public class WorkflowGraphValidator {
             }
             this.indexPorts(node.inputs(), node.id(), portIds, inputOwnersByPortId, allOwnersByPortId);
             this.indexPorts(node.outputs(), node.id(), portIds, outputOwnersByPortId, allOwnersByPortId);
-            if (node.nodeType() == NodeType.MANUAL) {
+            if (node.nodeType() == NodeType.MANUAL || node.nodeType() == NodeType.TRIGGER) {
                 continue;
             }
             final AgentDefinition target = targetsById.get(node.targetId());
@@ -70,6 +70,7 @@ public class WorkflowGraphValidator {
                 throw new ConflictException("CROSS_PROJECT_NODE_TARGET", "Workflow node targets must belong to the same project.");
             }
         }
+        TriggerNodePolicy.validateEntry(normalizedNodes, normalizedConnections, taskInputPortId);
         this.validateConnections(normalizedConnections, inputOwnersByPortId, outputOwnersByPortId, allOwnersByPortId);
         this.validateTaskInputPort(taskInputPortId, normalizedNodes, inputOwnersByPortId, allOwnersByPortId);
         this.validateTaskOutputPort(taskOutputPortId, normalizedNodes, normalizedConnections, outputOwnersByPortId, allOwnersByPortId);
@@ -81,12 +82,13 @@ public class WorkflowGraphValidator {
         if (node == null || node.id() == null) {
             throw new ValidationException("DUPLICATE_NODE_ID", "Workflow node IDs must be unique.");
         }
-        if (node.nodeType() != NodeType.MANUAL && node.targetId() == null) {
+        if (node.nodeType() != NodeType.MANUAL && node.nodeType() != NodeType.TRIGGER && node.targetId() == null) {
             throw new ValidationException("UNKNOWN_NODE_TARGET", "Workflow nodes must target existing agents.");
         }
         if (node.nodeType() == NodeType.MANUAL && node.targetId() != null) {
             throw new ValidationException("INVALID_MANUAL_NODE_TARGET", "Manual workflow nodes must not target an agent.");
         }
+        TriggerNodePolicy.validate(node);
         DialogueNodePolicy.validate(node);
         final NodePosition position = node.position() == null ? new NodePosition(0.0, 0.0) : node.position();
         final NodeInputMode inputMode = node.inputMode() == null ? NodeInputMode.DEPENDENCIES_ONLY : node.inputMode();

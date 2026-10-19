@@ -63,6 +63,9 @@ public class WorkflowRunUseCases {
         final String input = this.requireInput(command == null ? null : command.input());
         final Workflow workflow = this.workflowRepository.findByIdForUpdate(workflowId)
                 .orElseThrow(() -> new NotFoundException("WORKFLOW_NOT_FOUND", "Workflow was not found."));
+        if (workflow.nodes().stream().anyMatch(node -> node.nodeType() == com.sitionix.forgeagent.domain.model.NodeType.TRIGGER)) {
+            throw new ValidationException("TRIGGER_EXECUTION_NOT_AVAILABLE", "Trigger execution is not available yet.");
+        }
         final UUID runId = UUID.randomUUID();
         if (repositoryIds == null) {
             throw new ValidationException("TASK_RUN_REQUIRES_REPOSITORIES",

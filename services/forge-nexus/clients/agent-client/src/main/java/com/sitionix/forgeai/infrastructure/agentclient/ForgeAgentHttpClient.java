@@ -40,6 +40,15 @@ import org.springframework.web.service.annotation.PutExchange;
 import org.springframework.web.bind.annotation.RequestBody;
 
 public interface ForgeAgentHttpClient {
+    @GetExchange("/api/v1/projects/{projectId}/trigger-connections")
+    List<com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.Connection> triggerConnections(@PathVariable UUID projectId);
+    @GetExchange("/api/v1/projects/{projectId}/trigger-connections/{connectionId}/configurations")
+    List<com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.Configuration> triggerConfigurations(@PathVariable UUID projectId,@PathVariable UUID connectionId);
+    @GetExchange("/api/v1/workflows/{workflowId}/nodes/{nodeId}/trigger-binding")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.Binding triggerBinding(@PathVariable UUID workflowId,@PathVariable UUID nodeId);
+    @PutExchange(value="/api/v1/workflows/{workflowId}/nodes/{nodeId}/trigger-binding",contentType=MediaType.APPLICATION_JSON_VALUE)
+    com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.Binding saveTriggerBinding(@PathVariable UUID workflowId,@PathVariable UUID nodeId,@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.Selection selection);
+
     @GetExchange("/api/v1/workflow-runs/{runId}/node-runs/{nodeRunId}/dialogue")
     com.sitionix.forgeai.infrastructure.agentclient.dto.DialogueClientDtos.State getDialogue(@PathVariable UUID runId, @PathVariable UUID nodeRunId);
     @GetExchange("/api/v1/workflow-runs/{runId}/node-runs/{nodeRunId}/dialogue/messages")
