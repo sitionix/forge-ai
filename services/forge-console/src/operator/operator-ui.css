@@ -6218,3 +6218,29 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .dialogue-completion { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; font-size: 12px; }
 .dialogue-completion dd { margin: 0; }
 .dialogue-outcome-description { width: 100%; color: var(--muted); }
+
+/* Schema-derived MCP configuration authoring. */
+#mcpTriggerConfigurations { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border, #d9d7c8); }
+.trigger-configuration-list, .trigger-step-header { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.trigger-configuration-editor { margin-top:20px; display:grid; gap:16px; }
+.trigger-step { padding:16px; border:1px solid var(--border, #d9d7c8); border-radius:12px; display:grid; gap:12px; }
+.trigger-step-header h4 { margin:0 auto 0 0; }
+.schema-field { display:grid; gap:6px; min-width:0; }
+.schema-object { padding-left:14px; border-left:2px solid var(--border, #d9d7c8); display:grid; gap:12px; }
+.schema-json { min-height:100px; font-family:monospace; }
+.schema-presence { max-width:220px; }
+.schema-array-item,.trigger-binding { padding:12px; border:1px dashed var(--border, #d9d7c8); border-radius:8px; display:grid; gap:10px; }
+.trigger-binding { margin-bottom:12px; }
+.schema-error { margin:0; color:var(--danger, #b83232); overflow-wrap:anywhere; }
+.schema-field [aria-invalid="true"] { border-color:var(--danger, #b83232); outline-offset:2px; }
+.trigger-configuration-editor, .trigger-step, .trigger-binding { min-width:0; }
+.trigger-configuration-editor .field-label, .trigger-configuration-editor .field-hint, .trigger-step-header h4 { overflow-wrap:anywhere; }
+.trigger-configuration-editor .text-input { max-width:100%; box-sizing:border-box; min-width:0; }
+.trigger-configuration-editor :is(button,input,select,textarea):focus-visible { outline:2px solid var(--accent, #3b82f6); outline-offset:3px; }
+@media (max-width:600px) {
+  .trigger-step { padding:10px; }
+  .schema-object { padding-left:8px; }
+  .schema-array-item, .trigger-binding { padding:8px; }
+  .trigger-step-header h4 { flex-basis:100%; }
+  .trigger-configuration-list .button, .trigger-configuration-editor .mcp-actions .button { flex:1 1 160px; }
+}

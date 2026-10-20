@@ -276,4 +276,13 @@ public interface ForgeAgentHttpClient {
     @PostExchange(value="/api/v1/integrations/mcp/oauth/callback",contentType=MediaType.APPLICATION_JSON_VALUE)
     com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCompletionInbound completeMcpOAuth(
             @RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.McpOAuthCallbackOutbound request);
+
+    @GetExchange("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations")
+    List<com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.Configuration> authoredTriggerConfigurations(@PathVariable UUID connectionId);
+    @GetExchange("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.Document authoredTriggerConfiguration(@PathVariable UUID connectionId,@PathVariable UUID id);
+    @PostExchange("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.Document createTriggerConfiguration(@PathVariable UUID connectionId,@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.DefinitionRequest request);
+    @PutExchange("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}")
+    com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.Document updateTriggerConfiguration(@PathVariable UUID connectionId,@PathVariable UUID id,@RequestBody com.sitionix.forgeai.infrastructure.agentclient.dto.TriggerClientDtos.DefinitionRequest request);
 }

@@ -46,7 +46,7 @@ class ForgeAgentDialogueMigrationIT {
           workflow,
           node);
       var result = Flyway.configure().dataSource(source).load().migrate();
-      assertThat(result.migrationsExecuted).isEqualTo(4);
+      assertThat(result.migrationsExecuted).isEqualTo(6);
       assertThat(
               jdbc.queryForObject(
                   "SELECT context_mode FROM workflow_nodes WHERE id=?", String.class, node))

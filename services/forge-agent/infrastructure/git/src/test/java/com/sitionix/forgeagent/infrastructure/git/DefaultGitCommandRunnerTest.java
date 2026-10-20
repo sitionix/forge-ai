@@ -71,8 +71,10 @@ class DefaultGitCommandRunnerTest {
     @Test
     void timeoutCoversInheritedOutputPipesAfterRootProcessExits() throws Exception {
         final Path childPidFile = this.tempDir.resolve("inherited-pipe-child.pid");
-        final Path script = this.writeInheritedPipeScript(childPidFile);
-        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner(new GitFixtureProcesses());
+        final Path readerGate = this.tempDir.resolve("output-reader-started");
+        final Path script = this.writeInheritedPipeScript(childPidFile, readerGate);
+        final GitFixtureProcesses processes = new GitFixtureProcesses(readerGate);
+        final DefaultGitCommandRunner runner = new DefaultGitCommandRunner(processes);
         final Instant startedAt = Instant.now();
 
         assertThatThrownBy(() -> runner.run(List.of("/bin/sh", script.toString()),
@@ -80,6 +82,7 @@ class DefaultGitCommandRunnerTest {
                 .isInstanceOf(GitExecutionException.class)
                 .hasMessage("Git command timed out.");
 
+        assertThat(processes.rootExitObserved()).as("root exited before waiting for inherited output").isTrue();
         assertThat(Duration.between(startedAt, Instant.now())).isLessThan(Duration.ofSeconds(5));
         assertThatProcessIsDead(this.readPid(childPidFile));
     }
@@ -126,13 +129,14 @@ class DefaultGitCommandRunnerTest {
         return script;
     }
 
-    private Path writeInheritedPipeScript(final Path childPidFile) throws Exception {
+    private Path writeInheritedPipeScript(final Path childPidFile, final Path readerGate) throws Exception {
         final Path script = this.tempDir.resolve("inherited-pipe.sh");
         Files.writeString(script, """
                 sleep 60 &
                 echo $! > '%s'
+                while [ ! -f '%s' ]; do sleep 0.01; done
                 exit 0
-                """.formatted(childPidFile));
+                """.formatted(childPidFile, readerGate));
         return script;
     }
 

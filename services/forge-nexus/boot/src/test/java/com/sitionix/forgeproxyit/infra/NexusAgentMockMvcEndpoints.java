@@ -32,6 +32,42 @@ import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
 import org.springframework.http.HttpStatus;
 
 public final class NexusAgentMockMvcEndpoints {
+    public static Endpoint<Void, TriggerModels.Configuration[]> listAuthoredTriggers() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{connectionId}/trigger-configurations", HttpMethod.GET,
+                Void.class, TriggerModels.Configuration[].class,
+                (MockmvcDefault) context -> context.expectStatus(200).expectResponse("authored-trigger-list.json"));
+    }
+
+    public static Endpoint<Void, TriggerModels.Document> getAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.GET,
+                Void.class, TriggerModels.Document.class,
+                (MockmvcDefault) context -> context.expectStatus(200).expectResponse("authored-trigger-detail.json"));
+    }
+
+    public static Endpoint<TriggerModels.DefinitionRequest, TriggerModels.Document> createAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{connectionId}/trigger-configurations", HttpMethod.POST,
+                TriggerModels.DefinitionRequest.class, TriggerModels.Document.class,
+                (MockmvcDefault) context -> context.withRequest("authored-trigger-request.json").expectStatus(201).expectResponse("authored-trigger-detail.json"));
+    }
+
+    public static Endpoint<TriggerModels.DefinitionRequest, TriggerModels.Document> updateAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.PUT,
+                TriggerModels.DefinitionRequest.class, TriggerModels.Document.class,
+                (MockmvcDefault) context -> context.withRequest("authored-trigger-request.json").expectStatus(200).expectResponse("authored-trigger-detail.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> missingAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.expectStatus(404).expectResponse("trigger-not-found-response.json"));
+    }
+
+    public static Endpoint<TriggerModels.DefinitionRequest, InfrastructureErrorResponse> invalidAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.PUT,
+                TriggerModels.DefinitionRequest.class, InfrastructureErrorResponse.class,
+                (MockmvcDefault) context -> context.withRequest("authored-trigger-request.json").expectStatus(400).expectResponse("trigger-invalid-response.json"));
+    }
+
     public static Endpoint<Void, TriggerModels.Connection[]> triggerConnections() {
         return Endpoint.createContract(
                 "/api/v1/infrastructure/agents/projects/{projectId}/trigger-connections", HttpMethod.GET,
@@ -96,7 +132,7 @@ public final class NexusAgentMockMvcEndpoints {
     public static Endpoint<Void, com.sitionix.forgeai.api.mcp.McpProbeResponse.Tool[]> listMcpTools(int status) {
         return Endpoint.createContract("/api/v1/infrastructure/agents/integrations/mcp/connections/{id}/tools", HttpMethod.GET,
                 Void.class, com.sitionix.forgeai.api.mcp.McpProbeResponse.Tool[].class,
-                (MockmvcDefault) context -> context.expectStatus(status));
+                (MockmvcDefault) context -> context.expectStatus(status).expectResponse("agent-mcp-tools-response.json"));
     }
     public static Endpoint<JsonNode, com.sitionix.forgeai.api.mcp.McpConnectionResponse> approveMcpTools(int status) {
         return approveMcpTools(status, "mcp-approve-tools-request.json");

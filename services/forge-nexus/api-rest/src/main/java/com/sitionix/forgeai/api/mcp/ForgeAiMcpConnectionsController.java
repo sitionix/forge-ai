@@ -17,7 +17,7 @@ public class ForgeAiMcpConnectionsController {
     @GetMapping("/{id}") public McpConnectionResponse get(@PathVariable UUID id){return mapper.toResponse(useCase.get(id));}
     @PostMapping("/{id}/test") public McpProbeResponse test(@PathVariable UUID id){return McpProbeResponse.from(useCase.test(id));}
     @GetMapping("/{id}/tools") public List<McpProbeResponse.Tool> inventory(@PathVariable UUID id){
-        return useCase.inventory(id).stream().map(tool -> new McpProbeResponse.Tool(tool.name(),tool.description(),tool.schemaFingerprint())).toList();
+        return useCase.inventory(id).stream().map(tool -> new McpProbeResponse.Tool(tool.name(),tool.description(),tool.schemaFingerprint(),tool.inputSchema(),tool.outputSchema())).toList();
     }
     @PutMapping("/{id}/allowed-tools") public McpConnectionResponse approve(@PathVariable UUID id,@RequestBody Approvals request){
         if(request==null || request.tools()==null)throw new IllegalArgumentException("Invalid MCP tool approval");

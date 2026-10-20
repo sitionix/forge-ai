@@ -25,9 +25,9 @@ public class PostgresMcpToolInventoryRepository implements McpToolInventoryRepos
     }
 
     @Override public List<McpToolSummary> list(UUID installation, UUID id) {
-        return jdbc.query("SELECT i.tool_name,i.description,i.schema_fingerprint FROM mcp_discovered_tools i "
+        return jdbc.query("SELECT i.tool_name,i.description,i.schema_fingerprint,i.input_schema,i.output_schema FROM mcp_discovered_tools i "
                         + "JOIN mcp_connections c ON c.id=i.connection_id WHERE c.installation_id=? AND c.id=? ORDER BY i.tool_name",
-                (rs, row) -> new McpToolSummary(rs.getString(1), rs.getString(2), rs.getString(3)), installation, id);
+                (rs, row) -> new McpToolSummary(rs.getString(1), rs.getString(2), rs.getString(3), schema(rs.getString(4)), schema(rs.getString(5))), installation, id);
     }
 
     @Override public void replace(UUID installation, UUID id, URI endpoint, McpAuthType authType,
@@ -42,8 +42,8 @@ public class PostgresMcpToolInventoryRepository implements McpToolInventoryRepos
                 throw new IllegalStateException("MCP connection changed during probe");
             jdbc.update("DELETE FROM mcp_discovered_tools WHERE connection_id=?", id);
             for (McpToolSummary tool : tools)
-                jdbc.update("INSERT INTO mcp_discovered_tools(connection_id,tool_name,description,schema_fingerprint) VALUES(?,?,?,?)",
-                        id, tool.name(), tool.description(), tool.schemaFingerprint());
+                jdbc.update("INSERT INTO mcp_discovered_tools(connection_id,tool_name,description,schema_fingerprint,input_schema,output_schema) VALUES(?,?,?,?,?::jsonb,?::jsonb)",
+                        id, tool.name(), tool.description(), tool.schemaFingerprint(), json(tool.inputSchema()), json(tool.outputSchema()));
             jdbc.update("DELETE FROM mcp_allowed_tools a WHERE a.connection_id=? AND NOT EXISTS "
                     + "(SELECT 1 FROM mcp_discovered_tools i WHERE i.connection_id=a.connection_id "
                     + "AND i.tool_name=a.tool_name AND i.schema_fingerprint=a.schema_fingerprint)", id);
@@ -69,6 +69,20 @@ public class PostgresMcpToolInventoryRepository implements McpToolInventoryRepos
                     Timestamp.from(Instant.now()), installation, id);
             return connections.findById(installation, id).orElseThrow();
         });
+    }
+
+    // Match McpProtocolJson: opaque schemas must never round through binary floating point.
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper()
+            .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+    private static java.util.Map<String,Object> schema(String value) {
+        if (value == null) return null;
+        try { return JSON.readValue(value, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String,Object>>() {}); }
+        catch (java.io.IOException error) { throw new IllegalStateException("Invalid stored MCP schema", error); }
+    }
+    private static String json(Object value) {
+        if (value == null) return null;
+        try { return JSON.writeValueAsString(value); }
+        catch (com.fasterxml.jackson.core.JsonProcessingException error) { throw new IllegalArgumentException("Invalid MCP schema", error); }
     }
 
     private McpConnection lock(UUID installation, UUID id) {

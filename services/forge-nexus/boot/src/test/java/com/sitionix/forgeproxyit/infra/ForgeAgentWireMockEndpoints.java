@@ -32,6 +32,42 @@ import com.sitionix.forgeit.domain.endpoint.wiremock.WiremockDefault;
 import org.springframework.http.HttpStatus;
 
 public final class ForgeAgentWireMockEndpoints {
+    public static Endpoint<Void, TriggerClientDtos.Configuration[]> listAuthoredTriggers() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations", HttpMethod.GET,
+                Void.class, TriggerClientDtos.Configuration[].class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("authored-trigger-list.json"));
+    }
+
+    public static Endpoint<Void, TriggerClientDtos.Document> getAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.GET,
+                Void.class, TriggerClientDtos.Document.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(200).responseBody("authored-trigger-detail.json"));
+    }
+
+    public static Endpoint<TriggerClientDtos.DefinitionRequest, TriggerClientDtos.Document> createAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations", HttpMethod.POST,
+                TriggerClientDtos.DefinitionRequest.class, TriggerClientDtos.Document.class,
+                (WiremockDefault) context -> context.plainUrl().matchesJson("authored-trigger-request.json").responseStatus(201).responseBody("authored-trigger-detail.json"));
+    }
+
+    public static Endpoint<TriggerClientDtos.DefinitionRequest, TriggerClientDtos.Document> updateAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.PUT,
+                TriggerClientDtos.DefinitionRequest.class, TriggerClientDtos.Document.class,
+                (WiremockDefault) context -> context.plainUrl().matchesJson("authored-trigger-request.json").responseStatus(200).responseBody("authored-trigger-detail.json"));
+    }
+
+    public static Endpoint<Void, InfrastructureErrorResponse> missingAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.GET,
+                Void.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context.plainUrl().responseStatus(404).responseBody("trigger-not-found-response.json"));
+    }
+
+    public static Endpoint<TriggerClientDtos.DefinitionRequest, InfrastructureErrorResponse> invalidAuthoredTrigger() {
+        return Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.PUT,
+                TriggerClientDtos.DefinitionRequest.class, InfrastructureErrorResponse.class,
+                (WiremockDefault) context -> context.plainUrl().matchesJson("authored-trigger-request.json").responseStatus(400).responseBody("trigger-invalid-response.json"));
+    }
+
     public static Endpoint<Void, TriggerClientDtos.Connection[]> triggerConnections() {
         return Endpoint.createContract(
                 "/api/v1/projects/{projectId}/trigger-connections", HttpMethod.GET,

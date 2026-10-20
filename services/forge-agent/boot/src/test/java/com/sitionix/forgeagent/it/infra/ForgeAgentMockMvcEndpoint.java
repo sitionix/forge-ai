@@ -32,6 +32,27 @@ import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 
 public final class ForgeAgentMockMvcEndpoint {
+
+    public static final Endpoint<com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Request,
+            com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Detail> CREATE_TRIGGER_CONFIGURATION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations", HttpMethod.POST,
+                    com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Request.class,
+                    com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Detail.class);
+    public static final Endpoint<Void,com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Detail> GET_TRIGGER_CONFIGURATION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.GET,
+                    Void.class, com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Detail.class);
+    public static final Endpoint<com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Request,
+            com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Detail> UPDATE_TRIGGER_CONFIGURATION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.PUT,
+                    com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Request.class,
+                    com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Detail.class);
+    public static final Endpoint<com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Request, ForgeAgentErrorResponse> INVALID_TRIGGER_CONFIGURATION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.PUT,
+                    com.sitionix.forgeagent.api.trigger.McpTriggerConfigurationController.Request.class, ForgeAgentErrorResponse.class);
+    public static final Endpoint<Void,ForgeAgentErrorResponse> MISSING_TRIGGER_CONFIGURATION =
+            Endpoint.createContract("/api/v1/integrations/mcp/connections/{connectionId}/trigger-configurations/{id}", HttpMethod.GET,
+                    Void.class, ForgeAgentErrorResponse.class);
+
     public static final Endpoint<Void, Void> RUNTIME_MCP_DENIED =
             Endpoint.createContract("/internal/mcp/connections/{id}", HttpMethod.POST, Void.class, Void.class);
     public static final Endpoint<Void, Void> RUNTIME_MCP_ALTERNATIVE =

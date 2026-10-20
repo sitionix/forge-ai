@@ -44,7 +44,7 @@ describe('Trigger workflow infrastructure',()=>{
   resolve([{id:'ca',connectionId:'a',name:'Stale configuration'}]);await flush();
   expect(t.doc.querySelector('[data-trigger-configuration]')?.textContent).not.toContain('Stale configuration');
   expect(t.doc.getElementById('agentsV2NodeEditorBody')?.textContent).toContain('No configurations');
-  expect((t.doc.querySelector('[data-add-trigger-configuration]') as HTMLButtonElement).disabled).toBe(true);
+  expect((t.doc.querySelector('[data-add-trigger-configuration]') as HTMLButtonElement).disabled).toBe(false);
   t.builder.close();t.dom.window.close();
  });
  it('keeps the draft selection and shows an error when binding persistence fails',async()=>{
@@ -152,4 +152,41 @@ describe('Trigger creation failures', () => {
    expect(t.builder.addPresetNode('MANUAL', null, preset)).toBeNull();
   } finally { t.builder.close(); t.dom.window.close(); }
  });
+});
+
+describe('Trigger configuration navigation',()=>{
+ it('opens the selected connection authoring in a separate tab without saving or discarding the workflow',async()=>{
+  const t=setup();const open=vi.spyOn(t.dom.window,'open').mockImplementation(()=>null);
+  t.builder.addTriggerNode();await flush();
+  const select=t.doc.querySelector('[data-trigger-connection]') as HTMLSelectElement;
+  select.value='a';select.dispatchEvent(new t.dom.window.Event('change'));await flush();
+  const before=structuredClone(t.builder.workflow);
+  (t.doc.querySelector('[data-add-trigger-configuration]') as HTMLButtonElement).click();
+  expect(open).toHaveBeenCalledWith('http://localhost/settings.html?connectionId=a&createTrigger=1','_blank','noopener');
+  expect(t.builder.workflow).toEqual(before);expect(t.api.updateWorkflow).not.toHaveBeenCalled();
+  t.builder.close();t.dom.window.close();
+ });
+});
+
+it('refreshes configurations without losing the connection or unsaved selection and ignores stale refreshes',async()=>{
+ const t=setup();t.builder.addTriggerNode();await flush();
+ const editor=t.builder.triggerEditor;await editor.changeConnection('a');editor.selection.configurationId='ca';
+ t.api.listTriggerConfigurations.mockResolvedValueOnce([{id:'ca',connectionId:'a',name:'Configuration A'},{id:'new',connectionId:'a',name:'New configuration'}]);
+ (t.doc.querySelector('[data-trigger-refresh]') as HTMLButtonElement)?.click();await flush();
+ expect(t.doc.querySelector('[data-trigger-configuration]')?.textContent).toContain('New configuration');
+ expect(editor.selection).toEqual({connectionId:'a',configurationId:'ca'});
+ let resolve!:(v:any)=>void;t.api.listTriggerConfigurations.mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+ (t.doc.querySelector('[data-trigger-refresh]') as HTMLButtonElement).click();await flush();await editor.changeConnection('b');resolve([{id:'late',name:'Stale'}]);await flush();
+ expect(editor.selection.connectionId).toBe('b');expect(t.doc.body.textContent).not.toContain('Stale');
+ t.builder.close();t.dom.window.close();
+});
+
+it('keeps the focused configuration select and clears recoverable errors without replacing its DOM',async()=>{
+ const t=setup();t.builder.addTriggerNode();await flush();const editor=t.builder.triggerEditor;await editor.changeConnection('a');
+ editor.error='The saved configuration is no longer available.';editor.render();
+ const select=t.doc.querySelector('[data-trigger-configuration]') as HTMLSelectElement;select.focus();select.value='ca';select.dispatchEvent(new t.dom.window.Event('change'));
+ expect(t.doc.activeElement).toBe(select);expect(t.doc.querySelector('[data-trigger-configuration]')).toBe(select);
+ expect(editor.selection).toEqual({connectionId:'a',configurationId:'ca'});expect(editor.error).toBe('');expect(t.doc.querySelector('[role="alert"]')).toBeNull();
+ expect((t.doc.getElementById('agentsV2NodeEditorSave') as HTMLButtonElement).disabled).toBe(false);expect(editor.apply()).toBe(true);
+ t.builder.close();t.dom.window.close();
 });

@@ -1,0 +1,37 @@
+[
+  {
+    "name": "read",
+    "description": "Read data",
+    "schemaFingerprint": "sha256:one",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0.12345678901234567890123456789
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "number",
+              "maximum": 999999999.1234567890123456789
+            }
+          }
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+]

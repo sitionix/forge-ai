@@ -26,6 +26,7 @@ import org.springframework.web.client.RestClientException;
       ForgeAiInfrastructureAgentsController.class,
       ForgeAiDialogueController.class,
       WorkflowTriggerController.class,
+      com.sitionix.forgeai.api.trigger.McpTriggerConfigurationController.class,
       ForgeAiProjectLogsController.class,
       ForgeAiProjectSshConnectionsController.class,
       ForgeAiProjectServicesController.class,

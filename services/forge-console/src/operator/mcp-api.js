@@ -1,6 +1,7 @@
 import { contextPathFromLocation } from './infrastructure-http-client.js';
 
 const messages = {
+  INVALID_TRIGGER_CONFIGURATION: 'The configuration could not be saved. Review parameters, step sources, and current tool approval, then try again. Your draft is preserved.',
   MCP_REGISTRY_UNAVAILABLE: 'MCP catalog unavailable. Retry or add a custom integration.',
   MCP_OAUTH_SETUP_REQUIRED: 'Forge needs a registered OAuth client for this provider. Contact the installation owner.',
   MCP_CUSTOM_REQUIRED: 'Use Add custom MCP for this endpoint or its required credentials.',
@@ -77,4 +78,9 @@ export class McpApi {
   setEnabled(id,enabled,signal) { return this.request('PUT',`${this.connections}/${encodeURIComponent(id)}/enabled`,{enabled},signal); }
   remove(id,signal) { return this.request('DELETE',`${this.connections}/${encodeURIComponent(id)}`,undefined,signal); }
   projects(signal) { return this.request('GET','/infrastructure/agents/projects',undefined,signal); }
+
+  listTriggerConfigurations(connectionId,signal) {return this.request('GET',`${this.connections}/${encodeURIComponent(connectionId)}/trigger-configurations`,undefined,signal);}
+  getTriggerConfiguration(connectionId,id,signal) {return this.request('GET',`${this.connections}/${encodeURIComponent(connectionId)}/trigger-configurations/${encodeURIComponent(id)}`,undefined,signal);}
+  createTriggerConfiguration(connectionId,request,signal) {return this.request('POST',`${this.connections}/${encodeURIComponent(connectionId)}/trigger-configurations`,request,signal);}
+  updateTriggerConfiguration(connectionId,id,request,signal) {return this.request('PUT',`${this.connections}/${encodeURIComponent(connectionId)}/trigger-configurations/${encodeURIComponent(id)}`,request,signal);}
 }

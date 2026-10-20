@@ -2,7 +2,8 @@ import { escapeHtml } from './dom-render-helpers.js';
 
 // Connection-owned configurations are separate from the common node model.
 export class TriggerNodeEditor {
-  constructor({document, api, onValidity}) {
+  constructor({document, api, onValidity, onAddConfiguration=()=>{}}) {
+    this.onAddConfiguration=onAddConfiguration;
     this.document = document; this.api = api; this.onValidity = onValidity;
     this.version = 0; this.drafts = new Map(); this.connectionNames = new Map();
   }
@@ -42,18 +43,23 @@ export class TriggerNodeEditor {
   }
   async changeConnection(connectionId) {
     this.selection = {connectionId:connectionId || null, configurationId:null};
-    this.configurations = []; this.error = ''; const version = ++this.version;
+    this.configurations = []; this.error = ''; this.notice=''; const version = ++this.version;
     this.loading = Boolean(connectionId); this.render();
     if (connectionId) await this.loadConfigurations(version);
   }
-  async loadConfigurations(version) {
+  refreshConfigurations() {
+    if(!this.selection.connectionId || this.loading)return;
+    this.error='';this.notice='';this.loading=true;const version=++this.version;this.render();return this.loadConfigurations(version,true);
+  }
+  async loadConfigurations(version,refresh=false) {
     try {
       const configurations = await this.api.listTriggerConfigurations(this.projectId, this.selection.connectionId);
       if (version !== this.version) return;
       this.configurations = configurations;
       if (this.selection.configurationId && !configurations.some(c => c.id === this.selection.configurationId)) {
-        throw new Error('The saved configuration is no longer available. Choose another configuration.');
+        throw new Error('The saved configuration is no longer available. Choose another configuration, create one in Settings, or refresh after restoring it.');
       }
+      this.notice=refresh?'Configurations refreshed. Choose the configuration you want to use.':'';
       this.loading = false; this.render();
     } catch (error) {
       if (version !== this.version) return;
@@ -77,14 +83,18 @@ export class TriggerNodeEditor {
           <option value="">${this.loading ? 'Loading…' : 'Choose a configuration'}</option>${options(this.configurations, this.selection.configurationId, 'name')}
         </select>
       </label>
-      <p class="field-hint" role="status">${this.loading ? 'Loading trigger settings…' : this.selection.connectionId && !this.configurations.length && !this.error ? 'No configurations for this connection yet.' : !this.selection.connectionId ? 'Select a connection to see its configurations.' : ''}</p>
-      ${this.error ? `<div class="error-box" role="alert">${escapeHtml(this.error)}</div><button class="button small secondary" type="button" data-trigger-retry>Retry</button>` : ''}
-      <button class="button secondary" type="button" data-add-trigger-configuration disabled title="Configuration creation will be added in a later step.">+ Add configuration</button>
-      <p class="field-hint">Configuration creation and automatic execution will be added later.</p>`;
+      <button class="button secondary" type="button" data-trigger-refresh ${this.loading || !this.selection.connectionId ? 'disabled' : ''}>Refresh configurations</button>
+      <p class="field-hint" role="status">${this.loading ? 'Loading trigger settings…' : this.selection.connectionId && !this.configurations.length && !this.error ? 'No configurations for this connection yet.' : !this.selection.connectionId ? 'Select a connection to see its configurations.' : escapeHtml(this.notice || '')}</p>
+      ${this.error ? `<div class="error-box" role="alert" data-trigger-error>${escapeHtml(this.error)}</div><button class="button small secondary" type="button" data-trigger-retry>Retry</button>` : ''}
+      <button class="button secondary" type="button" data-add-trigger-configuration ${this.loading || !this.selection.connectionId ? 'disabled' : ''} title="Create a configuration in this connection’s settings.">+ Add configuration</button>
+      <p class="field-hint">Create configurations in connection settings, then use Refresh configurations to update this list. Automatic execution is not available yet.</p>`;
     body.querySelector('[data-trigger-connection]')?.addEventListener('change', event => this.changeConnection(event.target.value));
     body.querySelector('[data-trigger-configuration]')?.addEventListener('change', event => {
       this.selection.configurationId = event.target.value || null;
+      this.error='';body.querySelector('[data-trigger-error]')?.remove();body.querySelector('[data-trigger-retry]')?.remove();this.onValidity(!this.loading);
     });
+    body.querySelector('[data-trigger-refresh]')?.addEventListener('click',()=>void this.refreshConfigurations());
+    body.querySelector('[data-add-trigger-configuration]')?.addEventListener('click',()=>this.onAddConfiguration(this.selection.connectionId));
     body.querySelector('[data-trigger-retry]')?.addEventListener('click', () => {
       if (this.selection.connectionId && this.connections.some(c => c.id === this.selection.connectionId)) {
         this.error = ''; this.loading = true; const version = ++this.version; this.render(); this.loadConfigurations(version);

@@ -1,0 +1,24 @@
+{
+  "name": "Example",
+  "definition": {
+    "version": 1,
+    "steps": [
+      {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "toolName": "read",
+        "schemaFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "arguments": {
+          "query": "",
+          "enabled": false,
+          "limit": 0,
+          "optional": null
+        },
+        "bindings": []
+      }
+    ],
+    "result": {
+      "stepId": "11111111-1111-4111-8111-111111111111",
+      "pointer": ""
+    }
+  }
+}
