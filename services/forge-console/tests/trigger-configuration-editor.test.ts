@@ -130,3 +130,41 @@ it('clears a previous success notice when a later edit fails to save',async()=>{
  t.api.updateTriggerConfiguration.mockRejectedValue(new Error('Cannot save'));await t.editor.save();
  expect(t.container.textContent).not.toContain('Configuration saved.');expect(t.container.textContent).toContain('Cannot save');t.editor.dispose();t.dom.window.close();
 });
+
+it.each([
+ ['before a bound item', '/rows', 0, '/rows/2/value', '/rows/1/value'],
+ ['the bound item', '/rows', 1, '/rows/1/value', null],
+ ['inside nested arrays with escaped tokens', '/rows/0/a~1b~0c', 0, '/rows/0/a~1b~0c/1/value', '/rows/0/a~1b~0c/0/value'],
+ ['an outer array item', '/rows', 0, '/rows/1/a~1b~0c/0/value', '/rows/0/a~1b~0c/0/value'],
+])('keeps binding identity when deleting %s',async(_label,path,index,target,expected)=>{
+ const t=setup();const child={type:'object',properties:{value:{type:'string'},'a/b~c':{type:'array',items:{type:'object',properties:{value:{type:'string'}}}}}};
+ t.tools[0]!.inputSchema={type:'object',properties:{rows:{type:'array',items:child},other:{type:'string'}},required:['rows'],additionalProperties:false} as any;
+ await t.editor.open(t.connection,t.tools,t.container);t.editor.startNew();t.editor.addStep('read');t.editor.addStep('read');
+ const [first,step]=t.editor.draft.definition.steps;
+ first.arguments={rows:[]};step.arguments={rows:[{value:'first','a/b~c':[{},{}]},{value:'second','a/b~c':[{}]},{value:'third'}]};
+ step.bindings=[{targetPointer:target,sourceStepId:first.id,sourcePointer:'/rows/7/value'},{targetPointer:'/other',sourceStepId:first.id,sourcePointer:'/unchanged'}];
+ const untouched=JSON.stringify(first);t.editor.render();
+ t.editor.forms.get(step.id).removeItem(path,index);
+ expect(step.bindings[0].targetPointer).toBe(expected);expect(step.bindings[0].sourcePointer).toBe('/rows/7/value');
+ expect(step.bindings[1]).toEqual({targetPointer:'/other',sourceStepId:first.id,sourcePointer:'/unchanged'});expect(JSON.stringify(first)).toBe(untouched);
+ if(expected===null){expect(t.container.textContent).toContain('deleted array item');expect(t.editor.issues().length).toBeGreaterThan(0);}
+ else expect([...t.container.querySelectorAll('select[aria-label="Parameter"]')][0]?.textContent).toContain(expected);
+ t.editor.dispose();t.dom.window.close();
+});
+
+it('shows an actionable form-level server rejection without inventing highlighted fields',async()=>{
+ const t=setup();await t.editor.open(t.connection,t.tools,t.container);t.editor.startNew();t.editor.addStep('read');t.editor.draft.name='Complex condition';
+ t.api.createTriggerConfiguration.mockRejectedValue(Object.assign(new Error('The configuration does not satisfy the tool schema. Review parameters and step sources, then try again. Your draft is preserved.'),{code:'INVALID_TRIGGER_CONFIGURATION'}));
+ await t.editor.save();expect(t.container.textContent).not.toContain('highlighted');expect(t.container.querySelector('[data-schema-error]')).toBeNull();
+ expect(t.editor.draft.name).toBe('Complex condition');expect(t.container.textContent).toContain('Review parameters');t.editor.dispose();t.dom.window.close();
+});
+
+it('updates the current saved draft when removing an array item after Save',async()=>{
+ const t=setup();t.tools[0]!.inputSchema={type:'object',properties:{query:{type:'array',items:{type:'object',properties:{value:{type:'string'}}}}},required:['query'],additionalProperties:false} as any;
+ t.api.createTriggerConfiguration.mockImplementation(async(_c,r)=>JSON.parse(JSON.stringify({id:'config',...r})));
+ await t.editor.open(t.connection,t.tools,t.container);t.editor.startNew();t.editor.addStep('read');t.editor.addStep('read');t.editor.draft.name='Saved arrays';
+ const [first,step]=t.editor.draft.definition.steps;first.arguments={query:[]};step.arguments={query:[{value:'first'},{}]};step.bindings=[{targetPointer:'/query/1/value',sourceStepId:first.id,sourcePointer:''}];t.editor.render();await t.editor.save();
+ const current=t.editor.draft.definition.steps[1];t.editor.forms.get(current.id).removeItem('/query',0);
+ expect(current.bindings[0].targetPointer).toBe('/query/0/value');expect(current.arguments.query).toEqual([{}]);
+ t.editor.dispose();t.dom.window.close();
+});

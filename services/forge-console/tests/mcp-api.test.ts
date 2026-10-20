@@ -61,5 +61,5 @@ it('explains invalid trigger configurations without exposing upstream diagnostic
  const {api,fetcher}=setup();fetcher.mockResolvedValueOnce(new Response(JSON.stringify({code:'INVALID_TRIGGER_CONFIGURATION',message:'credential-secret-canary'}),{status:400}));
  await expect(api.createTriggerConfiguration('c',{})).rejects.toMatchObject({code:'INVALID_TRIGGER_CONFIGURATION',message:expect.stringContaining('parameters')});
  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({code:'INVALID_TRIGGER_CONFIGURATION',message:'credential-secret-canary'}),{status:400}));
- await expect(api.createTriggerConfiguration('c',{})).rejects.not.toThrow('credential-secret-canary');
+ await expect(api.createTriggerConfiguration('c',{})).rejects.not.toThrow(/credential-secret-canary|highlighted/);
 });

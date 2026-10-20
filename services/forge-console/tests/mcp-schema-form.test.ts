@@ -118,3 +118,24 @@ it('restores alternative drafts at the new array index after removing a precedin
  expect((t.container.querySelector('[data-schema-path="/0/a"]') as HTMLInputElement).value).toBe('');expect(()=>t.form.readValue()).toThrow();
  input(t,'/0/a','3');expect(t.form.readValue()).toEqual([{a:3}]);t.dom.window.close();
 });
+
+it.each([
+ ['date-time','2026-10-20T17:30:00.123+03:00'],
+ ['date','2024-02-29'],
+ ['custom-format','exact arbitrary string'],
+])('keeps %s strings in ordinary controls without changing their value',(format,value)=>{
+ const t=setup({type:'object',properties:{value:{type:'string',format,description:'Schema-provided description'}},required:['value']},{value});
+ expect(t.container.querySelector('textarea')).toBeNull();expect(t.container.textContent).toContain(format);expect(t.container.textContent).toContain('Schema-provided description');
+ input(t,'/value',value);expect(t.form.readValue()).toEqual({value});
+ if(format!=='date')expect(t.container.textContent).toContain('server');t.dom.window.close();
+});
+it('reports invalid calendar dates beside the exact field and accepts corrected leap dates',()=>{
+ const t=setup({type:'object',properties:{value:{type:'string',format:'date'}},required:['value']},{value:'2025-02-29'});
+ expect(()=>t.form.readValue()).toThrow();expect(t.container.querySelector('[data-schema-error="/value"]')?.textContent).toContain('YYYY-MM-DD');
+ input(t,'/value','2024-02-29');expect(t.form.readValue()).toEqual({value:'2024-02-29'});t.dom.window.close();
+});
+it('does not claim a container-level schema error highlights a field',()=>{
+ const t=setup({type:'object',minProperties:2,properties:{value:{type:'string'}},additionalProperties:false},{value:'one'});
+ expect(()=>t.form.readValue()).toThrow();try{t.form.readValue();}catch(error){expect(String(error)).not.toContain('highlighted');}
+ expect(t.container.querySelector('[data-schema-error=""]')?.textContent).toContain('properties');t.dom.window.close();
+});

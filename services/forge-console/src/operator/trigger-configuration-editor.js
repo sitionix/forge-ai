@@ -1,10 +1,10 @@
-import {McpSchemaForm,schemaPaths,getAt,setAt} from './mcp-schema-form.js';
+import {McpSchemaForm,schemaPaths,getAt,setAt,pointerAfterArrayRemoval} from './mcp-schema-form.js';
 const copy=value=>JSON.parse(JSON.stringify(value));
 const validPointer=value=>typeof value==='string' && (value==='' || value.startsWith('/')) && !/~(?![01])/.test(value);
 
 /** Connection-owned authoring only. No MCP calls are made by this editor. */
 export class TriggerConfigurationEditor {
-  constructor({document,window,api}) {this.document=document;this.window=window;this.api=api;this.epoch=0;this.forms=new Map();this.dirty=false;}
+  constructor({document,window,api}) {this.document=document;this.window=window;this.api=api;this.epoch=0;this.forms=new Map();this.invalidatedBindings=new WeakSet();this.dirty=false;}
   el(tag,text,className) {const node=this.document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;}
   button(text,action,className='button secondary') {const button=this.el('button',text,className);button.type='button';button.addEventListener('click',()=>action());return button;}
   availableTools() {return this.tools.filter(tool=>this.connection.allowedTools.some(a=>a.name===tool.name && a.schemaFingerprint===tool.schemaFingerprint));}
@@ -122,9 +122,19 @@ export class TriggerConfigurationEditor {
     parent.append(this.el('p','A JSON Pointer selects a field in the result. Leave it empty for the whole result; use /field/0 for a nested array item. Escape ~ as ~0 and / as ~1 in field names.','field-hint'));
     if(!schema)parent.append(this.el('p','Output schema is unknown. Choose the whole result or enter a JSON Pointer.','field-hint'));
   }
+  arrayItemRemoved(step,path,index) {
+    for(const binding of step.bindings) {
+      const target=pointerAfterArrayRemoval(binding.targetPointer,path,index);
+      if(target===null && binding.targetPointer!==null)this.invalidatedBindings.add(binding);
+      binding.targetPointer=target;
+    }
+    this.markDirty();this.render();
+  }
   renderBinding(parent,step,binding,index,stepIndex) {
     const row=this.el('div',undefined,'trigger-binding');parent.append(row);
+    if(this.invalidatedBindings.has(binding)){const notice=this.el('p','This source targeted a deleted array item. Choose another parameter or remove this source before saving.','field-hint');notice.setAttribute('role','alert');row.append(notice);}
     const targetOptions=[['__choose__','Choose parameter'],...schemaPaths(this.tool(step)?.inputSchema).map(item=>[item.path,item.path || 'Whole arguments'])];
+    if(binding.targetPointer!=null && !targetOptions.some(([path])=>path===binding.targetPointer))targetOptions.push([binding.targetPointer,binding.targetPointer || 'Whole arguments']);
     row.append(this.select('Parameter',targetOptions,binding.targetPointer??'__choose__',path=>{
       if(path==='__choose__')return;
       this.modify(()=>{
@@ -134,7 +144,7 @@ export class TriggerConfigurationEditor {
         const form=this.forms.get(step.id);
         if(form)form.replaceValue(path,path===''?{}:undefined);
         else step.arguments=path===''?{}:setAt(step.arguments,path,undefined);
-        binding.targetPointer=path;
+        binding.targetPointer=path;this.invalidatedBindings.delete(binding);
       });
     }));
     const previous=this.draft.definition.steps.slice(0,stepIndex);
@@ -172,7 +182,9 @@ export class TriggerConfigurationEditor {
       const container=this.el('div');section.append(container);
       let form=this.forms.get(step.id);
       if(!form){form=new McpSchemaForm({document:this.document,schema:tool.inputSchema,value:step.arguments,
-        boundPaths:step.bindings.map(binding=>binding.targetPointer).filter(value=>value!==null),onChange:value=>{step.arguments=value;this.markDirty();}});this.forms.set(step.id,form);}
+        boundPaths:step.bindings.map(binding=>binding.targetPointer).filter(value=>value!==null),onArrayItemRemoved:(path,index)=>this.arrayItemRemoved(step,path,index),onChange:value=>{step.arguments=value;this.markDirty();}});this.forms.set(step.id,form);}
+      form.onChange=value=>{step.arguments=value;this.markDirty();};
+      form.onArrayItemRemoved=(path,index)=>this.arrayItemRemoved(step,path,index);
       form.bound=new Set(step.bindings.map(binding=>binding.targetPointer).filter(value=>value!==null));form.value=copy(step.arguments);form.render(container);
     } else section.append(this.el('p','Choose an approved tool with a schema. Use Test connection to refresh missing schemas separately.','field-hint'));
     const sources=this.el('div');section.append(sources);sources.append(this.el('h5','Parameter sources'));

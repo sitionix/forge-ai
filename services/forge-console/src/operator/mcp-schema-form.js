@@ -21,6 +21,27 @@ export function setAt(value,path,next) {
   });
   return value;
 }
+// The array path is known from the structural editor, so only its immediate index moves.
+export function pointerAfterArrayRemoval(pointer,arrayPath,index) {
+  if(typeof pointer!=='string' || !pointer.startsWith('/') || /~(?![01])/.test(pointer))return pointer;
+  const parts=tokens(pointer),prefix=tokens(arrayPath);
+  if(parts.length<=prefix.length || !prefix.every((token,i)=>parts[i]===token))return pointer;
+  const token=parts[prefix.length];
+  if(!/^(0|[1-9][0-9]*)$/.test(token))return pointer;
+  const position=Number(token);
+  if(position===index)return null;
+  if(position<index)return pointer;
+  parts[prefix.length]=String(position-1);return '/'+parts.map(escapePointer).join('/');
+}
+
+// Only calendar dates are asserted locally. Other format assertions belong to the server.
+function invalidDate(value) {
+  const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if(!match)return true;
+  const [,y,m,d]=match.map(Number),leap=y%4===0&&(y%100!==0||y%400===0);
+  return m<1||m>12||d<1||d>[31,leap?29:28,31,30,31,30,31,31,30,31,30,31][m-1];
+}
+
 export function schemaPaths(schema,root=schema,path='',depth=0,visited=new Set()) {
   if(!schema || typeof schema!=='object' || depth>12) return [];
   if(schema.$ref) {
@@ -33,7 +54,7 @@ export function schemaPaths(schema,root=schema,path='',depth=0,visited=new Set()
   return result;
 }
 
-const supportedKeywords=new Set(['type','title','description','default','examples','enum','const','properties','required','additionalProperties','items','minItems','maxItems','uniqueItems','minProperties','maxProperties','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','$defs','definitions','$schema','$id','readOnly','writeOnly','deprecated']);
+const supportedKeywords=new Set(['type','title','description','default','examples','enum','const','properties','required','additionalProperties','items','minItems','maxItems','uniqueItems','minProperties','maxProperties','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','minLength','maxLength','pattern','format','$defs','definitions','$schema','$id','readOnly','writeOnly','deprecated']);
 function fullySupported(schema,root,refs=new Set()) {
   if(typeof schema==='boolean')return true;
   if(!schema || typeof schema!=='object')return false;
@@ -41,6 +62,7 @@ function fullySupported(schema,root,refs=new Set()) {
     if(Object.keys(schema).length!==1 || !schema.$ref.startsWith('#') || refs.has(schema.$ref))return false;
     return fullySupported(getAt(root,schema.$ref.slice(1)),root,new Set([...refs,schema.$ref]));
   }
+  if(schema.format && schema.format!=='date')return false;
   if(Object.keys(schema).some(k=>!supportedKeywords.has(k)&&!['oneOf','anyOf'].includes(k)))return false;
   return [...Object.values(schema.properties||{}),...['items','additionalProperties'].filter(k=>typeof schema[k]==='object').map(k=>schema[k]),...(schema.oneOf||[]),...(schema.anyOf||[])].every(child=>fullySupported(child,root,refs));
 }
@@ -80,6 +102,7 @@ export function validateSchema(schema,value,{root=schema,path='',bound=new Set()
     }
   }
   if(typeof value==='string') {
+    if(schema.format==='date'&&invalidDate(value))fail('Enter a valid calendar date in YYYY-MM-DD format.');
     const length=[...value].length;
     if(schema.minLength!==undefined&&length<schema.minLength)fail(`Use at least ${schema.minLength} characters.`);
     if(schema.maxLength!==undefined&&length>schema.maxLength)fail(`Use at most ${schema.maxLength} characters.`);
@@ -118,8 +141,8 @@ let formSequence=0;
 
 /** A schema-shaped value editor, independent of MCP providers and tool names. */
 export class McpSchemaForm {
-  constructor({document,schema,value={},onChange=()=>{},boundPaths=[]}) {
-    this.document=document;this.schema=schema;this.value=copy(value);this.onChange=onChange;
+  constructor({document,schema,value={},onChange=()=>{},onArrayItemRemoved=()=>{},boundPaths=[]}) {
+    this.document=document;this.schema=schema;this.value=copy(value);this.onChange=onChange;this.onArrayItemRemoved=onArrayItemRemoved;
     this.id=`schema-form-${++formSequence}`;this.bound=new Set(boundPaths);this.errors=new Map();this.drafts=new Map();this.variants=new Map();this.variantDrafts=new Map();
   }
   render(container) {
@@ -131,7 +154,7 @@ export class McpSchemaForm {
   }
   readValue() {
     this.validated=true;const errors=this.feedback();
-    if(errors.size) {this.container?.querySelector('[aria-invalid="true"]')?.focus();throw new Error('Check the highlighted parameters. '+[...errors.values()][0]);}
+    if(errors.size) {const field=this.container?.querySelector('[aria-invalid="true"]');field?.focus();throw new Error((field?'Check the highlighted parameters. ':'Review the parameter validation feedback. ')+[...errors.values()][0]);}
     return copy(this.value);
   }
   feedback() {
@@ -180,7 +203,8 @@ export class McpSchemaForm {
         if(/^[0-9]+$/.test(token)&&i!==index)map.set(`${path}/${i>index?i-1:i}${suffix.slice(token.length)}`,draft);
       }
     }
-    this.change(path,value,true);
+    this.bound=new Set([...this.bound].map(pointer=>pointerAfterArrayRemoval(pointer,path,index)).filter(pointer=>pointer!==null));
+    this.change(path,value,true);this.onArrayItemRemoved(path,index);
   }
   defaultValue(schema) {
     if(schema?.default!==undefined) return copy(schema.default);
@@ -217,6 +241,7 @@ export class McpSchemaForm {
     const guidance=[];
     for(const [key,title] of [['default','Default'],['minimum','Minimum'],['maximum','Maximum'],['exclusiveMinimum','Greater than'],['exclusiveMaximum','Less than'],['multipleOf','Multiple of'],['minLength','Minimum characters'],['maxLength','Maximum characters'],['minItems','Minimum items'],['maxItems','Maximum items']])
       if(schema[key]!==undefined)guidance.push(`${title}: ${JSON.stringify(schema[key])}`);
+    if(schema.format)guidance.push(schema.format==='date'?'Format: date (YYYY-MM-DD); calendar date checked locally.':`Format: ${schema.format}. Format assertions are checked by the server on save, not locally.`);
     if(schema.pattern)guidance.push(`Pattern: ${schema.pattern}`);
     if(guidance.length)group.append(this.el('p',guidance.join(' · '),'field-hint'));
     if(schema.description) group.append(this.el('p',schema.description,'field-hint'));

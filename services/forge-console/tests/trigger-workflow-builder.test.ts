@@ -180,3 +180,13 @@ it('refreshes configurations without losing the connection or unsaved selection 
  expect(editor.selection.connectionId).toBe('b');expect(t.doc.body.textContent).not.toContain('Stale');
  t.builder.close();t.dom.window.close();
 });
+
+it('keeps the focused configuration select and clears recoverable errors without replacing its DOM',async()=>{
+ const t=setup();t.builder.addTriggerNode();await flush();const editor=t.builder.triggerEditor;await editor.changeConnection('a');
+ editor.error='The saved configuration is no longer available.';editor.render();
+ const select=t.doc.querySelector('[data-trigger-configuration]') as HTMLSelectElement;select.focus();select.value='ca';select.dispatchEvent(new t.dom.window.Event('change'));
+ expect(t.doc.activeElement).toBe(select);expect(t.doc.querySelector('[data-trigger-configuration]')).toBe(select);
+ expect(editor.selection).toEqual({connectionId:'a',configurationId:'ca'});expect(editor.error).toBe('');expect(t.doc.querySelector('[role="alert"]')).toBeNull();
+ expect((t.doc.getElementById('agentsV2NodeEditorSave') as HTMLButtonElement).disabled).toBe(false);expect(editor.apply()).toBe(true);
+ t.builder.close();t.dom.window.close();
+});

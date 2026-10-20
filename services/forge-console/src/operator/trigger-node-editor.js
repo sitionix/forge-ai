@@ -85,13 +85,13 @@ export class TriggerNodeEditor {
       </label>
       <button class="button secondary" type="button" data-trigger-refresh ${this.loading || !this.selection.connectionId ? 'disabled' : ''}>Refresh configurations</button>
       <p class="field-hint" role="status">${this.loading ? 'Loading trigger settings…' : this.selection.connectionId && !this.configurations.length && !this.error ? 'No configurations for this connection yet.' : !this.selection.connectionId ? 'Select a connection to see its configurations.' : escapeHtml(this.notice || '')}</p>
-      ${this.error ? `<div class="error-box" role="alert">${escapeHtml(this.error)}</div><button class="button small secondary" type="button" data-trigger-retry>Retry</button>` : ''}
+      ${this.error ? `<div class="error-box" role="alert" data-trigger-error>${escapeHtml(this.error)}</div><button class="button small secondary" type="button" data-trigger-retry>Retry</button>` : ''}
       <button class="button secondary" type="button" data-add-trigger-configuration ${this.loading || !this.selection.connectionId ? 'disabled' : ''} title="Create a configuration in this connection’s settings.">+ Add configuration</button>
       <p class="field-hint">Create configurations in connection settings, then use Refresh configurations to update this list. Automatic execution is not available yet.</p>`;
     body.querySelector('[data-trigger-connection]')?.addEventListener('change', event => this.changeConnection(event.target.value));
     body.querySelector('[data-trigger-configuration]')?.addEventListener('change', event => {
       this.selection.configurationId = event.target.value || null;
-      this.error='';this.render();
+      this.error='';body.querySelector('[data-trigger-error]')?.remove();body.querySelector('[data-trigger-retry]')?.remove();this.onValidity(!this.loading);
     });
     body.querySelector('[data-trigger-refresh]')?.addEventListener('click',()=>void this.refreshConfigurations());
     body.querySelector('[data-add-trigger-configuration]')?.addEventListener('click',()=>this.onAddConfiguration(this.selection.connectionId));
