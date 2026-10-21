@@ -5,6 +5,28 @@ const empty={status:'EMPTY',items:[],diagnostics:[]};
 const unsupported={status:'UNSUPPORTED',items:[],diagnostics:[] as string[]};
 function state(){return {projectId:'p',loading:false,error:'',snapshot:{projectId:'p',provider:{providerDisplayName:'Codex',modelDisplayName:'Model'},categories:{skills:{status:'AVAILABLE',items:Array.from({length:10000},(_,i)=>({id:`id${i}`,name:i===0?'<img src=x onerror=alert(1)>':`skill ${i}`,description:'description',source:'repo'})),diagnostics:[]},agents:unsupported,flows:unsupported,tools:{status:'UNAVAILABLE',items:[],diagnostics:['MCP_EXECUTION_CONTEXT_REQUIRED']}}}};}
 describe('AI Library rendering',()=>{
+ it('preserves the focused category link on keyboard activation and updates aria-current',()=>{
+  const dom=new JSDOM('<section id="aiLibrary"></section>',{url:'https://forge.test/operator/agent-projects.html'});const document=dom.window.document;
+  const inventory=state();let options={category:'skills',search:'',page:0,itemId:null};
+  const navigate=vi.fn((patch)=>{options={...options,...patch};view.render(inventory,options);});
+  const view=new AiLibraryView({document,onRefresh:vi.fn(),onNavigate:navigate});
+  view.render(inventory,options);
+  const navigation=document.querySelector('[data-library-categories]')!;
+  const links=Array.from(navigation.querySelectorAll('a'));
+  const skills=links.find(link=>link.textContent?.startsWith('Skills'))!;
+  const agents=links.find(link=>link.textContent?.startsWith('Agents'))!;
+  agents.focus();expect(document.activeElement===agents).toBe(true);
+  // Enter on a native anchor generates a click with detail=0. JSDOM does not
+  // implement keyboard default actions, so dispatch that browser-generated event.
+  agents.dispatchEvent(new dom.window.MouseEvent('click',{bubbles:true,cancelable:true,detail:0,button:0}));
+  expect(navigate).toHaveBeenCalledWith({category:'agents',page:0,itemId:null});
+  expect(options.category).toBe('agents');
+  expect(document.activeElement===agents).toBe(true);
+  expect(agents.isConnected).toBe(true);
+  expect(agents.getAttribute('aria-current')).toBe('page');
+  expect(skills.hasAttribute('aria-current')).toBe(false);
+  expect(Array.from(navigation.querySelectorAll('a'))).toEqual(links);
+ });
  it('shows one combined native agent catalog without a scope selector',()=>{
   const dom=new JSDOM('<section id="aiLibrary"></section>');
   const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});

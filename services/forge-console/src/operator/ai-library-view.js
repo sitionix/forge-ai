@@ -34,7 +34,7 @@ export class AiLibraryView {
       <button type="button" class="ai-library-refresh" data-library-refresh>${icon('<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/>')}<span>Refresh inventory</span></button></header>
       <div class="ai-library-toolbar"><label class="ai-library-search">${icon('<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>')}<span class="ai-library-sr-only">Search capabilities</span><input type="search" placeholder="Search capabilities…" data-library-search autocomplete="off"></label>
       <span class="ai-library-readonly">Read-only library</span></div>
-      <nav class="ai-library-categories" aria-label="Capability categories" data-library-categories></nav>
+      <nav class="ai-library-categories" aria-label="Capability categories" data-library-categories>${['all', ...CATEGORIES].map((key) => `<a class="ai-library-tab" data-library-category="${key}"><span>${title(key)}</span><span class="ai-library-tab-meta" hidden></span></a>`).join('')}</nav>
       <div class="ai-library-status" role="status" aria-live="polite" data-library-status></div><div data-library-notices></div><div data-library-results></div><nav class="ai-library-pages" aria-label="Inventory pages" data-library-pages></nav>`;
     this.click = (event) => {
       if (event.target.closest('[data-library-refresh]')) { onRefresh(); return; }
@@ -46,11 +46,14 @@ export class AiLibraryView {
     this.input = (event) => { if (event.target.matches('[data-library-search]')) onNavigate({ search: event.target.value, page: 0, itemId: null, replace: true }); };
     this.root.addEventListener('click', this.click); this.root.addEventListener('input', this.input);
   }
-  link(label, patch, attribute = '', className = 'ai-library-link', suffix = '') {
+  routeHref(patch) {
     const next = { ...this.options, ...patch };
     const query = new URLSearchParams(); if (next.search) query.set('search', next.search); if (next.category !== 'all') query.set('category', next.category); if (next.page) query.set('page', String(next.page));
     const detail = next.itemId ? `/${encodeURIComponent(next.category)}/${encodeURIComponent(next.itemId)}` : '';
-    const href = `#/projects/${encodeURIComponent(this.projectId)}/ai-library${detail}${query.size ? `?${query}` : ''}`;
+    return `#/projects/${encodeURIComponent(this.projectId)}/ai-library${detail}${query.size ? `?${query}` : ''}`;
+  }
+  link(label, patch, attribute = '', className = 'ai-library-link', suffix = '') {
+    const href = this.routeHref(patch);
     return `<a class="${className}" ${attribute} href="${escapeHtml(href)}" data-library-route="${escapeHtml(JSON.stringify(patch))}"><span>${escapeHtml(label)}</span>${suffix ? `<span class="ai-library-tab-meta">${escapeHtml(suffix)}</span>` : ''}</a>`;
   }
   emptyState(heading, description, clearSearch = false) {
@@ -65,11 +68,17 @@ export class AiLibraryView {
     refresh.querySelector('span').textContent = state.loading ? 'Refreshing…' : 'Refresh inventory';
     const input = this.root.querySelector('[data-library-search]'); if (input.value !== search) input.value = search;
     const categories = state.snapshot?.categories || {};
-    this.root.querySelector('[data-library-categories]').innerHTML = ['all', ...CATEGORIES].map((key) => {
+    this.root.querySelectorAll('[data-library-category]').forEach((link) => {
+      const key = link.dataset.libraryCategory;
       const c = categories[key];
       const suffix = key === 'all' || !c ? '' : complete(c) ? String(c.items.length) : statusLabel(c);
-      return this.link(title(key), { category: key, page: 0, itemId: null }, key === category ? 'aria-current="page"' : '', 'ai-library-tab', suffix);
-    }).join('');
+      const patch = { category: key, page: 0, itemId: null };
+      link.setAttribute('href', this.routeHref(patch));
+      link.dataset.libraryRoute = JSON.stringify(patch);
+      if (key === category) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
+      const meta = link.querySelector('.ai-library-tab-meta');
+      meta.textContent = suffix; meta.hidden = !suffix;
+    });
     const status = this.root.querySelector('[data-library-status]'); const results = this.root.querySelector('[data-library-results]'); const pages = this.root.querySelector('[data-library-pages]');
     const notices = this.root.querySelector('[data-library-notices]');
     pages.replaceChildren(); results.replaceChildren(); notices.replaceChildren();
