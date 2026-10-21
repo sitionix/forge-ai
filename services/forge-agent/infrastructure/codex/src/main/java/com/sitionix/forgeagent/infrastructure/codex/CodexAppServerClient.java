@@ -61,6 +61,54 @@ final class CodexAppServerClient implements CodexClient {
         this.authorizationGate = java.util.Objects.requireNonNull(authorizationGate);
     }
 
+    /** Approved read-only project inventory; never shares the model discovery process. */
+    CodexInventorySession openInventory(Path cwd) {
+        var lease = this.authorizationGate.observe();
+        try {
+            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(30).toNanos();
+            var current = this.startNeutralTransport(cwd, lease);
+            var initialized = this.initializeResponse(current, java.time.Duration.ofNanos(Math.min(
+                    this.properties.getRequestTimeout().toNanos(), deadline - System.nanoTime())));
+            CodexLibraryCapabilities.requireCanonicalSkillPaths(extractVersion(initialized));
+            var homeValue = initialized.path("codexHome");
+            if (!homeValue.isTextual() || homeValue.asText().length()>4096) throw new CodexTransportException("Runtime inventory roots unavailable");
+            Path home = Path.of(homeValue.asText());
+            if (!home.isAbsolute() || !home.normalize().equals(home) || home.getParent()==null) throw new CodexTransportException("Runtime inventory roots unavailable");
+            this.authorizationGate.check(lease);
+            return new CodexInventorySession(current, lease, deadline, home);
+        } catch (RuntimeException failure) {
+            this.authorizationGate.release(lease);
+            throw failure;
+        }
+    }
+
+    final class CodexInventorySession implements AutoCloseable {
+        private final CodexJsonRpcTransport current;
+        private final AuthorizationLease lease;
+        private final long deadline;
+        private final Path codexHome;
+        Path codexHome() { return codexHome; }
+        private CodexInventorySession(CodexJsonRpcTransport current, AuthorizationLease lease, long deadline, Path codexHome) {
+            this.current=current;this.lease=lease;this.deadline=deadline;this.codexHome=codexHome;
+        }
+        JsonNode listSkills(java.util.List<Path> cwds) {
+            if (cwds.isEmpty() || cwds.size()>32) throw new CodexTransportException("Invalid inventory context");
+            thisCheck();
+            var params=objectMapper.createObjectNode().put("forceReload",true);
+            var paths=params.putArray("cwds");cwds.forEach(path->paths.add(path.toString()));
+            long remaining=deadline-System.nanoTime();
+            if(remaining<=0) throw new CodexTransportException("Inventory timed out");
+            var result=current.request("skills/list",params,java.time.Duration.ofNanos(
+                    Math.min(remaining,properties.getRequestTimeout().toNanos())));
+            thisCheck();return result;
+        }
+        private void thisCheck() { authorizationGate.check(lease); }
+        @Override public void close() {
+            authorizationGate.release(lease);
+            if(!current.cleanupComplete()) throw new CodexTransportException("Inventory cleanup incomplete");
+        }
+    }
+
     @Override
     public synchronized String version() {
         this.ensureInitialized();
@@ -558,6 +606,14 @@ final class CodexAppServerClient implements CodexClient {
     }
 
     private String initialize(final CodexJsonRpcTransport transport) {
+        return initialize(transport, this.properties.getRequestTimeout());
+    }
+
+    private String initialize(final CodexJsonRpcTransport transport, final java.time.Duration timeout) {
+        return extractVersion(initializeResponse(transport, timeout));
+    }
+
+    private JsonNode initializeResponse(final CodexJsonRpcTransport transport, final java.time.Duration timeout) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         final ObjectNode clientInfo = params.putObject("clientInfo");
         clientInfo.put("name", this.properties.getClientName());
@@ -566,10 +622,10 @@ final class CodexAppServerClient implements CodexClient {
         final ObjectNode capabilities = params.putObject("capabilities");
         capabilities.put("experimentalApi", this.properties.isExperimentalApi());
         capabilities.put("requestAttestation", this.properties.isRequestAttestation());
-        final JsonNode response = transport.request(CodexProtocol.INITIALIZE, params, this.properties.getRequestTimeout());
-        final String version = this.extractVersion(response);
+        final JsonNode response = transport.request(CodexProtocol.INITIALIZE, params, timeout);
+        this.extractVersion(response);
         transport.notify(CodexProtocol.INITIALIZED, this.objectMapper.createObjectNode());
-        return version;
+        return response;
     }
 
     static String extractVersion(final JsonNode initializeResult) {
