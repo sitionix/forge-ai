@@ -20,6 +20,7 @@ import org.springframework.context.annotation.*;
 import org.springframework.core.Ordered;
 
 @Configuration
+@Import(AiLibraryManagementConfiguration.class)
 @ConditionalOnProperty(name="forge.agent.remote-access.management-enabled",havingValue="true")
 public class RemoteAccessManagementConfiguration {
     @Bean RemoteAccessMutualPairing remoteAccessMutualPairing(RemoteAccessAccessorPairing accessor,
@@ -40,7 +41,6 @@ public class RemoteAccessManagementConfiguration {
         registration.setAsyncSupported(true);registration.setOrder(Integer.MIN_VALUE+1);
         return registration;
     }
-    @Bean ManagementBind managementBind(@Value("${server.forward-headers-strategy:none}") String forwarding) { return new ManagementBind(forwarding); }
     static final class ManagementBind implements WebServerFactoryCustomizer<AbstractConfigurableWebServerFactory>,Ordered {
         private final String forwarding;
         ManagementBind(String forwarding) { this.forwarding=forwarding; }

@@ -11,6 +11,13 @@ import org.springframework.web.util.pattern.PathPatternParser;
 public final class AgentManagementRoutePolicy {
     private static final PathPattern REMOTE=PathPatternParser.defaultInstance.parse("/api/v1/remote-access/{*path}");
     private static final PathPattern RUNTIME_MCP=PathPatternParser.defaultInstance.parse("/internal/mcp/connections/{connectionId}");
+    public static final String LIBRARY_AUTHENTICATED="forgeLibraryServiceAuthenticated";
+    private static final PathPattern LIBRARY=PathPatternParser.defaultInstance.parse("/api/v1/projects/{projectId}/ai-library/query");
+    public static boolean library(HttpServletRequest request) {
+        String target=path(request);
+        return !target.contains("%") && !target.contains(";") && !target.contains("\\")
+                && LIBRARY.matches(RequestPath.parse(target, "").pathWithinApplication());
+    }
     private AgentManagementRoutePolicy() { }
     public static String path(HttpServletRequest request) {
         String uri=request.getRequestURI();
