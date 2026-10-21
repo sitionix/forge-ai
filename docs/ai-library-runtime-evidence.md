@@ -119,8 +119,8 @@ archive in /tmp independently passed the migration test; no migrations were edit
 
 ## Not verified / remaining limitations
 
-- Browser checks used a deterministic API fixture, not the deployed Nexus.
-  Deployed API/runtime inventory has now been checked separately (see below).
+- Browser checks now also cover the deployed Nexus with live inventory (see below).
+  Error/failure variants and 10,000-item behavior remain deterministic fixtures.
 - Native Tools remain UNAVAILABLE under the execution-scoped grants contract.
 - Agents/Flows have no native inventory operation in the verified protocol.
 - A new runtime version requires canonical-path/protocol validation before enabling
@@ -141,7 +141,8 @@ archive in /tmp independently passed the migration test; no migrations were edit
 - Reused service identity independently of Remote Access activation and shared its
   bind guard. Cost: identity and explicit loopback settings remain prerequisites.
 - Native smoke, browser fixture and deployed API smoke each prove their stated
-  scopes. Browser verification against deployed Nexus remains unverified.
+  scopes. Deployed browser verification now covers the Library flow; it is not a claim
+  of full application-wide browser E2E.
 
 ## Deployed API verification after startup
 
@@ -172,6 +173,23 @@ selection were changed for the smoke. Matching skill lists do not themselves pro
 project-local differences; isolated native A/B fixtures cover that case.
 Unauthenticated internal Library POST returned 401; a public request for an
 unknown project returned 404.
+
+## Library UX follow-up
+
+Replaced nested Dashboard-style cards with a scoped flat list: consistent spacing,
+subtle row separators, readable sans-serif body text, concise description previews,
+and complete descriptions in details. Search, category counts/statuses and native
+route links remain functional. Single-page pagination is hidden; empty/error
+states explain recovery and errors remain announced through the live status region.
+
+- PASS: Console 839 tests / 42 files, typecheck, build and git diff check.
+- PASS: independent review, including the loading-to-error accessibility fix.
+- PASS: actual Chrome against deployed Nexus and native inventory: direct detail
+  reload, return to list, search/no-results/clear, unsupported category, Refresh,
+  Browser Back/Forward, desktop and 390px mobile layout. Both widths showed five
+  native skills without document horizontal overflow. Temporary viewport reset.
+- Nexus rebuilt with final assets and restarted; Agent/runtime source unchanged.
+- Screenshot evidence: `/tmp/forge-ai-library-ux-desktop.jpg` (session-local).
 
 ## Changed files
 

@@ -6262,9 +6262,76 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   #agentsV2Workspace .project-navigation-card { padding: 16px; }
 }
 
-.ai-library-categories { display:flex; flex-wrap:wrap; gap:.5rem; margin:1rem 0; }
-.ai-library-categories [aria-current="page"] { outline:2px solid var(--accent, #71a8ff); }
-.ai-library-item { display:flex; flex-direction:column; gap:.5rem; overflow-wrap:anywhere; }
-.ai-library-item p { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
-[data-library-results] { margin:1rem 0; }
-[data-library-pages] { display:flex; gap:.75rem; align-items:center; }
+/* AI Library has one surface: rows and controls never inherit dashboard cards. */
+#aiLibrary {
+  --library-line: rgba(27, 36, 31, .14);
+  padding: clamp(20px, 3vw, 36px);
+  font-family: "Trebuchet MS", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+#aiLibrary::before { display: none; }
+#aiLibrary .ai-library-icon { width: 20px; height: 20px; flex: 0 0 auto; }
+#aiLibrary .ai-library-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 28px; }
+#aiLibrary .ai-library-header h2 { margin: 0; font: 700 28px/1.2 "Trebuchet MS", system-ui, sans-serif; letter-spacing: -.6px; }
+#aiLibrary .ai-library-header p { margin: 8px 0 12px; color: var(--muted); }
+#aiLibrary .ai-library-provider { display: inline-block; max-width: 100%; padding: 6px 10px; border-radius: 6px; background: rgba(27, 36, 31, .06); font-size: 12px; overflow-wrap: anywhere; }
+#aiLibrary .ai-library-refresh { display: inline-flex; justify-content: center; align-items: center; gap: 8px; flex-shrink: 0; padding: 10px 14px; min-height: 42px; border: 1px solid var(--library-line); border-radius: 8px; background: rgba(255, 248, 222, .65); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; line-height: 1.4; cursor: pointer; box-shadow: none; }
+#aiLibrary .ai-library-refresh:hover:not(:disabled) { background: var(--panel-strong); border-color: rgba(27, 36, 31, .35); }
+#aiLibrary .ai-library-refresh:disabled { opacity: .55; cursor: wait; }
+#aiLibrary .ai-library-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+#aiLibrary .ai-library-search { display: flex; align-items: center; gap: 10px; flex: 1 1 240px; max-width: 480px; min-width: 0; min-height: 46px; padding: 0 14px; border: 1px solid var(--library-line); border-radius: 10px; background: rgba(255, 248, 222, .72); color: var(--muted); }
+#aiLibrary .ai-library-search:focus-within { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(27, 36, 31, .08); }
+#aiLibrary .ai-library-search input { width: 100%; min-width: 0; min-height: 44px; padding: 0; border: 0; outline: 0; background: transparent; box-shadow: none; color: var(--ink); font: inherit; }
+#aiLibrary .ai-library-search input::placeholder { color: var(--muted); opacity: 1; }
+#aiLibrary .ai-library-search input:focus-visible { outline: 0; }
+#aiLibrary .ai-library-readonly { color: var(--muted); font-size: 12px; }
+#aiLibrary .ai-library-categories { display: flex; flex-wrap: wrap; gap: 6px; margin: 22px 0 0; padding-bottom: 18px; border-bottom: 1px solid var(--library-line); }
+#aiLibrary .ai-library-tab { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 12px; border: 1px solid transparent; border-radius: 8px; color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 600; }
+#aiLibrary .ai-library-tab:hover { background: rgba(27, 36, 31, .06); color: var(--ink); }
+#aiLibrary .ai-library-tab[aria-current="page"] { background: var(--ink); color: var(--panel-strong); }
+#aiLibrary .ai-library-tab-meta { font-size: 11px; font-weight: 400; opacity: .85; }
+#aiLibrary .ai-library-status { margin: 18px 0 10px; font-size: 12px; color: var(--muted); }
+#aiLibrary .ai-library-status:empty, #aiLibrary .ai-library-pages:empty { display: none; }
+#aiLibrary .ai-library-notice { margin: 14px 0; padding: 12px 14px; background: rgba(27, 36, 31, .04); border-radius: 8px; color: var(--muted); font-size: 12px; }
+#aiLibrary .ai-library-notice strong { color: var(--ink); font-weight: 600; }
+#aiLibrary .ai-library-list { display: grid; min-width: 0; }
+#aiLibrary .ai-library-item { display: flex; align-items: flex-start; gap: 18px; min-width: 0; padding: 22px 4px; border-bottom: 1px solid var(--library-line); overflow-wrap: anywhere; }
+#aiLibrary .ai-library-item:last-child { border-bottom: 0; padding-bottom: 6px; }
+#aiLibrary .ai-library-resource-icon { display: flex; align-items: center; justify-content: center; flex: 0 0 40px; height: 40px; border: 1px solid var(--library-line); border-radius: 10px; background: rgba(255, 248, 222, .5); color: var(--muted); }
+#aiLibrary .ai-library-item-copy { flex: 1; min-width: 0; }
+#aiLibrary .ai-library-item-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+#aiLibrary .ai-library-item h3 { margin: 0; font: 600 15px/1.5 var(--mono); }
+#aiLibrary .ai-library-link { color: var(--ink); text-decoration: none; border-radius: 3px; }
+#aiLibrary .ai-library-link:hover { text-decoration: underline; text-underline-offset: 4px; }
+#aiLibrary .ai-library-item p { max-width: 88ch; margin: 6px 0 0; color: #505b53; line-height: 1.65; }
+#aiLibrary .ai-library-badge { display: inline-block; padding: 3px 8px; border-radius: 5px; background: rgba(27, 36, 31, .06); color: var(--muted); font-size: 11px; font-weight: 500; }
+#aiLibrary .ai-library-item-action { align-self: center; flex: 0 0 auto; display: inline-flex; align-items: center; min-height: 40px; padding: 8px 10px; border-radius: 6px; color: var(--ink); font-size: 12px; font-weight: 600; text-decoration: none; }
+#aiLibrary .ai-library-item-action:hover { background: rgba(27, 36, 31, .06); }
+#aiLibrary .ai-library-pages { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 20px; padding-top: 24px; margin-top: 20px; border-top: 1px solid var(--library-line); font-size: 13px; }
+#aiLibrary .ai-library-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 48px 16px; }
+#aiLibrary .ai-library-empty-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; background: rgba(27, 36, 31, .06); color: var(--muted); margin-bottom: 16px; }
+#aiLibrary .ai-library-empty h3 { margin: 0; font: 600 18px/1.4 "Trebuchet MS", system-ui, sans-serif; }
+#aiLibrary .ai-library-empty p { max-width: 52ch; margin: 10px 0 0; color: var(--muted); line-height: 1.65; }
+#aiLibrary .ai-library-empty button { margin-top: 20px; }
+#aiLibrary .ai-library-back { margin: 20px 0; font-size: 13px; }
+#aiLibrary .ai-library-detail { max-width: 88ch; padding: 8px 0 12px; overflow-wrap: anywhere; }
+#aiLibrary .ai-library-detail-heading { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; }
+#aiLibrary .ai-library-detail h3 { margin: 8px 0 0; font: 600 22px/1.4 var(--mono); }
+#aiLibrary .ai-library-detail h4 { margin: 0 0 12px; font-size: 13px; }
+#aiLibrary .ai-library-description { margin: 0; color: #505b53; line-height: 1.8; white-space: pre-wrap; }
+#aiLibrary .ai-library-source { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 0; padding-top: 18px; border-top: 1px solid var(--library-line); font-size: 12px; color: var(--muted); }
+#aiLibrary .ai-library-source dt { font-weight: 600; } #aiLibrary .ai-library-source dd { margin: 0; }
+#aiLibrary .ai-library-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#aiLibrary :is(a, button):focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+@media (max-width: 700px) {
+  #aiLibrary .ai-library-header { flex-wrap: wrap; gap: 16px; margin-bottom: 22px; }
+  #aiLibrary .ai-library-header > div { min-width: 0; }
+  #aiLibrary .ai-library-item { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px 12px; padding: 20px 0; }
+  #aiLibrary .ai-library-resource-icon { width: 32px; height: 36px; }
+  #aiLibrary .ai-library-item-action { grid-column: 2; justify-self: start; padding-left: 0; }
+  #aiLibrary .ai-library-item p { font-size: 13px; }
+  #aiLibrary .ai-library-tab { padding: 8px 10px; }
+  #aiLibrary .ai-library-tab-meta { font-size: 10px; }
+  #aiLibrary .ai-library-detail h3 { font-size: 18px; }
+}
