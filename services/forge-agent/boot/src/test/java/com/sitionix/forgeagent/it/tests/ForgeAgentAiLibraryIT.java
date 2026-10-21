@@ -40,7 +40,7 @@ class ForgeAgentAiLibraryIT extends AgentManagementFixture {
     public SkillInventoryPort skills(){return c->InventoryResult.available(List.of(new SkillDescriptor(c.projectId().toString(),"Native fixture","Project inventory",new LibraryProvenance("repo",context.cwd().toString()))));}
     public AgentInventoryPort agents(){return c->InventoryResult.unsupported();}
     public FlowInventoryPort flows(){return c->InventoryResult.unsupported();}
-    public ToolInventoryPort tools(){return c->InventoryResult.unavailable(InventoryDiagnostic.MCP_EXECUTION_CONTEXT_REQUIRED);}
+    public ToolInventoryPort tools(){return c->new InventoryResult<>(InventoryStatus.AVAILABLE,List.of(new ToolDescriptor("tool-"+c.projectId(),"Native tool fixture","Read-only metadata",new LibraryProvenance("MCP · fixture","private-native-identity"))),List.of(InventoryDiagnostic.MCP_TOOLS_ONLY));}
     public void close(){}
    };
   });
@@ -50,7 +50,7 @@ class ForgeAgentAiLibraryIT extends AgentManagementFixture {
   for(var project:List.of(a,b))mvc.perform(post(route(project.id())).header("Authorization","Bearer "+TOKEN).contentType("application/json").content(body()))
    .andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"))
    .andExpect(jsonPath("$.projectId").value(project.id().toString())).andExpect(jsonPath("$.categories.skills.items[0].id").value(project.id().toString()))
-   .andExpect(jsonPath("$.categories.skills.items[0].nativeIdentity").doesNotExist()).andExpect(jsonPath("$.categories.agents.status").value("UNSUPPORTED"));
+   .andExpect(jsonPath("$.categories.tools.items[0].id").value("tool-"+project.id())).andExpect(jsonPath("$.categories.tools.diagnostics[0]").value("MCP_TOOLS_ONLY")).andExpect(jsonPath("$.categories.tools.items[0].nativeIdentity").doesNotExist()).andExpect(jsonPath("$.categories.skills.items[0].nativeIdentity").doesNotExist()).andExpect(jsonPath("$.categories.agents.status").value("UNSUPPORTED"));
   verify(provider).open(argThat(c->c.projectId().equals(a.id())&&c.cwd().toString().contains(a.id().toString())));
   verify(provider).open(argThat(c->c.projectId().equals(b.id())&&c.cwd().toString().contains(b.id().toString())));
  }

@@ -7,7 +7,7 @@ function state(){return {projectId:'p',loading:false,error:'',snapshot:{projectI
 describe('AI Library rendering',()=>{
  it('bounds large inventories and renders provider text safely',()=>{const dom=new JSDOM('<section id="aiLibrary"></section>');const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});view.render(state(),{category:'all',search:'',page:0});expect(dom.window.document.querySelectorAll('[data-library-item]').length).toBe(100);expect(dom.window.document.querySelector('img')).toBeNull();expect(dom.window.document.body.textContent).toContain('10000');expect(dom.window.document.body.textContent).toContain('Codex');});
  it('distinguishes unsupported and unavailable without fake zero counts',()=>{expect(librarySummary(state())).toContain('10000 Skills');expect(librarySummary(state())).toContain('Tools: Unavailable');expect(librarySummary(state())).not.toContain('0 Agents');});
- it('shows unsupported category and missing item details explicitly',()=>{const dom=new JSDOM('<section id="aiLibrary"></section>');const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});view.render(state(),{category:'agents'});expect(dom.window.document.body.textContent).toContain('not supported');view.render(state(),{category:'tools'});expect(dom.window.document.body.textContent).toContain('approved execution context');expect(dom.window.document.querySelector('[data-library-status]')?.textContent).not.toContain('0 results');view.render(state(),{category:'skills',itemId:'missing'});expect(dom.window.document.body.textContent).toContain('no longer available');});
+ it('shows unsupported category and missing item details explicitly',()=>{const dom=new JSDOM('<section id="aiLibrary"></section>');const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});view.render(state(),{category:'agents'});expect(dom.window.document.body.textContent).toContain('does not expose');view.render(state(),{category:'tools'});expect(dom.window.document.body.textContent).toContain('approved execution context');expect(dom.window.document.querySelector('[data-library-status]')?.textContent).not.toContain('0 results');view.render(state(),{category:'skills',itemId:'missing'});expect(dom.window.document.body.textContent).toContain('no longer available');});
  it('keeps descriptions readable and omits pagination for a single page',()=>{
   const dom=new JSDOM('<section id="aiLibrary"></section>');const navigate=vi.fn();
   const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:navigate});
@@ -45,5 +45,17 @@ describe('AI Library rendering',()=>{
   view.render({...state(),loading:true,snapshot:null});
   view.render({...state(),snapshot:null,error:'Inventory unavailable. Refresh to try again.'});
   expect(dom.window.document.querySelector('[role="status"]')?.textContent).toContain('Inventory unavailable');
+ });
+ it('labels native MCP coverage without claiming the built-in tool catalog is empty',()=>{
+  const dom=new JSDOM('<section id="aiLibrary"></section>');
+  const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});
+  const inventory=state();inventory.snapshot.categories.tools={status:'EMPTY',items:[],diagnostics:['MCP_TOOLS_ONLY']};
+  view.render(inventory,{category:'tools'});
+  expect(dom.window.document.body.textContent).toContain('Built-in');
+  expect(dom.window.document.body.textContent).toContain('MCP');
+  expect(librarySummary(inventory)).toContain('0 MCP tools');
+  view.render(inventory,{category:'agents'});
+  expect(dom.window.document.body.textContent).toContain('does not expose');
+  expect(dom.window.document.body.textContent).not.toContain('Agents are not supported');
  });
 });

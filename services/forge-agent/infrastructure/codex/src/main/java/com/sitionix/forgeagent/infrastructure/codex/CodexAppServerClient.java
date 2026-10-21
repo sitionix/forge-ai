@@ -102,6 +102,19 @@ final class CodexAppServerClient implements CodexClient {
                     Math.min(remaining,properties.getRequestTimeout().toNanos())));
             thisCheck();return result;
         }
+        JsonNode listMcpServerStatus(String cursor) {
+            thisCheck();
+            var params=objectMapper.createObjectNode().put("limit",100).put("detail","toolsAndAuthOnly");
+            if(cursor!=null) {
+                if(cursor.isBlank() || cursor.length()>4096) throw new CodexTransportException("Invalid inventory cursor");
+                params.put("cursor",cursor);
+            }
+            long remaining=deadline-System.nanoTime();
+            if(remaining<=0) throw new CodexTransportException("Inventory timed out");
+            var result=current.request(CodexProtocol.MCP_SERVER_STATUS_LIST,params,java.time.Duration.ofNanos(
+                    Math.min(remaining,properties.getRequestTimeout().toNanos())));
+            thisCheck();return result;
+        }
         private void thisCheck() { authorizationGate.check(lease); }
         @Override public void close() {
             authorizationGate.release(lease);

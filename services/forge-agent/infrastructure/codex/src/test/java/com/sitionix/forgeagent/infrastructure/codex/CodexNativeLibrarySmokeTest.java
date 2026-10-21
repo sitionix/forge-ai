@@ -55,5 +55,39 @@ class CodexNativeLibrarySmokeTest {
    }
   }
  }
+ @Test void nativeMcpInventoryListsToolsWithoutThreadOrToolExecution() throws Exception {
+  var methods=new java.util.concurrent.CopyOnWriteArrayList<String>();var json=new ObjectMapper();
+  var server=com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1",0),0);
+  server.createContext("/mcp",exchange->{try {
+   if(!exchange.getRequestMethod().equals("POST")){exchange.sendResponseHeaders(405,-1);return;}
+   var request=json.readTree(exchange.getRequestBody().readNBytes(65536));String method=request.path("method").asText();methods.add(method);
+   if(!request.has("id")){exchange.sendResponseHeaders(202,-1);return;}
+   var response=json.createObjectNode();response.put("jsonrpc","2.0");response.set("id",request.get("id"));
+   if(method.equals("initialize")) {
+    var result=response.putObject("result");result.put("protocolVersion","2025-03-26");result.putObject("capabilities").putObject("tools");result.putObject("serverInfo").put("name","readonly-fixture").put("version","1");
+   } else if(method.equals("tools/list")) {
+    var tool=response.putObject("result").putArray("tools").addObject();tool.put("name","echo").put("description","Native read-only fixture inventory");tool.putObject("inputSchema").put("type","object");
+   } else {response.putObject("error").put("code",-32601).put("message","Unexpected fixture request");}
+   byte[] body=json.writeValueAsBytes(response);exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(200,body.length);exchange.getResponseBody().write(body);
+  }finally{exchange.close();}});server.start();
+  try {
+   var home=root.resolve("mcp-home");Files.createDirectories(home);var project=root.resolve("mcp-project");Files.createDirectories(project);
+   Files.writeString(home.resolve("config.toml"),"[mcp_servers.fixture]\nurl = \"http://127.0.0.1:"+server.getAddress().getPort()+"/mcp\"\n");
+   var props=new CodexAppServerProperties();
+   CodexAppServerProcessStarter starter=cwd->{try {
+    var builder=new ProcessBuilder(System.getProperty("forge.codex.library-smoke.binary"),"app-server","--stdio").directory(cwd.toFile());
+    builder.environment().clear();builder.environment().putAll(Map.of("HOME",home.toString(),"CODEX_HOME",home.toString(),"PATH","/usr/bin:/bin","LANG","C.UTF-8"));
+    return new StartedCodexAppServer(builder.start(),List.of("native-mcp-inventory-smoke"),Instant.now());
+   }catch(java.io.IOException failure){throw new IllegalStateException(failure);}};
+   var client=new CodexAppServerClient(json,starter,props,new CodexRuntimeWorkspace(props),null,new ForgeAuthorizationFixture(false).gate);
+   var context=new LibraryContext(UUID.randomUUID(),new LibraryProviderContext(1,"codex","fixture",null,null,null),project,List.of(project));
+   try(var session=new CodexLibrarySessionFactory(client).open(context)) {
+    var result=session.tools().discover(context);assertEquals(InventoryStatus.AVAILABLE,result.status());assertEquals(1,result.items().size());assertEquals("echo",result.items().getFirst().name());
+    assertTrue(result.diagnostics().contains(InventoryDiagnostic.MCP_TOOLS_ONLY));
+    assertEquals(InventoryStatus.UNSUPPORTED,session.agents().discover(context).status());assertEquals(InventoryStatus.UNSUPPORTED,session.flows().discover(context).status());
+   }
+   assertTrue(methods.contains("tools/list"));assertTrue(methods.stream().allMatch(m->Set.of("initialize","notifications/initialized","tools/list").contains(m)),methods.toString());
+  }finally{server.stop(0);}
+ }
  private void skill(Path path,String name,String description) throws Exception {Files.createDirectories(path);Files.writeString(path.resolve("SKILL.md"),"---\nname: "+name+"\ndescription: "+description+"\n---\nRead-only fixture.\n");}
 }

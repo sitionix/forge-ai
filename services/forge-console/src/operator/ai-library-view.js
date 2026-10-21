@@ -1,8 +1,8 @@
 import { escapeHtml } from './dom-render-helpers.js';
 const CATEGORIES = ['skills', 'agents', 'flows', 'tools'];
 const title = (key) => key[0].toUpperCase() + key.slice(1);
-const statusLabel = (category) => ({ EMPTY: 'Empty', UNSUPPORTED: 'Not supported', UNAVAILABLE: 'Unavailable', FAILED: 'Failed · incomplete' }[category?.status] || 'Unavailable');
-const complete = (category) => ['AVAILABLE', 'EMPTY'].includes(category?.status) && !category.diagnostics?.length;
+const statusLabel = (category) => ({ EMPTY: 'Empty', UNSUPPORTED: 'No catalog', UNAVAILABLE: 'Unavailable', FAILED: 'Failed · incomplete' }[category?.status] || 'Unavailable');
+const complete = (category) => ['AVAILABLE', 'EMPTY'].includes(category?.status) && !(category.diagnostics || []).some((d) => d !== 'MCP_TOOLS_ONLY');
 const icon = (path) => `<svg class="ai-library-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
 const capabilityIcon = icon('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>');
 const numberLabel = (count, category = 'all') => `${count} ${category === 'all' ? (count === 1 ? 'capability' : 'capabilities') : count === 1 ? category.slice(0, -1) : category}`;
@@ -23,7 +23,7 @@ export function librarySummary(state) {
   const provider = snapshot.provider?.providerDisplayName || snapshot.provider?.providerId || 'Active provider unavailable';
   return `${provider} · ${CATEGORIES.map((key) => {
     const c = snapshot.categories[key];
-    return complete(c) ? `${c.items.length} ${title(key)}` : `${title(key)}: ${statusLabel(c)}`;
+    return complete(c) ? `${c.items.length} ${key === 'tools' && c.diagnostics?.includes('MCP_TOOLS_ONLY') ? 'MCP tools' : title(key)}` : `${title(key)}: ${statusLabel(c)}`;
   }).join(' · ')}`;
 }
 
@@ -87,16 +87,18 @@ export class AiLibraryView {
     const matches = all.filter((item) => `${item.name} ${item.description || ''}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
     const lastPage = Math.max(0, Math.ceil(matches.length / 100) - 1); const page = Math.min(Math.max(0, this.options.page || 0), lastPage);
     const hasResult = matches.length || selected.some((key) => complete(categories[key]));
-    status.textContent = hasResult ? `${numberLabel(matches.length, category)}${search ? ' matching your search' : ''}` : '';
+    const mcpOnly = selected.includes('tools') && categories.tools?.diagnostics?.includes('MCP_TOOLS_ONLY');
+    const coverageNotice = mcpOnly ? '<p class="ai-library-notice"><strong>Native MCP tools.</strong> Built-in tools are not exposed by the runtime inventory API. This catalog does not grant permission to execute tools.</p>' : '';
+    status.textContent = hasResult ? `${category === 'tools' && mcpOnly ? `${matches.length} MCP tools` : numberLabel(matches.length, category)}${search ? ' matching your search' : ''}` : '';
     const incomplete = selected.filter((key) => ['FAILED', 'UNAVAILABLE'].includes(categories[key]?.status));
-    notices.innerHTML = incomplete.map((key) => `<p class="ai-library-notice"><strong>${escapeHtml(title(key))} ${categories[key].status === 'FAILED' ? 'could not be fully loaded.' : 'are unavailable.'}</strong> ${categories[key].diagnostics?.includes('MCP_EXECUTION_CONTEXT_REQUIRED') ? 'Tool discovery requires an approved execution context. You can still browse other capabilities.' : 'Refresh inventory to try again. Other available capabilities are shown below.'}</p>`).join('');
+    notices.innerHTML = coverageNotice + incomplete.map((key) => `<p class="ai-library-notice"><strong>${escapeHtml(title(key))} ${categories[key].status === 'FAILED' ? 'could not be fully loaded.' : 'are unavailable.'}</strong> ${categories[key].diagnostics?.includes('MCP_EXECUTION_CONTEXT_REQUIRED') ? 'Tool discovery requires an approved execution context. You can still browse other capabilities.' : 'Refresh inventory to try again. Other available capabilities are shown below.'}</p>`).join('');
     if (!matches.length) {
       const c = category !== 'all' ? categories[category] : null;
-      results.innerHTML = c?.status === 'UNSUPPORTED' ? this.emptyState(`${title(category)} are not supported`, 'This category is not supported by the active provider. Choose another category to explore available capabilities.')
+      results.innerHTML = c?.status === 'UNSUPPORTED' ? this.emptyState(`${title(category)} catalog is not available`, 'The active provider does not expose a native catalog for this category. Choose another category to explore available capabilities.')
         : c?.status === 'UNAVAILABLE' || c?.status === 'FAILED' ? this.emptyState(`${title(category)} ${c.status === 'FAILED' ? 'could not be loaded' : 'are unavailable'}`, c.diagnostics?.includes('MCP_EXECUTION_CONTEXT_REQUIRED') ? 'Native tool inventory requires an approved execution context. This read-only library does not start runs or request tool access.' : 'Refresh inventory to try again, or choose another category.')
         : search ? this.emptyState('No matching capabilities', 'Try a different name or keyword, or clear your search.', true)
         : this.emptyState('No capabilities available', 'The provider returned no capabilities for this selection. Refresh to check again.');
-      if (c) notices.replaceChildren();
+      if (c) notices.innerHTML = coverageNotice;
       return;
     }
     results.innerHTML = `<div class="ai-library-list">${matches.slice(page * 100, (page + 1) * 100).map((item) => `<article class="ai-library-item" data-library-item><span class="ai-library-resource-icon">${capabilityIcon}</span><div class="ai-library-item-copy"><div class="ai-library-item-heading"><h3>${this.link(item.name, { category: item.category, itemId: item.id })}</h3>${category === 'all' ? `<span class="ai-library-badge">${escapeHtml(title(item.category))}</span>` : ''}</div><p>${escapeHtml(descriptionPreview(item.description))}</p></div>${this.link('View details →', { category: item.category, itemId: item.id }, `aria-label="${escapeHtml(`View details for ${item.name}`)}"`, 'ai-library-item-action')}</article>`).join('')}</div>`;

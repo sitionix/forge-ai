@@ -30,7 +30,8 @@ Unrelated untracked `tools/` remains untouched.
 The installed default managed-runtime binary reports Codex **0.163.0**. Its
 locally generated protocol supports `skills/list` and `mcpServerStatus/list`.
 No native agent/flow inventory or generic built-in tools/list operation is present.
-Library sends only initialize/initialized and skills/list; it never starts a
+Library sends only initialize/initialized, skills/list and bounded
+threadless mcpServerStatus/list; it never starts a
 thread/turn, executes a skill/tool, or issues MCP grants. Existing model/list-only
 request allowlist remains intact.
 
@@ -39,14 +40,36 @@ request allowlist remains intact.
 | Skills | Native skills/list, unified provider-global plus selected-project contexts |
 | Agents | UNSUPPORTED for verified 0.163.0 protocol |
 | Flows | UNSUPPORTED for verified 0.163.0 protocol |
-| Tools | UNAVAILABLE / MCP_EXECUTION_CONTEXT_REQUIRED |
+| Tools | Native threadless mcpServerStatus/list, MCP-only catalog |
 
-The available MCP inventory operation needs approved execution-scoped context
-under the existing Forge grants contract. This read-only feature does not create
-execution sessions or substitute database tools. Thus **Tools discovery is not
-available in this phase**. In the requested final-report vocabulary,
-`TOOLS_INVENTORY=FAIL` records that availability limitation; API truthfully returns
-UNAVAILABLE, not an empty or fabricated catalog.
+The initial implementation assumed MCP discovery required a thread's execution
+grants. A fresh 0.163.0 schema inspection and isolated native probe disproved that
+assumption: `mcpServerStatus/list` accepts no threadId and returns MCP catalog
+metadata without a thread/turn or tool execution. The query now uses only this
+native read-only operation, not execution grants or Forge MCP database inventory.
+
+`MCP_TOOLS_ONLY` explicitly describes coverage. Built-in Codex tools are not
+exposed by this inventory API; a supported empty MCP list never claims that Codex
+has no built-in tools. Dashboard counts say MCP tools and Library explains scope.
+Agents/Flows remain UNSUPPORTED: the installed protocol has no native inventory
+operation for either. User explicitly requested native resources only; Forge
+Agents, Workflows and configured MCP catalog entities are not substituted.
+
+The production launcher forbids arbitrary mcp_servers/plugins in base/project
+configuration and does not add execution-scoped MCP configuration to neutral
+inventory processes. Therefore production may correctly return EMPTY/0 MCP tools.
+The synthetic native MCP fixture proves protocol support, not availability of
+personal, Forge-configured, or execution-scoped servers in that managed process.
+Actual deployed queries additionally returned 419 native tools; the inspected
+item identified its source as `MCP · codex_apps`. Provider-native catalogs can
+therefore be present without adding arbitrary MCP configuration. This observed
+count is account/runtime dependent and is never hardcoded.
+
+Tool pagination is limited to 20 pages of 100 servers and 10,000 entries, within
+the existing shared 30-second inventory deadline. Per-server and per-tool errors
+retain usable metadata from other sources/pages; repeated cursors and limits are
+explicit incomplete failures. Native tool schemas, endpoint/config/auth metadata
+and credentials are never projected into Library DTOs.
 
 Canonical native skill metadata is capability-gated to exactly **0.163.0**;
 unverified versions return UNAVAILABLE/RUNTIME_PROTOCOL_UNVERIFIED for all
@@ -99,7 +122,7 @@ credentials, transport metadata and dependency commands are not returned.
 - PASS: final Codex/domain/application/local suites, with opt-in native smoke.
 - PASS: `mvn -f services/forge-nexus/pom.xml -Dapi.version=1.44 verify`, including
   typed GET/client composition, real local HTTP auth and bounded streaming tests.
-- PASS: Console **835 tests / 42 files**, typecheck and production build.
+- PASS: Console **840 tests / 42 files**, typecheck and production build.
 - PASS: real installed Codex read-only inventory smoke with isolated temporary
   HOME/CODEX_HOME and project A/B. Distinct same-name global/repo skills,
   alternate global location, canonical symlink cases and process cleanup checked.
@@ -121,7 +144,8 @@ archive in /tmp independently passed the migration test; no migrations were edit
 
 - Browser checks now also cover the deployed Nexus with live inventory (see below).
   Error/failure variants and 10,000-item behavior remain deterministic fixtures.
-- Native Tools remain UNAVAILABLE under the execution-scoped grants contract.
+- Native Tools cover MCP catalog metadata only. Built-in tool inventory remains
+  unsupported, and execution-scoped MCP catalogs are not included.
 - Agents/Flows have no native inventory operation in the verified protocol.
 - A new runtime version requires canonical-path/protocol validation before enabling
   its inventory adapter capability. Existing inference support is unchanged.
@@ -136,8 +160,9 @@ archive in /tmp independently passed the migration test; no migrations were edit
   Cost: inventory becomes unavailable if trusted workspace resolution fails.
 - Pinned canonical-path contract instead of opening runtime HOME or adding a
   privileged metadata API. Cost: unverified native versions remain unavailable.
-- Preserved MCP grants rather than creating discovery executions. Cost: Tools
-  inventory is unavailable until a safe native/context contract exists.
+- Preserved MCP grants rather than creating discovery executions. A verified
+  threadless metadata query now supports native MCP Tools; execution-scoped
+  connections and built-in tool catalogs remain outside its coverage.
 - Reused service identity independently of Remote Access activation and shared its
   bind guard. Cost: identity and explicit loopback settings remain prerequisites.
 - Native smoke, browser fixture and deployed API smoke each prove their stated
@@ -190,6 +215,34 @@ states explain recovery and errors remain announced through the live status regi
   native skills without document horizontal overflow. Temporary viewport reset.
 - Nexus rebuilt with final assets and restarted; Agent/runtime source unchanged.
 - Screenshot evidence: `/tmp/forge-ai-library-ux-desktop.jpg` (session-local).
+
+## Native Tools follow-up
+
+- Fresh installed binary: Codex 0.163.0; regenerated experimental JSON schema.
+- Isolated native probe returned one real fixture MCP tool without threadId;
+  tool executions and model requests both remained zero.
+- Native JUnit smoke now covers both skill canonical/project behavior and
+  threadless MCP discovery. The fixture HTTP server accepts metadata requests only.
+- Deterministic Tools tests cover pagination/cursor and entry limits, duplicate
+  display names, supported-empty vs unsupported, sensitive metadata redaction,
+  malformed-server isolation, partial page/server failures, cleanup and the
+  continued rejection of arbitrary client.request inventory RPC calls.
+- Nexus real-HTTP composition and Agent protected query tests carry the MCP-only
+  coverage marker and project-scoped tool IDs through the typed boundary.
+- Agents and Flows remain native-unsupported; UI says catalog unavailable rather
+  than implying that the provider cannot execute agents or flows.
+- PASS: final full Agent verify with both opt-in native smoke tests; full Nexus
+  verify; Console 840 tests / 42 files; typecheck; build; independent review ACCEPT;
+  git diff check. No schema migration or additional inventory database.
+- PASS: actual deployed public API for Ancestor and Dashboard smoke: HTTP200,
+  active profile revision2 `codex / gpt-5.6-sol`, 5 Skills AVAILABLE, 419 MCP Tools
+  AVAILABLE with MCP_TOOLS_ONLY, Agents/Flows UNSUPPORTED. About 5.4s/1.9s in
+  the observed requests; no performance guarantee implied.
+- PASS: actual Chrome native Tools view, 100 rendered rows and page2-of5,
+  search across 419 tools, details and native MCP source, no execute/create action.
+  Screenshot: `/tmp/forge-ai-native-tools.jpg` (session-local).
+- Managed Agent and Nexus were rebuilt/restarted; launcher sandbox and MCP grants
+  configuration were unchanged. No discovered tools or skills were executed.
 
 ## Changed files
 
@@ -272,3 +325,7 @@ states explain recovery and errors remain announced through the live status regi
 - `services/forge-agent/boot/pom.xml`
 - `services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/remoteaccess/RemoteAccessServiceFilterTest.java`
 - `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/infra/AgentManagementFixture.java`
+
+- `services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexLibraryToolInventory.java`
+
+- `services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexLibraryToolsInventoryTest.java`

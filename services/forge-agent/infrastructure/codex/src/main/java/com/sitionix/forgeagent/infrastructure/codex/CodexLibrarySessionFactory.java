@@ -31,7 +31,7 @@ final class CodexLibrarySessionFactory implements LibraryProviderSessionFactory 
   };}
   @Override public AgentInventoryPort agents(){return context->{var reason=initialize(context);return reason==null?InventoryResult.unsupported():InventoryResult.unavailable(reason);};}
   @Override public FlowInventoryPort flows(){return context->{var reason=initialize(context);return reason==null?InventoryResult.unsupported():InventoryResult.unavailable(reason);};}
-  @Override public ToolInventoryPort tools(){return context->{var reason=initialize(context);return InventoryResult.unavailable(reason==null?InventoryDiagnostic.MCP_EXECUTION_CONTEXT_REQUIRED:reason);};}
+  @Override public ToolInventoryPort tools(){return context->{var reason=initialize(context);return reason==null?new CodexLibraryToolInventory(runtime).discover(context):InventoryResult.unavailable(reason);};}
   @Override public void close(){if(runtime!=null)runtime.close();}
  }
 }
