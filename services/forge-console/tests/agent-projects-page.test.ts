@@ -8191,3 +8191,22 @@ describe('overview after large resource and log selectors', () => {
     page.dispose();
   });
 });
+
+describe('AI Library project navigation', () => {
+  it('shows one real inventory summary and supports direct item links and history', async () => {
+    const dom = agentProjectsDom();
+    const category = {status:'UNSUPPORTED',items:[],diagnostics:[]};
+    const getAiLibrary = vi.fn().mockResolvedValue({projectId:project().id,profileRevision:1,provider:{providerId:'codex',modelId:'m',providerDisplayName:'Codex'},categories:{skills:{status:'AVAILABLE',items:[{id:'skill-id',name:'Runtime skill',description:'Native discovery',source:'repo'}],diagnostics:[]},agents:category,flows:category,tools:{status:'UNAVAILABLE',items:[],diagnostics:[]}}});
+    const page = new AgentProjectsPage({document:dom.window.document,window:dom.window,api:api({getAiLibrary})});
+    page.mount(); await flushAsync(); await page.openProject(project().id); await flushAsync();
+    expect(dom.window.document.querySelector('[data-card-count="ai-library"]')?.textContent).toContain('1 Skills');
+    (dom.window.document.querySelector('[data-project-section="ai-library"]') as HTMLAnchorElement).click();await flushAsync();
+    expect(dom.window.document.getElementById('aiLibrary')?.classList.contains('hidden')).toBe(false);
+    (dom.window.document.querySelector('[data-library-item] a') as HTMLAnchorElement).click();await flushAsync();
+    expect(dom.window.location.hash).toContain('/ai-library/skills/skill-id');
+    expect(dom.window.document.querySelector('[data-library-results]')?.textContent).toContain('Native discovery');
+    await goBack(dom);expect(dom.window.document.querySelectorAll('[data-library-item]').length).toBe(1);
+    await goForward(dom);expect(dom.window.document.querySelector('[data-library-results]')?.textContent).toContain('Native discovery');
+    expect(getAiLibrary).toHaveBeenCalledTimes(1);page.dispose();dom.window.close();
+  });
+});

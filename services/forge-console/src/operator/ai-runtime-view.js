@@ -1,3 +1,4 @@
+import { notifyActiveProfileChanged } from './active-profile-invalidation.js';
 import { escapeHtml, pill, renderRequestError, setError } from './dom-render-helpers.js';
 import { RequestCoordinator } from './request-coordinator.js';
 
@@ -410,6 +411,7 @@ export class AiRuntimeView {
         llmProfile: normalizeLlmProfile(result?.llmProfile),
         usage: null
       };
+      notifyActiveProfileChanged(this.document.defaultView, this.activeProfile.revision);
       this.resetDraftToActive();
       await this.loadActiveProfile();
       if (this.disposed) {

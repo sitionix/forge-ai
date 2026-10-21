@@ -1,3 +1,7 @@
+import { AiLibraryController } from './ai-library-controller.js';
+import { AiLibraryView, librarySummary } from './ai-library-view.js';
+import { observeActiveProfileChanges } from './active-profile-invalidation.js';
+import { PollingCoordinator } from './polling-coordinator.js';
 import { createAgentProjectsApi } from './agent-projects-api.js';
 import { escapeHtml } from './dom-render-helpers.js';
 import { ProjectDashboardView, PROJECT_SECTIONS } from './project-dashboard-view.js';
@@ -124,6 +128,17 @@ export class AgentProjectsPage {
       onRetryServices: () => this.loadServices(),
       onDeleteService: (id) => this.deleteService(id).catch((error) => this.showError('projectServicesError', error.message || 'Service could not be deleted.'))
     });
+    this.libraryNavigation = { category: 'all', search: '', page: 0, itemId: null };
+    this.libraryController = new AiLibraryController({ api: this.api, onChange: () => this.renderProjectWorkspace() });
+    this.libraryView = new AiLibraryView({ document: this.document,
+      onRefresh: () => this.libraryController.load(this.state.selectedProjectId, { force: true }),
+      onNavigate: (patch) => this.navigateAiLibrary(patch)
+    });
+    this.libraryProfilePoll = new PollingCoordinator({ document: this.document, activeIntervalMs: 5000,
+      isActive: () => !this.disposed && this.state.view === 'project' && this.state.projectSection === 'ai-library',
+      poll: () => this.checkLibraryProfile()
+    });
+    this.onLibraryFocus = () => { if (this.libraryVisible()) void this.checkLibraryProfile(); };
     this.taskExecutionView = new TaskExecutionView({
       document: this.document,
       window: this.window,
@@ -160,6 +175,12 @@ export class AgentProjectsPage {
     this.workflowBuilder.bind();
     this.sshProfileFlow.bind();
     this.window.addEventListener('popstate', this.onPopState);
+    this.window.addEventListener('hashchange', this.onPopState);
+    this.window.addEventListener('focus', this.onLibraryFocus);
+    this.libraryUnsubscribe = observeActiveProfileChanges(this.window, () => {
+      this.libraryController.invalidate();
+      void this.checkLibraryProfile(true);
+    });
     this.window.addEventListener('forge:llm-authorization-changed', this.onAuthorizationChanged);
     this.window.addEventListener('focus', this.onAuthorizationChanged);
     this.showProjectsIndex({ preserveProjects: true, pushState: false });
@@ -168,6 +189,10 @@ export class AgentProjectsPage {
 
   dispose() {
     this.disposed = true;
+    this.libraryController.dispose(); this.libraryView.dispose(); this.libraryProfilePoll.dispose();
+    this.libraryProfileAbort?.abort(); this.libraryUnsubscribe?.();
+    this.window.removeEventListener('hashchange', this.onPopState);
+    this.window.removeEventListener('focus', this.onLibraryFocus);
     this.stopTaskPolling();
     this.taskExecutionView.dispose();
     this.workflowBuilder.dispose();
@@ -234,7 +259,40 @@ export class AgentProjectsPage {
     }
   }
 
+  libraryVisible() { return this.state.view === 'project' && ['overview', 'ai-library'].includes(this.state.projectSection); }
+
+  leaveAiLibrary() {
+    this.libraryProfilePoll.stop(); this.libraryProfileAbort?.abort();
+    this.libraryController.invalidate(); this.byId('aiLibrary').classList.add('hidden');
+  }
+
+  async checkLibraryProfile(force = false) {
+    if (!this.libraryVisible() || this.disposed || !this.api.getActiveProfile) return;
+    this.libraryProfileAbort?.abort(); const controller = new AbortController(); this.libraryProfileAbort = controller;
+    try {
+      const active = await this.api.getActiveProfile({ signal: controller.signal });
+      if (controller.signal.aborted || this.disposed || !this.libraryVisible()) return;
+      const changed = this.libraryController.observeProfileRevision(active?.llmProfile ? active.revision : null);
+      if (changed || force || !this.libraryController.state.snapshot && !this.libraryController.state.loading) void this.libraryController.load(this.state.selectedProjectId, { force: true });
+    } catch (error) {
+      if (!controller.signal.aborted && this.libraryVisible()) this.libraryController.invalidate();
+    }
+  }
+
+  navigateAiLibrary(patch) {
+    this.libraryNavigation = { ...this.libraryNavigation, ...patch };
+    const nav = this.libraryNavigation; const query = new URLSearchParams();
+    if (nav.category !== 'all') query.set('category', nav.category);
+    if (nav.search) query.set('search', nav.search);
+    if (nav.page) query.set('page', String(nav.page));
+    const item = nav.itemId ? `/${encodeURIComponent(nav.category)}/${encodeURIComponent(nav.itemId)}` : '';
+    const hash = `#/projects/${encodeURIComponent(this.state.selectedProjectId)}/ai-library${item}${query.size ? `?${query}` : ''}`;
+    this.window.history[patch.replace ? 'replaceState' : 'pushState']({}, '', this.pageUrl(hash));
+    this.renderProjectWorkspace();
+  }
+
   showProjectsIndex(options = {}) {
+    this.leaveAiLibrary();
     if (options.pushState !== false) this.window.history.pushState({ view: 'projects' }, '', this.pageUrl());
     this.projectLoadSequence += 1;
     this.workflowLoadSequence += 1;
@@ -291,6 +349,7 @@ export class AgentProjectsPage {
       if (section === 'tasks' && !this.tasksDataCurrent()) await this.loadTasks();
       return;
     }
+    this.leaveAiLibrary();
     this.projectDataId = projectId;
     this.disposeLogsWorkspace();
     const loadSequence = this.projectLoadSequence + 1;
@@ -367,6 +426,7 @@ export class AgentProjectsPage {
   }
 
   async openLogsWorkspace(projectId, options = {}) {
+    this.leaveAiLibrary();
     this.workflowLoadSequence += 1;
     this.prepareDetailProject(projectId);
     if (!projectId) {
@@ -652,6 +712,7 @@ export class AgentProjectsPage {
   }
 
   async openServiceWorkspace(projectId, serviceId, options = {}) {
+    this.leaveAiLibrary();
     this.workflowLoadSequence += 1;
     this.prepareDetailProject(projectId);
     if (!projectId || !serviceId) return;
@@ -766,6 +827,7 @@ export class AgentProjectsPage {
   }
 
   async openAssetWorkspace(projectId, assetId, options = {}) {
+    this.leaveAiLibrary();
     this.workflowLoadSequence += 1;
     this.prepareDetailProject(projectId);
     const generation = ++this.repositoryWorkspaceSequence;
@@ -1000,6 +1062,7 @@ export class AgentProjectsPage {
   }
 
   async openRepositoryWorkspace(projectId, repositoryId, options = {}) {
+    this.leaveAiLibrary();
     this.workflowLoadSequence += 1;
     this.prepareDetailProject(projectId);
     if (!projectId || !repositoryId) return;
@@ -1301,6 +1364,8 @@ export class AgentProjectsPage {
   }
 
   showProjectSection(section, options = {}) {
+    if (!['overview', 'ai-library'].includes(section)) this.leaveAiLibrary();
+    if (section === 'ai-library') this.libraryNavigation = options.libraryNavigation || { category: 'all', search: '', page: 0, itemId: null };
     this.disposeLogsWorkspace();
     this.stopTaskPolling();
     this.taskExecutionView.close();
@@ -1323,6 +1388,11 @@ export class AgentProjectsPage {
     if (options.pushState !== false) this.writeProjectRoute();
     this.renderProjectWorkspace();
     this.syncTaskPolling();
+    if (['overview', 'ai-library'].includes(section)) {
+      void this.libraryController.load(this.state.selectedProjectId);
+      if (section === 'ai-library') this.libraryProfilePoll.start({ immediate: true });
+      else this.libraryProfilePoll.stop();
+    }
   }
 
   writeProjectRoute(replace = false) {
@@ -1346,6 +1416,20 @@ export class AgentProjectsPage {
 
   async syncRoute() {
     const routeHash = this.window.location.hash;
+    const libraryMatch = routeHash.match(/^#\/projects\/([^/?]+)\/ai-library(?:\/(skills|agents|flows|tools)\/([^/?]+))?\/?(?:\?([^#]*))?$/);
+    if (libraryMatch) {
+      try {
+        const query = new URLSearchParams(libraryMatch[4] || '');
+        const category = libraryMatch[2] || query.get('category') || 'all';
+        const page = Number(query.get('page'));
+        await this.openProject(decodeURIComponent(libraryMatch[1]), { section: 'ai-library', pushState: false,
+          libraryNavigation: { category: ['skills', 'agents', 'flows', 'tools'].includes(category) ? category : 'all',
+            itemId: libraryMatch[3] ? decodeURIComponent(libraryMatch[3]) : null, search: query.get('search') || '',
+            page: Number.isSafeInteger(page) && page >= 0 ? page : 0 }
+        });
+      } catch { this.leaveAiLibrary(); }
+      return;
+    }
     const sectionMatch = this.window.location.hash.match(/^#\/projects\/([^/]+)(?:\/(resources|agents|workflows|tasks|services))?\/?(?:\?([^#]*))?$/);
     if (sectionMatch) {
       const pageValue = Number(new URLSearchParams(sectionMatch[3] || '').get('page'));
@@ -1644,11 +1728,14 @@ export class AgentProjectsPage {
     this.byId('agentsV2ProjectCrumbs').textContent = `Projects / ${project?.name || 'Project'} / ${title}`;
     this.byId('projectOverviewBack').classList.toggle('hidden', section === 'overview');
     this.byId('projectDashboard').classList.toggle('hidden', section !== 'overview');
+    this.byId('aiLibrary').classList.toggle('hidden', section !== 'ai-library');
+    if (section === 'ai-library') this.libraryView.render(this.libraryController.state, this.libraryNavigation);
     const value = (status, count) => status === 'CURRENT' ? count : status === 'FAILED' || status === 'UNAVAILABLE' ? 'Unavailable' : 'Loading…';
     const states = this.state.collectionStates;
     const resourceStatus = [states.repositories, states.assets].some((s) => ['FAILED', 'UNAVAILABLE'].includes(s)) ? 'FAILED'
       : states.repositories === 'CURRENT' && states.assets === 'CURRENT' ? 'CURRENT' : 'LOADING';
     const counts = {
+      'ai-library': librarySummary(this.libraryController.state),
       resources: value(resourceStatus, this.state.repositories.length + this.state.assets.length),
       agents: value(states.agents, this.state.agents.length),
       workflows: value(states.workflows, this.state.workflows.length),
@@ -2193,6 +2280,7 @@ export class AgentProjectsPage {
   }
 
   async openWorkflowBuilder(workflowId, options = {}) {
+    this.leaveAiLibrary();
     if (!this.projectDataCurrent()) {
       return;
     }
@@ -2236,6 +2324,7 @@ export class AgentProjectsPage {
   }
 
   async openTaskExecution(taskId, options = {}) {
+    this.leaveAiLibrary();
     if (!this.state.selectedProjectId || !taskId) {
       return;
     }

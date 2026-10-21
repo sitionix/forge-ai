@@ -1,0 +1,1 @@
+export class AiLibraryController { constructor(options: any); state: any; load(projectId: string, options?: any): Promise<any>; invalidate(): void; observeProfileRevision(revision: number | null): boolean; dispose(): void; }

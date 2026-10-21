@@ -6261,3 +6261,10 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   #agentsV2Workspace .project-workspace-header p { overflow-wrap: anywhere; }
   #agentsV2Workspace .project-navigation-card { padding: 16px; }
 }
+
+.ai-library-categories { display:flex; flex-wrap:wrap; gap:.5rem; margin:1rem 0; }
+.ai-library-categories [aria-current="page"] { outline:2px solid var(--accent, #71a8ff); }
+.ai-library-item { display:flex; flex-direction:column; gap:.5rem; overflow-wrap:anywhere; }
+.ai-library-item p { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+[data-library-results] { margin:1rem 0; }
+[data-library-pages] { display:flex; gap:.75rem; align-items:center; }
