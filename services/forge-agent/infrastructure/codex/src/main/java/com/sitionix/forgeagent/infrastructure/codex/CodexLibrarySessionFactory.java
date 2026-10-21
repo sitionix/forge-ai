@@ -7,7 +7,10 @@ import org.springframework.stereotype.Component;
 @Component
 final class CodexLibrarySessionFactory implements LibraryProviderSessionFactory {
  private final CodexAppServerClient client;
- CodexLibrarySessionFactory(CodexAppServerClient client){this.client=client;}
+ private final java.nio.file.Path globalHome;
+ CodexLibrarySessionFactory(CodexAppServerClient client){this(client, "");}
+ @org.springframework.beans.factory.annotation.Autowired
+ CodexLibrarySessionFactory(CodexAppServerClient client,@org.springframework.beans.factory.annotation.Value("${forge.codex.library.global-home:}") String home){this.client=client;this.globalHome=home.isBlank()?null:java.nio.file.Path.of(home);}
  @Override public boolean supports(String providerId){return "codex".equals(providerId);}
  @Override public LibraryProviderSession open(LibraryContext context){return new Session();}
  private final class Session implements LibraryProviderSession {
@@ -29,7 +32,7 @@ final class CodexLibrarySessionFactory implements LibraryProviderSessionFactory 
    catch(CodexRemoteException remote){return "-32601".equals(remote.code())?InventoryResult.unsupported():InventoryResult.failed();}
    catch(RuntimeException failed){return InventoryResult.failed();}
   };}
-  @Override public AgentInventoryPort agents(){return new CodexProjectAgentInventory();}
+  @Override public AgentInventoryPort agents(){return new CodexProjectAgentInventory(globalHome);}
   @Override public FlowInventoryPort flows(){return context->{var reason=initialize(context);return reason==null?InventoryResult.unsupported():InventoryResult.unavailable(reason);};}
   @Override public ToolInventoryPort tools(){return context->{var reason=initialize(context);return reason==null?new CodexLibraryToolInventory(runtime).discover(context):InventoryResult.unavailable(reason);};}
   @Override public void close(){if(runtime!=null)runtime.close();}

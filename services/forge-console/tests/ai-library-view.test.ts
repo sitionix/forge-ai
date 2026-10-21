@@ -5,6 +5,16 @@ const empty={status:'EMPTY',items:[],diagnostics:[]};
 const unsupported={status:'UNSUPPORTED',items:[],diagnostics:[] as string[]};
 function state(){return {projectId:'p',loading:false,error:'',snapshot:{projectId:'p',provider:{providerDisplayName:'Codex',modelDisplayName:'Model'},categories:{skills:{status:'AVAILABLE',items:Array.from({length:10000},(_,i)=>({id:`id${i}`,name:i===0?'<img src=x onerror=alert(1)>':`skill ${i}`,description:'description',source:'repo'})),diagnostics:[]},agents:unsupported,flows:unsupported,tools:{status:'UNAVAILABLE',items:[],diagnostics:['MCP_EXECUTION_CONTEXT_REQUIRED']}}}};}
 describe('AI Library rendering',()=>{
+ it('shows one combined native agent catalog without a scope selector',()=>{
+  const dom=new JSDOM('<section id="aiLibrary"></section>');
+  const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});
+  const inventory=state();inventory.snapshot.categories.agents={status:'EMPTY',items:[],diagnostics:['AGENT_FILES_ONLY']};
+  view.render(inventory,{category:'agents'});
+  expect(librarySummary(inventory)).toContain('0 Agents');
+  expect(dom.window.document.body.textContent).toContain('Global and project definitions form one catalog');
+  expect(dom.window.document.querySelectorAll('select')).toHaveLength(0);
+  expect(dom.window.document.body.textContent).not.toContain('0 project agents');
+ });
  it('shows project agent definitions as a scoped supported catalog',()=>{
   const dom=new JSDOM('<section id="aiLibrary"></section>');
   const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});

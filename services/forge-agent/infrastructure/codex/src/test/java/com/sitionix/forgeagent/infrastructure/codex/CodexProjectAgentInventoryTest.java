@@ -51,6 +51,16 @@ class CodexProjectAgentInventoryTest {
   assertEquals(InventoryStatus.FAILED,result.status());assertEquals(List.of("first","second"),result.items().stream().map(AgentDescriptor::name).toList());
   assertTrue(result.diagnostics().contains(InventoryDiagnostic.UNSAFE_RESOURCE));assertTrue(result.diagnostics().contains(InventoryDiagnostic.DISCOVERY_FAILED));
  }
+ @Test void combinesExplicitGlobalSourceWithProjectDefinitionsWithoutInventedNameMerging() throws Exception {
+  var personal=root.resolve("personal");var project=root.resolve("project");Files.createDirectories(project);
+  agent(personal,"review","reviewer","Global role");agent(personal,"qa","qa","Global QA");agent(project,"review","reviewer","Project role");
+  var ctx=new LibraryContext(UUID.randomUUID(),new LibraryProviderContext(1,"codex","m",null,null,null),project,List.of(project));
+  var result=new CodexProjectAgentInventory(personal).discover(ctx);
+  assertEquals(InventoryStatus.AVAILABLE,result.status());assertEquals(3,result.items().size());
+  assertTrue(result.items().stream().anyMatch(a->a.name().equals("reviewer") && a.description().equals("Project role")));
+  assertTrue(result.items().stream().anyMatch(a->a.name().equals("qa") && a.provenance().source().equals("Codex agent")));
+  assertTrue(result.diagnostics().contains(InventoryDiagnostic.AGENT_FILES_ONLY));
+ }
  private void agent(Path project,String file,String name,String description) throws Exception {
   var directory=project.resolve(".codex/agents");Files.createDirectories(directory);
   Files.writeString(directory.resolve(file+".toml"),"name = '"+name+"'\ndescription = '"+description+"'\ndeveloper_instructions = '''\nReview only. Do not execute anything.\n'''\n");

@@ -124,6 +124,12 @@ try:
         raise ValueError()
     if not isinstance(roots, list) or len(roots) > 32:
         raise ValueError()
+    global_home=request.get('globalHome')
+    if global_home is not None:
+        if (not isinstance(global_home,str) or global_home == '/' or not global_home.startswith('/') or '..' in PurePosixPath(global_home).parts or str(PurePosixPath(global_home)) != global_home or len(global_home)>4096):
+            raise ValueError()
+        try: scan(global_home)
+        except OSError as failure: diagnostics.add('UNSAFE_RESOURCE' if failure.errno in (errno.ELOOP,errno.ENOTDIR) else 'WORKSPACE_UNAVAILABLE')
     for root in roots:
         if (not isinstance(root, str) or len(root) > 4096 or root == '/' or
                 not root.startswith('/') or '..' in PurePosixPath(root).parts or str(PurePosixPath(root)) != root or

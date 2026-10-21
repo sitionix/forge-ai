@@ -2,6 +2,7 @@
 """Narrow root-owned systemd launcher. Install only after disposable acceptance.
 No caller-selected config, executable, environment, property, PID or unit name.
 """
+from contextlib import contextmanager, nullcontext
 import fcntl
 import errno
 import grp
@@ -85,8 +86,9 @@ def load_config():
                 'workspace_roots', 'agent_unit', 'max_lifetime_seconds', 'codex_binary',
                 'git_binary', 'env_binary'}
     isolated = has_codex_isolation_config(data)
-    if set(data) != required | ({'codex_config', 'empty_system_config'} if isolated else set()):
+    if set(data) - {'global_resources_enabled'} != required | ({'codex_config', 'empty_system_config'} if isolated else set()):
         raise ValueError('unsafe configuration')
+    if type(data.get('global_resources_enabled',False)) is not bool: raise ValueError('unsafe configuration')
     identifier(data['installation'])
     fixed_paths = [data.get(key) for key in ['runtime_home','codex_binary','git_binary','env_binary']]
     if isolated:
@@ -196,7 +198,47 @@ def unit_name(config, execution):
     return 'forge-runtime-' + identifier(config['installation']) + '-' + identifier(execution) + '.service'
 
 
-def service_command(config, execution, cwd, command, credential_path=None):
+@contextmanager
+def global_resource_mounts(config):
+    """Fixed operator resource directories, pinned before systemd resolves them.
+
+    Never bind personal HOME, configuration, credentials or plugins. Keep the
+    O_PATH descriptors alive until the owned runtime exits, including cleanup.
+    """
+    descriptors=[]
+    mounts=[]
+    try:
+        if not config.get('global_resources_enabled',False):
+            yield mounts
+            return
+        home=Path(pwd.getpwuid(config['control_uid']).pw_dir)
+        if not home.is_absolute() or '..' in home.parts or home == Path('/'):
+            raise ValueError('unsafe resource home')
+        for relative,target in [('.codex/skills','.agents/skills'),
+                                ('.agents/skills','.codex/skills/forge-global'),
+                                ('.codex/agents','.codex/agents')]:
+            fd=os.open('/',os.O_PATH|os.O_DIRECTORY|os.O_CLOEXEC)
+            try:
+                for component in (home/relative).parts[1:]:
+                    child=os.open(component,os.O_PATH|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+                    os.close(fd);fd=child
+                    info=os.fstat(fd)
+                    if info.st_uid not in (0,config['control_uid']) or (info.st_mode & 0o002 and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)):
+                        raise ValueError('unsafe resource owner')
+            except FileNotFoundError:
+                os.close(fd)
+                continue
+            except BaseException:
+                os.close(fd)
+                raise ValueError('unsafe resource directory')
+            descriptors.append(fd)
+            mounts.append(('/proc/'+str(os.getpid())+'/fd/'+str(fd),config['runtime_home']+'/'+target))
+        yield mounts
+    finally:
+        for fd in descriptors: os.close(fd)
+
+
+def service_command(config, execution, cwd, command, credential_path=None, resource_mounts=()):
     props = ['User='+str(config['runtime_uid']), 'Group='+str(config['runtime_gid']),
              'SupplementaryGroups=', 'NoNewPrivileges=yes', 'CapabilityBoundingSet=',
              'AmbientCapabilities=', 'KillMode=control-group', 'TimeoutStopSec=5s',
@@ -216,6 +258,7 @@ def service_command(config, execution, cwd, command, credential_path=None):
                       'BindReadOnlyPaths='+config['empty_system_config']+':/etc/codex/config.toml',
                       'InaccessiblePaths='+codex_home+'/plugins',
                       'InaccessiblePaths='+codex_home+'/.agents/plugins'])
+        props.extend('BindReadOnlyPaths='+source+':'+target for source,target in resource_mounts)
         if credential_path is not None:
             props.append('LoadCredential=forge-mcp-grants:'+str(credential_path))
         else:
@@ -234,11 +277,13 @@ def validate_codex_mount_targets(config):
     paths = [(home/'.codex', True), (home/'.codex/config.toml', False),
              (home/'.codex/plugins', True), (home/'.codex/.agents', True),
              (home/'.codex/.agents/plugins', True)]
+    if config.get('global_resources_enabled',False):
+        paths.extend([(home/'.agents',True),(home/'.agents/skills',True),(home/'.codex/agents',True),(home/'.codex/skills',True),(home/'.codex/skills/forge-global',True)])
     for path, directory in paths:
         info = path.lstat()
         expected = stat.S_ISDIR if directory else stat.S_ISREG
         if (not expected(info.st_mode) or info.st_uid not in (0, config['runtime_uid'])
-                or info.st_mode & 0o022):
+                or info.st_mode & (0o002 if path == home/'.codex/skills' and info.st_gid == config.get('runtime_gid') else 0o022)):
             raise ValueError('unsafe Codex mount target')
 
 
@@ -409,6 +454,7 @@ def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
     child = None
     claimed = False
     credential = None
+    resources = None
     def terminate(signum, frame):
         raise InterruptedError('launcher interrupted')
     signal.signal(signal.SIGTERM, terminate)
@@ -418,6 +464,8 @@ def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
             validate_codex_isolation_config(config)
             validate_codex_project_config(cwd)
             validate_codex_mount_targets(config)
+        resources=global_resource_mounts(config) if codex_grants is not None or is_codex_command(config,command) else nullcontext([])
+        resource_mounts=resources.__enter__()
         with locked_receipt(config, execution) as receipt:
             if receipt.read():
                 raise ValueError('execution already used')
@@ -427,7 +475,7 @@ def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
                 credential = write_credential(config, execution, codex_grants)
                 command = [str(Path(sys.executable).resolve()), '-I', str(Path(__file__)),
                            '--runtime-codex', config['codex_binary'], config['runtime_home']]
-            child = subprocess.Popen(service_command(config, execution, cwd, command, credential), env=SAFE_ENV,
+            child = subprocess.Popen(service_command(config, execution, cwd, command, credential, resource_mounts), env=SAFE_ENV,
                                      stdin=subprocess.PIPE if probe_input is not None else None,
                                      stdout=subprocess.PIPE if probe_input is not None else None,
                                      stderr=subprocess.DEVNULL if probe_input is not None else None)
@@ -451,10 +499,13 @@ def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
             if claimed: stop(config, execution)
         finally:
             if credential is not None: credential.unlink(missing_ok=True)
-            if child is not None and child.poll() is None:
-                child.terminate()
-                try: child.wait(timeout=5)
-                except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=5)
+            try:
+                if child is not None and child.poll() is None:
+                    child.terminate()
+                    try: child.wait(timeout=5)
+                    except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=5)
+            finally:
+                if resources is not None: resources.__exit__(None,None,None)
 
 
 def git_command(config, arguments):

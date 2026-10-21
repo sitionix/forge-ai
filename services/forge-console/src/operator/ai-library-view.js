@@ -2,7 +2,7 @@ import { escapeHtml } from './dom-render-helpers.js';
 const CATEGORIES = ['skills', 'agents', 'flows', 'tools'];
 const title = (key) => key[0].toUpperCase() + key.slice(1);
 const statusLabel = (category) => ({ EMPTY: 'Empty', UNSUPPORTED: 'No catalog', UNAVAILABLE: 'Unavailable', FAILED: 'Failed · incomplete' }[category?.status] || 'Unavailable');
-const complete = (category) => ['AVAILABLE', 'EMPTY'].includes(category?.status) && !(category.diagnostics || []).some((d) => !['MCP_TOOLS_ONLY', 'PROJECT_AGENT_FILES_ONLY'].includes(d));
+const complete = (category) => ['AVAILABLE', 'EMPTY'].includes(category?.status) && !(category.diagnostics || []).some((d) => !['MCP_TOOLS_ONLY', 'PROJECT_AGENT_FILES_ONLY', 'AGENT_FILES_ONLY'].includes(d));
 const icon = (path) => `<svg class="ai-library-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
 const capabilityIcon = icon('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>');
 const numberLabel = (count, category = 'all') => `${count} ${category === 'all' ? (count === 1 ? 'capability' : 'capabilities') : count === 1 ? category.slice(0, -1) : category}`;
@@ -90,7 +90,8 @@ export class AiLibraryView {
     const mcpOnly = selected.includes('tools') && categories.tools?.diagnostics?.includes('MCP_TOOLS_ONLY');
     const projectAgents = selected.includes('agents') && categories.agents?.diagnostics?.includes('PROJECT_AGENT_FILES_ONLY');
     const agentNotice = projectAgents ? '<p class="ai-library-notice"><strong>Project agent definitions.</strong> Native agent definitions available in this project. Built-in and user-wide agents are not exposed by this catalog.</p>' : '';
-    const coverageNotice = agentNotice + (mcpOnly ? '<p class="ai-library-notice"><strong>Native MCP tools.</strong> Built-in tools are not exposed by the runtime inventory API. This catalog does not grant permission to execute tools.</p>' : '');
+    const allAgentsNotice = selected.includes('agents') && categories.agents?.diagnostics?.includes('AGENT_FILES_ONLY') ? '<p class="ai-library-notice"><strong>Native agent definitions.</strong> Global and project definitions form one catalog. Built-in agents are not exposed by the runtime inventory API.</p>' : '';
+    const coverageNotice = allAgentsNotice + agentNotice + (mcpOnly ? '<p class="ai-library-notice"><strong>Native MCP tools.</strong> Built-in tools are not exposed by the runtime inventory API. This catalog does not grant permission to execute tools.</p>' : '');
     status.textContent = hasResult ? `${category === 'tools' && mcpOnly ? `${matches.length} MCP tools` : category === 'agents' && projectAgents ? `${matches.length} project agents` : numberLabel(matches.length, category)}${search ? ' matching your search' : ''}` : '';
     const incomplete = selected.filter((key) => ['FAILED', 'UNAVAILABLE'].includes(categories[key]?.status));
     notices.innerHTML = coverageNotice + incomplete.map((key) => `<p class="ai-library-notice"><strong>${escapeHtml(title(key))} ${categories[key].status === 'FAILED' ? 'could not be fully loaded.' : 'are unavailable.'}</strong> ${categories[key].diagnostics?.includes('MCP_EXECUTION_CONTEXT_REQUIRED') ? 'Tool discovery requires an approved execution context. You can still browse other capabilities.' : 'Refresh inventory to try again. Other available capabilities are shown below.'}</p>`).join('');

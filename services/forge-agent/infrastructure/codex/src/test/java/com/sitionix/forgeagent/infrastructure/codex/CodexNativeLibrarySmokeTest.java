@@ -17,7 +17,7 @@ class CodexNativeLibrarySmokeTest {
  @Test void nativeCanonicalPathsPreserveProjectIsolationAndDistinctGlobalNames() throws Exception {
   Path home=root.resolve("home");Path codex=home.resolve(".codex");Files.createDirectories(codex);
   Path a=root.resolve("a"),b=root.resolve("b");Files.createDirectories(a);Files.createDirectories(b);
-  skill(codex.resolve("skills/shared"),"same","global");skill(home.resolve(".agents/skills/alternate"),"alternate","alternate global");
+  skill(codex.resolve("skills/shared"),"same","global");skill(codex.resolve("skills/forge-global/new-global"),"new-global","additional native global");skill(home.resolve(".agents/skills/alternate"),"alternate","alternate global");
   skill(a.resolve(".agents/skills/local"),"same","project A");skill(a.resolve(".codex/skills/legacy"),"codex-local","Codex project skills");skill(b.resolve(".agents/skills/local"),"only-b","project B");
   var foreign=root.resolve("foreign");skill(foreign,"foreign-directory","must not escape");
   Files.createSymbolicLink(codex.resolve("skills/directory-link"),foreign);
@@ -43,6 +43,7 @@ class CodexNativeLibrarySmokeTest {
    assertEquals(2,ai.items().stream().filter(s->s.name().equals("same")).count());
    assertEquals(1,bi.items().stream().filter(s->s.name().equals("same")).count());assertTrue(bi.items().stream().anyMatch(s->s.name().equals("only-b")));
    assertTrue(ai.items().stream().anyMatch(s->s.name().equals("alternate")));
+   assertTrue(ai.items().stream().anyMatch(s->s.name().equals("new-global")));
    assertTrue(ai.items().stream().anyMatch(s->s.name().equals("codex-local")));
    assertFalse(bi.items().stream().anyMatch(s->s.name().equals("codex-local")));
    assertFalse(ai.items().stream().anyMatch(s->s.name().contains("foreign")));

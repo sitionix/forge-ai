@@ -19,6 +19,32 @@ class McpInstallationTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
 
+    def test_resource_opt_in_environment_is_derived_from_installed_control_identity(self):
+        import types
+        config={'control_uid':1234,'runtime_home':'/srv/runtime'}
+        with patch.object(self.install.pwd,'getpwuid',return_value=types.SimpleNamespace(pw_dir='/home/operator')):
+            self.assertEqual(self.install.global_resource_environment(config), b'FORGE_CODEX_LIBRARY_GLOBAL_HOME="/home/operator"\n')
+            self.assertEqual(self.install.global_resource_environment({**config,'control_uid':1234}),self.install.global_resource_environment(config))
+        with patch.object(self.install.pwd,'getpwuid',return_value=types.SimpleNamespace(pw_dir='/home/unsafe"')):
+            with self.assertRaises(RuntimeError): self.install.global_resource_environment(config)
+
+    def test_global_environment_update_rejects_symlinks_fifo_and_large_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory=pathlib.Path(folder); environment=directory/'agent.env';outside=directory/'outside'
+            outside.write_bytes(b'synthetic-private');environment.symlink_to(outside)
+            with self.assertRaises(OSError):
+                with self.install.global_environment_update(environment,os.getuid(),b'GLOBAL="ok"\n'): pass
+            self.assertEqual(outside.read_bytes(),b'synthetic-private');environment.unlink()
+            os.mkfifo(environment,0o600)
+            with self.assertRaises(RuntimeError):
+                with self.install.global_environment_update(environment,os.getuid(),b'GLOBAL="ok"\n'): pass
+            environment.unlink();environment.write_bytes(b'x'*1048577);environment.chmod(0o600)
+            with self.assertRaises(RuntimeError):
+                with self.install.global_environment_update(environment,os.getuid(),b'GLOBAL="ok"\n'): pass
+            environment.write_bytes(b'PRESERVED="value"\n')
+            with self.install.global_environment_update(environment,os.getuid(),b'GLOBAL="ok"\n'): pass
+            self.assertEqual(environment.read_bytes(),b'PRESERVED="value"\nGLOBAL="ok"\n')
+
     def test_unprivileged_install_does_not_modify_machine(self):
         with patch.object(self.install.os, 'geteuid', return_value=1000):
             with self.assertRaisesRegex(RuntimeError, 'System privileges|System runtime'):

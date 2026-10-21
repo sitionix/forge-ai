@@ -23,6 +23,39 @@ class LauncherTests(unittest.TestCase):
             cls.launcher = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(cls.launcher)
 
+    def test_global_resources_are_opt_in_read_only_and_only_resource_directories(self):
+        import types
+        with tempfile.TemporaryDirectory() as folder:
+            home=pathlib.Path(folder); (home/'.codex/skills').mkdir(parents=True); (home/'.codex/agents').mkdir()
+            (home/'.codex/auth.json').write_text('must not be mounted')
+            config={'control_uid':os.getuid(),'runtime_home':'/srv/fixture-runtime','global_resources_enabled':True}
+            with patch.object(self.launcher.pwd,'getpwuid',return_value=types.SimpleNamespace(pw_dir=str(home))):
+                with self.launcher.global_resource_mounts(config) as mounts:
+                    self.assertEqual({destination for source,destination in mounts}, {'/srv/fixture-runtime/.agents/skills','/srv/fixture-runtime/.codex/agents'})
+                    for source,destination in mounts:
+                        self.assertTrue(pathlib.Path(source).is_dir()); self.assertNotIn('auth.json',destination)
+                    pinned=mounts[0][0]
+                self.assertFalse(pathlib.Path(pinned).exists())
+                with self.launcher.global_resource_mounts({}) as mounts: self.assertEqual(mounts,[])
+                (home/'.codex/agents').rmdir(); (home/'.codex/agents').symlink_to('/tmp')
+                with self.assertRaises(ValueError):
+                    with self.launcher.global_resource_mounts(config): pass
+
+    def test_opt_in_targets_reject_symlinked_global_resource_directories(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home=pathlib.Path(folder)
+            for name in ['.codex/plugins','.codex/.agents/plugins','.agents/skills','.codex/agents','.codex/skills/forge-global']:
+                (home/name).mkdir(parents=True,exist_ok=True)
+            for path in home.rglob('*'):
+                if path.is_dir(): path.chmod(0o700)
+            (home/'.codex/config.toml').write_text('');(home/'.codex/config.toml').chmod(0o600)
+            config={'runtime_home':str(home),'runtime_uid':os.getuid(),'runtime_gid':os.getgid(),'global_resources_enabled':True}
+            self.launcher.validate_codex_mount_targets(config)
+            for name in ['.codex/agents','.codex/skills/forge-global','.agents/skills']:
+                path=home/name;path.rmdir();path.symlink_to(home,target_is_directory=True)
+                with self.assertRaises(ValueError): self.launcher.validate_codex_mount_targets(config)
+                path.unlink();path.mkdir(mode=0o700)
+
     def test_implementation_exists(self):
         self.assertTrue(SOURCE.exists(), 'fixed runtime launcher is missing')
 

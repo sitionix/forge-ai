@@ -403,7 +403,7 @@ DIFF_CHECK=PASS
 CHANGED_FILES=See Git branch diff and project-native file list below
 SUPPORTED_RUNTIME_OPERATIONS=skills/list,mcpServerStatus/list
 UNSUPPORTED_CAPABILITIES=Flows (deferred), built-in Tools catalog, runtime agent-list RPC
-REMAINING_FINDINGS=Project Agents coverage is native project TOML definitions only; arbitrary project MCP configuration remains blocked by existing Forge policy; no blocking review findings
+REMAINING_FINDINGS=Agents cover native global/project TOML definitions; built-in agent inventory is not exposed; arbitrary personal/project MCP configuration remains blocked by existing Forge policy; no blocking review findings
 ```
 
 Project-native file list:
@@ -415,3 +415,71 @@ Project-native file list:
 - Console `ai-library-view.js`, `ai-library-view.test.ts`
 - Nexus `LibrarySnapshot.java`, `AiLibraryClientAdapterTest.java`
 - This verification evidence document
+
+
+## Global + project native resources (supersedes project-only follow-up)
+
+The user explicitly approved connecting the operator's global Codex resources.
+Global Skills and Agents are now combined with the selected project's native
+resources in the same category results, with no scope selector or extra database.
+
+The installer supports an explicit administrative opt-in:
+`sudo /usr/bin/python3 -I scripts/runtime/install_mcp.py --enable-global-resources`.
+It derives the operator HOME from the installer's protected `control_uid`, never
+from the browser. It provisions managed targets, sets the protected launcher flag
+`global_resources_enabled`, and supplies Agent's trusted
+`FORGE_CODEX_LIBRARY_GLOBAL_HOME` metadata source. The choice survives normal
+reinstallation. No active-provider reference is added.
+
+For each owned Codex runtime, the launcher pins only the operator's fixed native
+resource directories with nofollow directory descriptors, retaining them through
+runtime cleanup, and adds read-only namespace bindings:
+
+| Operator resource source | Isolated native destination |
+| --- | --- |
+| `.codex/skills` | runtime HOME `.agents/skills` |
+| `.agents/skills` | runtime CODEX_HOME `skills/forge-global` |
+| `.codex/agents` | runtime CODEX_HOME `agents` |
+
+The native 0.163.0 smoke verifies the exact additional `skills/forge-global`
+destination. An attempted CODEX_HOME `.agents/skills` location was not discovered
+and is not used. Existing managed/system skills remain available. The existing
+`skills/list` and `mcpServerStatus/list` boundaries remain narrow and unchanged.
+
+Personal HOME, auth.json, config.toml and plugins are not bound or copied. Runtime
+UID, ProtectHome, NoNewPrivileges, approved MCP grants and project configuration
+restrictions remain in force. Source permissions still apply; no personal resource
+permissions are broadened. Mount targets are checked against symlink and unsafe
+owner/mode substitutions. The installer reads and replaces the control-owned
+service environment using anchored FDs, nofollow/nonblocking opens, fstat and
+bounded reads, preserving existing service values without printing secrets.
+
+Agent metadata discovery includes the explicitly enabled global source plus the
+trusted managed project roots. It retains distinct file identities, returns only
+sanitized descriptors, and never executes instructions. `AGENT_FILES_ONLY` marks
+the combined native definition catalog; built-in agent inventory is not claimed.
+Flows remain deferred/UNSUPPORTED. Built-in Tools inventory and arbitrary personal
+or project MCP configuration remain outside the existing sandbox/approval policy.
+No server declaration is converted into a fabricated Tool.
+
+Live opt-in verification after rebuilding/restarting Agent and Nexus:
+- Ancestor: Skills AVAILABLE **14**, Agents AVAILABLE **1** (`ancestor_qa_lead`),
+  native MCP Tools AVAILABLE **419**, Flows UNSUPPORTED.
+- Chrome in the user's existing tab shows Skills14/Agents1/Tools419 and the QA Lead
+  in the unified Agents list. Screenshot `/tmp/forge-ai-global-local-agents.jpg`.
+- Full runtime regression suite: **66 tests, 1 existing opt-in skip, PASS**.
+- Console: **842 tests / 42 files, typecheck and production build PASS**.
+- Independent final security review: **ACCEPT**, no remaining blocking findings.
+
+Files changed by this follow-up: runtime launcher, installer and their focused
+tests; Codex session factory, bounded agent metadata adapter/helper and native
+smoke tests; Agent/Nexus diagnostic enums and typed HTTP fixture; Console view and
+its tests; this evidence document. No push, merge or PR metadata modification.
+
+- Full Agent `verify` PASS, including Codex/domain/application/API and existing
+  integration regression suites, with installed-Codex smoke enabled. The initial
+  run ended with signal143; the complete repeat exited0.
+- Full Nexus `verify` PASS, including typed global-agent diagnostic roundtrip.
+- A second live project returned the same global QA Lead identity, 14 Skills and
+  419 MCP Tools, with the unchanged active Knowledge profile.
+- Final `git diff --check` PASS. Existing untracked `tools/` remains untouched.
