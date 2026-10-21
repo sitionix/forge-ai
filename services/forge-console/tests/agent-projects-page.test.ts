@@ -391,6 +391,7 @@ function api(overrides = {}) {
     listProjects: vi.fn(() => Promise.resolve([project()])),
     createProject: vi.fn(() => Promise.resolve(project('22222222-2222-4222-8222-222222222222', 'Forge AI'))),
     deleteProject: vi.fn(() => Promise.resolve({})),
+    listProjectAssets: vi.fn(() => Promise.resolve([])),
     listServices: vi.fn(() => Promise.resolve([])),
     createService: vi.fn((_projectId: string, request: any) => Promise.resolve({ ...service(), ...request })),
     updateService: vi.fn((_projectId: string, id: string, request: any) => Promise.resolve({ ...service(id), ...request })),
@@ -443,6 +444,12 @@ async function openedProject(fakeApi = api(), runtimeConfig = {}) {
   const context = await mountedPage(fakeApi, runtimeConfig);
   await context.page.openProject(project().id);
   await flushAsync();
+  return context;
+}
+
+async function openedSection(section: string, fakeApi = api(), runtimeConfig = {}) {
+  const context = await openedProject(fakeApi, runtimeConfig);
+  await context.page.openProject(project().id, { section });
   return context;
 }
 
@@ -658,7 +665,7 @@ describe('Agent projects page', () => {
   it('renders minimal GIT Resource rows without runtime details', async () => {
     const firstRepository = repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'));
     const secondRepository = repository('repo-2', project().id, 'worker', true, branchGitState('DIRTY', 'develop'));
-    const { dom, page } = await openedProject(api({
+    const { dom, page } = await openedSection('resources', api({
       listProjectRepositories: vi.fn().mockResolvedValue([firstRepository, secondRepository]),
       listServices: vi.fn().mockResolvedValue([])
     }));
@@ -855,7 +862,7 @@ describe('Agent projects page', () => {
 
     expect(streams[0]!.closed).toBe(true);
     expect(dom.window.location.pathname).toBe('/fgaisox/operator/agent-projects.html');
-    expect(dom.window.location.hash).toBe('');
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}`);
     expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(true);
     expect(dom.window.document.getElementById('agentsV2Workspace')!.classList.contains('hidden')).toBe(false);
     page.dispose();
@@ -896,7 +903,7 @@ describe('Agent projects page', () => {
 
     await goBack(dom);
     expect(dom.window.location.pathname).toBe('/fgaisox/operator/agent-projects.html');
-    expect(dom.window.location.hash).toBe('');
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}`);
     expect(dom.window.document.getElementById('projectLogsWorkspace')!.classList.contains('hidden')).toBe(true);
     expect(streams[0]!.closed).toBe(true);
 
@@ -930,7 +937,7 @@ describe('Agent projects page', () => {
     expect(dom.window.document.getElementById('agentsV2ProjectsView')?.textContent).not.toContain('New Workflow');
   });
 
-  it('opening a Project does not load or inspect Services', async () => {
+  it('opening Overview loads Services once for counts without runtime inspection', async () => {
     const listServices = vi.fn().mockResolvedValue(Array.from({ length: 25 }, (_, index) => service(`service-${index}`)));
     const getServiceRuntime = vi.fn().mockResolvedValue({ status: 'RUNNING' });
     const { page } = await openedProject(api({
@@ -938,7 +945,7 @@ describe('Agent projects page', () => {
       getServiceRuntime,
     }));
 
-    expect(listServices).not.toHaveBeenCalled();
+    expect(listServices).toHaveBeenCalledTimes(1);
     expect(getServiceRuntime).not.toHaveBeenCalled();
     page.dispose();
   });
@@ -1018,14 +1025,11 @@ describe('Agent projects page', () => {
 
   it('opening Project switches to workspace and back returns to Projects', async () => {
     const { dom, page } = await openedProject();
-    expect(dom.window.document.getElementById('agentsV2ProjectCrumbs')?.textContent).toBe('Projects / Sitionix');
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('service-a');
-    expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).not.toContain('git@gitlab.com:company/service-a.git');
-    expect(dom.window.document.getElementById('projectServicesList')).toBeNull();
-    expect(dom.window.document.getElementById('projectStandaloneServicesSection')).toBeNull();
-    expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Architect');
-    expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
-    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
+    expect(dom.window.document.getElementById('agentsV2ProjectCrumbs')?.textContent).toBe('Projects / Sitionix / Overview');
+    expect(dom.window.document.querySelector('[data-kpi="agents"]')?.textContent).toBe('3');
+    for (const id of ['agentsV2RepositoriesList', 'agentsV2AgentsList', 'agentsV2WorkflowsList', 'agentsV2TasksList', 'projectServicesList']) {
+      expect(dom.window.document.getElementById(id)?.childElementCount).toBe(0);
+    }
 
     page.showProjectsIndex();
     expect(page.state.selectedProjectId).toBeNull();
@@ -1034,7 +1038,7 @@ describe('Agent projects page', () => {
 
   it('clicking a repository card opens the repository workspace without an Open Service button', async () => {
     const linkedService = { ...service('service-1'), repositoryId: repository().id };
-    const { dom, page } = await openedProject(api({
+    const { dom, page } = await openedSection('resources', api({
       listProjectRepositories: vi.fn().mockResolvedValue([
         repository(undefined, project().id, 'some_bridge', true, branchGitState('CLEAN', 'main'))
       ]),
@@ -1082,13 +1086,13 @@ describe('Agent projects page', () => {
       ]),
       listServices
     });
-    const { dom, page } = await openedProject(fakeApi);
+    const { dom, page } = await openedSection('resources', fakeApi);
 
     const row = dom.window.document.querySelector('[data-repository-id="repo-1"]')!;
     expect(row.textContent).toContain('api');
     expect(row.textContent).toContain('GIT');
     expect(row.querySelector('[data-repository-runtime-status]')).toBeNull();
-    expect(listServices).not.toHaveBeenCalled();
+    expect(listServices).toHaveBeenCalledTimes(1);
     page.dispose();
   });
 
@@ -1536,7 +1540,7 @@ describe('Agent projects page', () => {
       targetIdentity: serviceId,
       metadata: {}
     }));
-    const { dom, page } = await openedProject(api({
+    const { dom, page } = await openedSection('resources', api({
       listProjectRepositories: vi.fn().mockResolvedValue([
         repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
       ]),
@@ -1554,7 +1558,7 @@ describe('Agent projects page', () => {
   it('does not render Service failure state in a GIT Resource row', async () => {
     const apiService = { ...service('service-api'), repositoryId: 'repo-1', name: 'api', runtimeStatus: 'RUNNING' };
     const workerService = { ...service('service-worker'), repositoryId: 'repo-1', name: 'worker', runtimeStatus: 'FAILED' };
-    const { dom, page } = await openedProject(api({
+    const { dom, page } = await openedSection('resources', api({
       listProjectRepositories: vi.fn().mockResolvedValue([
         repository('repo-1', project().id, 'api', true, branchGitState('CLEAN', 'main'))
       ]),
@@ -1817,7 +1821,7 @@ describe('Agent projects page', () => {
         ]),
       importProjectRepository: vi.fn(() => Promise.resolve(repository('repo-1')))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('resources', fakeApi);
 
     expect(dom.window.document.getElementById('agentsV2RepositoriesList')?.textContent).toContain('No resources yet.');
 
@@ -1865,7 +1869,7 @@ describe('Agent projects page', () => {
     await flushAsync();
 
     expect(fakeApi.cloneProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
-    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(1);
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
   });
 
@@ -1919,7 +1923,7 @@ describe('Agent projects page', () => {
     await flushAsync();
 
     expect(fakeApi.refreshProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
-    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(1);
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(false);
   });
 
@@ -2049,7 +2053,7 @@ describe('Agent projects page', () => {
     await flushAsync();
 
     expect(fakeApi.pullProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
-    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(1);
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
 
@@ -2069,11 +2073,11 @@ describe('Agent projects page', () => {
     const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
     page.mount();
     await flushAsync();
-    await page.openProject(projectA.id);
+    await page.openProject(projectA.id, { section: 'resources' });
 
     dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-a"]')?.click();
     await flushAsync();
-    await page.openProject(projectB.id);
+    await page.openProject(projectB.id, { section: 'resources' });
     pull.resolve({ ...repoA, git: branchGitState('CLEAN', 'main'), projectId: projectA.id });
     await flushAsync();
 
@@ -2093,9 +2097,6 @@ describe('Agent projects page', () => {
           repository('repo-1', project().id, 'service-a', true, behindGitState())
         ])
         .mockResolvedValueOnce([
-          repository('repo-1', project().id, 'service-a', true, behindGitState())
-        ])
-        .mockResolvedValueOnce([
           repository('repo-1', project().id, 'service-a', true, divergedGitState())
         ]),
       pullProjectRepository: vi.fn(() => pullRequest.promise)
@@ -2110,7 +2111,7 @@ describe('Agent projects page', () => {
     await flushAsync();
 
     expect(fakeApi.pullProjectRepository).toHaveBeenCalledTimes(1);
-    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(3);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
     expect(dom.window.document.getElementById('agentsV2RepositoriesError')?.textContent).toContain('Pull blocked.');
     expect(dom.window.document.querySelector<HTMLButtonElement>('[data-pull-repository-id="repo-1"]')?.disabled).toBe(true);
   });
@@ -2163,7 +2164,7 @@ describe('Agent projects page', () => {
 
     expect(fakeApi.cloneProjectRepository).toHaveBeenCalledWith(project().id, 'repo-1');
     expect(dom.window.document.querySelector('[data-clone-repository-id="repo-1"]')).toBeNull();
-    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectRepositories).toHaveBeenCalledTimes(1);
   });
 
   it('rejects blank repository URL locally', async () => {
@@ -2185,7 +2186,7 @@ describe('Agent projects page', () => {
         task('task-1', 'RUNNING', projectId, workflow().id, 'Simple Analysis')
       ], page, size)))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('tasks', fakeApi);
     const list = dom.window.document.getElementById('agentsV2TasksList')!;
 
     expect(fakeApi.listProjectTasks).toHaveBeenCalledWith(project().id, 0, 20);
@@ -2204,7 +2205,7 @@ describe('Agent projects page', () => {
         { ...task('task-2', 'FAILED', projectId, workflow().id, 'Review Flow'), title: 'Review implementation' }
       ], page, size)))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('tasks', fakeApi);
     const list = dom.window.document.getElementById('agentsV2TasksList')!;
     const rows = [...list.querySelectorAll<HTMLElement>('.agents-v2-task-row:not(.agents-v2-task-row-head)')];
     const deleteButton = rows[0]!.querySelector<HTMLButtonElement>('[data-delete-task-id="task-1"]')!;
@@ -2226,11 +2227,9 @@ describe('Agent projects page', () => {
   });
 
   it('Agent and Workflow render x delete controls with entity labels', async () => {
-    const { dom } = await openedProject();
+    const { dom, page } = await openedSection('agents');
     const agentCard = dom.window.document.getElementById('agentsV2AgentsList')!.querySelector<HTMLElement>('.agents-v2-card')!;
-    const workflowCard = dom.window.document.getElementById('agentsV2WorkflowsList')!.querySelector<HTMLElement>('.agents-v2-card')!;
     const agentDelete = agentCard.querySelector<HTMLButtonElement>('[data-delete-agent-id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]')!;
-    const workflowDelete = workflowCard.querySelector<HTMLButtonElement>('[data-delete-workflow-id="33333333-3333-4333-8333-333333333333"]')!;
 
     expect(agentDelete.textContent).toBe('×');
     expect(agentDelete.classList.contains('entity-delete-control')).toBe(true);
@@ -2238,6 +2237,9 @@ describe('Agent projects page', () => {
     expect(agentCard.textContent).toContain('Edit');
     expect(agentCard.textContent).not.toContain('Delete');
 
+    await page.openProject(project().id, { section: 'workflows' });
+    const workflowCard = dom.window.document.getElementById('agentsV2WorkflowsList')!.querySelector<HTMLElement>('.agents-v2-card')!;
+    const workflowDelete = workflowCard.querySelector<HTMLButtonElement>('[data-delete-workflow-id="33333333-3333-4333-8333-333333333333"]')!;
     expect(workflowDelete.textContent).toBe('×');
     expect(workflowDelete.classList.contains('entity-delete-control')).toBe(true);
     expect(workflowDelete.getAttribute('aria-label')).toBe('Delete workflow Full Testing');
@@ -2251,7 +2253,7 @@ describe('Agent projects page', () => {
         { ...task(`task-page-${page}`, 'SUCCEEDED', projectId, workflow().id, 'Full Testing'), title: `Page ${page} task` }
       ], page, size, 40, 2)))
     });
-    const { dom, page } = await openedProject(fakeApi);
+    const { dom, page } = await openedSection('tasks', fakeApi);
 
     expect(page.state.tasksPage).toBe(0);
     expect(page.state.tasksPageSize).toBe(20);
@@ -2365,7 +2367,7 @@ describe('Agent projects page', () => {
         ], page, size, 60, 3));
       })
     });
-    const { dom, page } = await openedProject(fakeApi);
+    const { dom, page } = await openedSection('tasks', fakeApi);
 
     const staleLoad = page.goToTaskPage(1);
     await flushAsync();
@@ -2400,7 +2402,7 @@ describe('Agent projects page', () => {
     });
     page.mount();
     await flushAsync();
-    await page.openProject(project().id);
+    await page.openProject(project().id, { section: 'tasks' });
     await flushAsync();
     await page.goToTaskPage(1);
     await flushAsync();
@@ -2436,7 +2438,7 @@ describe('Agent projects page', () => {
     });
     page.mount();
     await flushAsync();
-    await page.openProject(project().id);
+    await page.openProject(project().id, { section: 'tasks' });
     await flushAsync();
 
     dom.window.document.querySelector<HTMLElement>('[data-task-id="task-1"]')?.click();
@@ -4612,7 +4614,7 @@ describe('Agent projects page', () => {
     });
     page.mount();
     await flushAsync();
-    await page.openProject(project().id);
+    await page.openProject(project().id, { section: 'tasks' });
     await flushAsync();
 
     await vi.advanceTimersByTimeAsync(1000);
@@ -4710,7 +4712,7 @@ describe('Agent projects page', () => {
     const fakeApi = api({
       listProjectTasks: vi.fn(() => Promise.resolve(taskPage([])))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('tasks', fakeApi);
 
     expect(dom.window.document.getElementById('agentsV2CreateTask')).not.toBeNull();
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('No tasks yet.');
@@ -4721,7 +4723,7 @@ describe('Agent projects page', () => {
       listProjectWorkflows: vi.fn(() => Promise.resolve([])),
       listProjectTasks: vi.fn(() => Promise.resolve(taskPage([])))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('tasks', fakeApi);
 
     expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(true);
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Create a workflow before creating a task.');
@@ -4731,10 +4733,10 @@ describe('Agent projects page', () => {
     const fakeApi = api({
       listProjectTasks: vi.fn(() => Promise.reject(new Error('Tasks unavailable')))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom, page } = await openedSection('tasks', fakeApi);
 
-    expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Architect');
-    expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
+    expect(page.state.agents[0].name).toBe('Architect');
+    expect(page.state.workflows[0].name).toBe('Full Testing');
     expect(dom.window.document.getElementById('agentsV2TasksError')?.textContent).toContain('Tasks unavailable');
     expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(false);
   });
@@ -4745,10 +4747,10 @@ describe('Agent projects page', () => {
       listProjectWorkflows: vi.fn(() => Promise.resolve([workflow()])),
       listProjectTasks: vi.fn(() => Promise.resolve(taskPage([task('task-1', 'SUCCEEDED', project().id, workflow().id, 'Full Testing')])))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom, page } = await openedSection('tasks', fakeApi);
 
     expect(dom.window.document.getElementById('agentsV2AgentsError')?.textContent).toContain('Agents unavailable');
-    expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Full Testing');
+    expect(page.state.workflows[0].name).toBe('Full Testing');
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
     expect((dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement).disabled).toBe(false);
   });
@@ -4758,7 +4760,7 @@ describe('Agent projects page', () => {
       listProjectWorkflows: vi.fn(() => Promise.reject(new Error('Workflows unavailable'))),
       listProjectTasks: vi.fn(() => Promise.resolve(taskPage([task('task-1', 'RUNNING', project().id, workflow().id, 'Snapshot Flow')])))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('tasks', fakeApi);
 
     expect(dom.window.document.getElementById('agentsV2WorkflowsError')?.textContent).toContain('Workflows unavailable');
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Check calculation');
@@ -4784,8 +4786,8 @@ describe('Agent projects page', () => {
     page.mount();
     await flushAsync();
 
-    const firstOpen = page.openProject(projectOne.id);
-    const secondOpen = page.openProject(projectTwo.id);
+    const firstOpen = page.openProject(projectOne.id, { section: 'tasks' });
+    const secondOpen = page.openProject(projectTwo.id, { section: 'tasks' });
     secondTasks.resolve(taskPage([task('task-2', 'SUCCEEDED', projectTwo.id, 'wf-2', 'Second Flow')]));
     await secondOpen;
     firstTasks.resolve(taskPage([task('task-1', 'SUCCEEDED', projectOne.id, 'wf-1', 'First Flow')]));
@@ -4809,7 +4811,7 @@ describe('Agent projects page', () => {
         .mockResolvedValueOnce(taskPage([]))
         .mockResolvedValueOnce(taskPage([task('task-created', 'QUEUED', project().id, 'wf-2', 'Deploy Review')]))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('tasks', fakeApi);
 
     const newTask = dom.window.document.getElementById('agentsV2CreateTask') as HTMLButtonElement;
     expect(newTask.disabled).toBe(false);
@@ -4998,7 +5000,7 @@ describe('Agent projects page', () => {
     page.mount();
     await flushAsync();
 
-    await page.openProject(project().id);
+    await page.openProject(project().id, { section: 'tasks' });
     await flushAsync();
     expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('RUNNING');
 
@@ -5029,7 +5031,7 @@ describe('Agent projects page', () => {
     const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
     page.mount();
     await flushAsync();
-    await page.openProject(project().id);
+    await page.openProject(project().id, { section: 'tasks' });
     await flushAsync();
 
     await vi.advanceTimersByTimeAsync(2000);
@@ -5127,7 +5129,7 @@ describe('Agent projects page', () => {
     const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
     page.mount();
     await flushAsync();
-    await page.openProject(projectOne.id);
+    await page.openProject(projectOne.id, { section: 'tasks' });
     await flushAsync();
 
     await vi.advanceTimersByTimeAsync(2000);
@@ -5138,7 +5140,7 @@ describe('Agent projects page', () => {
     await flushAsync();
     expect(fakeApi.listProjectTasks).toHaveBeenCalledTimes(2);
 
-    const secondOpen = page.openProject(projectTwo.id);
+    const secondOpen = page.openProject(projectTwo.id, { section: 'tasks' });
     await flushAsync();
     projectOnePoll.resolve(taskPage([task('task-1', 'RUNNING', projectOne.id, 'wf-1', 'First Flow')]));
     await secondOpen;
@@ -5164,7 +5166,7 @@ describe('Agent projects page', () => {
     const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
     page.mount();
     await flushAsync();
-    await page.openProject(project().id);
+    await page.openProject(project().id, { section: 'tasks' });
     await flushAsync();
 
     await vi.advanceTimersByTimeAsync(2000);
@@ -5190,7 +5192,7 @@ describe('Agent projects page', () => {
   });
 
   it('Task delete cancel makes no DELETE request', async () => {
-    const { dom, fakeApi } = await openedProject();
+    const { dom, fakeApi } = await openedSection('tasks');
     Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => false), configurable: true });
     const initialLoads = fakeApi.listProjectTasks.mock.calls.length;
 
@@ -5213,7 +5215,7 @@ describe('Agent projects page', () => {
         return Promise.resolve({});
       })
     });
-    const { dom, page } = await openedProject(fakeApi);
+    const { dom, page } = await openedSection('tasks', fakeApi);
     await page.goToTaskPage(1);
     await flushAsync();
     fakeApi.listProjectTasks.mockClear();
@@ -5235,7 +5237,7 @@ describe('Agent projects page', () => {
       ], page, size))),
       deleteProjectTask: vi.fn(() => Promise.reject(new Error('PROJECT_TASK_HAS_ACTIVE_EXECUTIONS: Task cannot be deleted while an execution is active.')))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('tasks', fakeApi);
     Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
 
     dom.window.document.querySelector<HTMLElement>('[data-delete-task-id="task-active"]')?.click();
@@ -5264,7 +5266,7 @@ describe('Agent projects page', () => {
         return Promise.resolve({});
       })
     });
-    const { dom, page } = await openedProject(fakeApi);
+    const { dom, page } = await openedSection('tasks', fakeApi);
     await page.goToTaskPage(1);
     await flushAsync();
     await page.goToTaskPage(2);
@@ -5285,7 +5287,7 @@ describe('Agent projects page', () => {
   });
 
   it('Agent delete cancel makes no API call', async () => {
-    const { dom, fakeApi } = await openedProject();
+    const { dom, fakeApi } = await openedSection('agents');
     Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => false), configurable: true });
 
     dom.window.document.querySelector<HTMLElement>('[data-delete-agent-id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]')?.click();
@@ -5301,7 +5303,7 @@ describe('Agent projects page', () => {
         .mockResolvedValueOnce([agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect')])
         .mockResolvedValueOnce([agent('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'Reviewer')])
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('agents', fakeApi);
     Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
 
     dom.window.document.querySelector<HTMLElement>('[data-delete-agent-id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]')?.click();
@@ -5317,7 +5319,7 @@ describe('Agent projects page', () => {
     const fakeApi = api({
       deleteAgent: vi.fn(() => Promise.reject(new Error('AGENT_IN_USE: Agent is used by a workflow.')))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('agents', fakeApi);
     Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
 
     dom.window.document.querySelector<HTMLElement>('[data-delete-agent-id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]')?.click();
@@ -5328,7 +5330,7 @@ describe('Agent projects page', () => {
   });
 
   it('Workflow delete cancel makes no API call', async () => {
-    const { dom, fakeApi } = await openedProject();
+    const { dom, fakeApi } = await openedSection('workflows');
     Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => false), configurable: true });
 
     dom.window.document.querySelector<HTMLElement>('[data-delete-workflow-id="33333333-3333-4333-8333-333333333333"]')?.click();
@@ -5347,7 +5349,7 @@ describe('Agent projects page', () => {
         { ...task('task-1', 'SUCCEEDED', projectId), title: `Tasks refreshed page ${page}` }
       ], page, size)))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('workflows', fakeApi);
     fakeApi.listProjectTasks.mockClear();
     Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
 
@@ -5359,14 +5361,14 @@ describe('Agent projects page', () => {
     expect(fakeApi.listProjectTasks).toHaveBeenCalledWith(project().id, 0, 20);
     expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).toContain('Review Flow');
     expect(dom.window.document.getElementById('agentsV2WorkflowsList')?.textContent).not.toContain('Full Testing');
-    expect(dom.window.document.getElementById('agentsV2TasksList')?.textContent).toContain('Tasks refreshed page 0');
+    expect(dom.window.document.querySelector('[data-kpi="tasks"]')?.textContent).toBe('1');
   });
 
   it('Workflow delete backend conflict remains visible', async () => {
     const fakeApi = api({
       deleteWorkflow: vi.fn(() => Promise.reject(new Error('WORKFLOW_IN_USE: Workflow is used by a task.')))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('workflows', fakeApi);
     Object.defineProperty(dom.window, 'confirm', { value: vi.fn(() => true), configurable: true });
 
     dom.window.document.querySelector<HTMLElement>('[data-delete-workflow-id="33333333-3333-4333-8333-333333333333"]')?.click();
@@ -5625,7 +5627,7 @@ describe('Agent projects page', () => {
     const fakeApi = api({
       listProjectAgents: vi.fn(() => Promise.resolve(agents))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('agents', fakeApi);
     const list = dom.window.document.getElementById('agentsV2AgentsList')!;
 
     expect(list.textContent).toContain('Codex');
@@ -5644,7 +5646,7 @@ describe('Agent projects page', () => {
     const fakeApi = api({
       getRuntime: vi.fn(() => Promise.reject(new Error('Runtime unavailable')))
     });
-    const { dom } = await openedProject(fakeApi);
+    const { dom } = await openedSection('agents', fakeApi);
     const list = dom.window.document.getElementById('agentsV2AgentsList')!;
 
     expect(list.textContent).toContain('codex');
@@ -5893,8 +5895,8 @@ describe('Agent projects page', () => {
     page.mount();
     await flushAsync();
 
-    const firstOpen = page.openProject(projectOne.id);
-    const secondOpen = page.openProject(projectTwo.id);
+    const firstOpen = page.openProject(projectOne.id, { section: 'agents' });
+    const secondOpen = page.openProject(projectTwo.id, { section: 'agents' });
     secondAgents.resolve([agent('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'Backend', projectTwo.id)]);
     await secondOpen;
     firstAgents.resolve([agent('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Architect', projectOne.id)]);
@@ -7657,5 +7659,535 @@ describe('Reusable context reset', () => {
     await poll;
     expect(page.taskExecutionView.state.agentExecutionContexts).toEqual(resetContexts);
     expect(page.taskExecutionView.state.workflowRun.nodeRuns[0].retryEligibility.action).toBe('RETRY');
+  });
+});
+
+describe('Service workspace recovery', () => {
+  const runtime = { status: 'RUNNING', connection: 'LOCAL', provider: 'DOCKER', targetIdentity: 'api', metadata: { version: '2' }, uptime: '5m' };
+  const click = (dom: JSDOM, id: string) => dom.window.document.getElementById(id)!.click();
+
+  it('shows saved configuration before a pending runtime request finishes', async () => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedProject(api({ getServiceRuntime: vi.fn().mockReturnValue(pending.promise) }));
+    const opening = page.openServiceWorkspace(project().id, service().id);
+    await flushAsync();
+    expect(dom.window.document.getElementById('projectLogsTitle')?.textContent).toBe('api');
+    expect(dom.window.document.getElementById('serviceConfigurationDetails')?.textContent).toContain('DOCKER');
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).toMatch(/loading/i);
+    expect(dom.window.location.hash).toContain(`/services/${service().id}`);
+    pending.resolve(runtime); await opening;
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).toBe('RUNNING');
+    expect(dom.window.document.getElementById('serviceRuntimeDetails')?.textContent).toContain('5m');
+    page.dispose();
+  });
+
+  it('retains saved details through runtime failures and retries only runtime until recovery', async () => {
+    const getServiceRuntime = vi.fn().mockRejectedValueOnce(new Error('password=secret'))
+      .mockRejectedValueOnce(new Error('token=secret')).mockResolvedValue(runtime);
+    const { dom, page, fakeApi } = await openedProject(api({ getServiceRuntime }));
+    await page.openServiceWorkspace(project().id, service().id);
+    const doc = dom.window.document;
+    expect(doc.getElementById('serviceConfigurationDetails')?.textContent).toContain('api');
+    expect(doc.getElementById('serviceRuntimeStatus')?.textContent).toBe('Unavailable');
+    expect(doc.getElementById('serviceRuntimeError')?.getAttribute('role')).toBe('alert');
+    expect(doc.getElementById('serviceRuntimeError')?.textContent).toMatch(/live runtime information.*could not be loaded/i);
+    expect(doc.getElementById('serviceOverview')?.textContent).not.toContain('secret');
+    expect((doc.getElementById('serviceOpenLogs') as HTMLButtonElement).disabled).toBe(false);
+    click(dom, 'serviceRuntimeRetry'); await flushAsync();
+    expect(doc.getElementById('serviceRuntimeStatus')?.textContent).toBe('Unavailable');
+    expect(doc.getElementById('serviceConfigurationDetails')?.textContent).toContain('DOCKER');
+    click(dom, 'serviceRuntimeRetry'); await flushAsync();
+    expect(doc.getElementById('serviceRuntimeStatus')?.textContent).toBe('RUNNING');
+    expect(doc.getElementById('serviceRuntimeDetails')?.textContent).toContain('version');
+    expect(doc.getElementById('serviceRuntimeError')?.textContent).toBe('');
+    expect(getServiceRuntime).toHaveBeenCalledTimes(3);
+    expect(fakeApi.getService).toHaveBeenCalledTimes(1);
+    expect(fakeApi.listProjectAgents).toHaveBeenCalledTimes(1);
+    click(dom, 'projectLogsBack'); await flushAsync();
+    expect(page.state.projectSection).toBe('services');
+    page.dispose();
+  });
+
+  it('provides service recovery and Back when the saved configuration fails', async () => {
+    const { dom, page, fakeApi } = await openedProject(api({
+      getService: vi.fn().mockRejectedValueOnce(new Error('unsafe credentials')).mockResolvedValue(service())
+    }));
+    await page.openServiceWorkspace(project().id, service().id);
+    expect(dom.window.document.getElementById('serviceConfigurationError')?.textContent).toMatch(/saved service configuration.*could not be loaded/i);
+    expect(dom.window.document.getElementById('serviceOverview')?.textContent).not.toContain('credentials');
+    expect((dom.window.document.getElementById('serviceOpenLogs') as HTMLButtonElement).disabled).toBe(true);
+    click(dom, 'serviceConfigurationRetry'); await flushAsync();
+    expect(dom.window.document.getElementById('projectLogsTitle')?.textContent).toBe('api');
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).toBe('RUNNING');
+    expect(fakeApi.getService).toHaveBeenCalledTimes(2);
+    click(dom, 'projectLogsBack'); await flushAsync();
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/services`);
+    page.dispose();
+  });
+
+  it('can return to Services immediately while saved configuration is still loading', async () => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedProject(api({ getService: vi.fn().mockReturnValue(pending.promise) }));
+    const opening = page.openServiceWorkspace(project().id, service().id);
+    click(dom, 'projectLogsBack'); await flushAsync();
+    expect(page.state.projectSection).toBe('services');
+    expect(page.state.view).toBe('project');
+    pending.reject(new Error('late failure')); await opening;
+    expect(dom.window.document.getElementById('projectLogsWorkspace')?.classList.contains('hidden')).toBe(true);
+    page.dispose();
+  });
+
+  it('retains Back and direct route recovery after a saved configuration failure', async () => {
+    const dom = agentProjectsDom(`http://127.0.0.1/fgaisox/operator/agent-projects.html#/projects/${project().id}/services/${service().id}`);
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: api({
+      getService: vi.fn().mockRejectedValue(new Error('offline'))
+    }) });
+    page.mount(); await flushAsync();
+    expect(dom.window.document.getElementById('serviceConfigurationRetry')?.classList.contains('hidden')).toBe(false);
+    expect(dom.window.document.getElementById('serviceConfigurationError')?.classList.contains('hidden')).toBe(false);
+    click(dom, 'projectLogsBack'); await flushAsync();
+    expect(page.state.view).toBe('project');
+    expect(page.state.projectSection).toBe('services');
+    page.dispose();
+  });
+
+  it('keeps Logs usable when runtime fails and restores detail history', async () => {
+    const { dom, page } = await openedProject(api({
+      getServiceRuntime: vi.fn().mockRejectedValue(new Error('offline')),
+      listLogSources: vi.fn().mockResolvedValue([{ id: 'service-log', projectId: project().id, name: 'Service log', serviceId: service().id, assetId: null, enabled: true, provider: 'FILE', connection: 'LOCAL', config: {} }])
+    }));
+    await page.openServiceWorkspace(project().id, service().id);
+    click(dom, 'serviceOpenLogs'); await flushAsync();
+    expect(page.state.view).toBe('logs');
+    expect((dom.window.document.getElementById('projectLogsServiceFilter') as HTMLSelectElement).value).toBe(service().id);
+    expect(dom.window.document.getElementById('projectLogsSources')?.textContent).toContain('Service log');
+    await goBack(dom);
+    expect(page.state.view).toBe('service');
+    expect(dom.window.document.getElementById('serviceConfigurationDetails')?.textContent).toContain('api');
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).toBe('Unavailable');
+    await goForward(dom);
+    expect(page.state.view).toBe('logs');
+    page.dispose();
+  });
+
+  it('ignores saved configuration arriving after switching projects', async () => {
+    const pending = deferred<any>();
+    const { dom, page, fakeApi } = await openedProject(api({ getService: vi.fn().mockReturnValue(pending.promise) }));
+    const opening = page.openServiceWorkspace(project().id, service().id);
+    await page.openProject('new-project');
+    pending.resolve({ ...service(), name: 'Old service' }); await opening;
+    expect(page.state.selectedProjectId).toBe('new-project');
+    expect(dom.window.document.getElementById('serviceConfigurationDetails')?.textContent).toBe('');
+    expect(fakeApi.getServiceRuntime).not.toHaveBeenCalled();
+    page.dispose();
+  });
+
+  it.each(['overview', 'another service', 'another project'])('ignores a runtime retry after navigating to %s', async (destination) => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedProject(api({
+      getServiceRuntime: vi.fn().mockRejectedValueOnce(new Error('offline')).mockReturnValueOnce(pending.promise).mockResolvedValue(runtime),
+      getService: vi.fn((_projectId, id) => Promise.resolve({ ...service(id, _projectId), name: id === 'other-service' ? 'Other service' : 'api' }))
+    }));
+    await page.openServiceWorkspace(project().id, service().id);
+    click(dom, 'serviceRuntimeRetry'); await flushAsync();
+    if (destination === 'overview') await page.openProject(project().id);
+    if (destination === 'another service') await page.openServiceWorkspace(project().id, 'other-service');
+    if (destination === 'another project') await page.openProject('other-project');
+    const before = dom.window.document.getElementById('serviceOverview')!.innerHTML;
+    pending.resolve({ ...runtime, status: 'STALE', metadata: { stale: 'old service' } }); await flushAsync();
+    expect(dom.window.document.getElementById('serviceOverview')!.innerHTML).toBe(before);
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).not.toBe('STALE');
+    page.dispose();
+  });
+
+  it('does not display another project’s saved service configuration', async () => {
+    const { dom, page } = await openedProject(api({ getService: vi.fn().mockResolvedValue(service('foreign-service', 'foreign-project')) }));
+    await page.openServiceWorkspace(project().id, 'foreign-service');
+    expect(dom.window.document.getElementById('serviceConfigurationError')?.textContent).toMatch(/could not be loaded/i);
+    expect(dom.window.document.getElementById('serviceConfigurationDetails')?.textContent).toBe('');
+    page.dispose();
+  });
+});
+
+describe('Services list recovery', () => {
+  it.each(['resolve', 'reject'])('ignores a Services retry %s after disposal', async (completion) => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedSection('services', api({
+      listServices: vi.fn().mockRejectedValueOnce(new Error('offline')).mockReturnValueOnce(pending.promise)
+    }));
+    dom.window.document.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    page.dispose();
+    const before = dom.window.document.getElementById('agentsV2Workspace')!.innerHTML;
+    if (completion === 'resolve') pending.resolve([service()]);
+    else pending.reject(new Error('late failure'));
+    await flushAsync();
+    expect(page.state.servicesLoadState).toBe('LOADING');
+    expect(page.state.services).toEqual([]);
+    expect(dom.window.document.getElementById('agentsV2Workspace')!.innerHTML).toBe(before);
+  });
+
+  it('announces failure and retries only Services, refreshing the list and Dashboard count', async () => {
+    const pending = deferred<any>();
+    const { dom, page, fakeApi } = await openedSection('services', api({
+      listServices: vi.fn().mockRejectedValueOnce(new Error('unsafe upstream token')).mockReturnValueOnce(pending.promise)
+    }));
+    const doc = dom.window.document;
+    expect(doc.querySelector('#projectServicesList [role="alert"]')?.textContent).toMatch(/services.*could not be loaded/i);
+    expect(doc.getElementById('projectServicesList')?.textContent).not.toContain('token');
+    expect(doc.querySelector('[data-kpi="services"]')?.textContent).toBe('Unavailable');
+    expect((doc.getElementById('projectCreateService') as HTMLButtonElement).disabled).toBe(false);
+    const agents = page.state.agents;
+    doc.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    expect(doc.querySelector('#projectServicesList [role="status"]')?.textContent).toMatch(/loading/i);
+    pending.resolve([service()]); await flushAsync();
+    expect(doc.querySelectorAll('#projectServicesList article')).toHaveLength(1);
+    expect(page.state.agents).toBe(agents);
+    expect(fakeApi.listServices).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectAgents).toHaveBeenCalledTimes(1);
+    await page.openProject(project().id);
+    expect(doc.querySelector('[data-kpi="services"]')?.textContent).toBe('1');
+    page.dispose();
+  });
+
+  it('keeps a failed retry actionable and distinguishes successful empty data', async () => {
+    const { dom, page } = await openedSection('services', api({
+      listServices: vi.fn().mockRejectedValueOnce(new Error('offline')).mockRejectedValueOnce(new Error('still offline')).mockResolvedValue([])
+    }));
+    dom.window.document.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    expect(dom.window.document.querySelector('#projectServicesList [role="alert"]')?.textContent).toMatch(/could not be loaded/i);
+    dom.window.document.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    expect(dom.window.document.getElementById('projectServicesList')?.textContent).toMatch(/no services yet/i);
+    await page.openProject(project().id);
+    expect(dom.window.document.querySelector('[data-kpi="services"]')?.textContent).toBe('0');
+    page.dispose();
+  });
+
+  it('ignores an old Services retry after a project switch', async () => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedSection('services', api({
+      listServices: vi.fn().mockRejectedValueOnce(new Error('offline')).mockReturnValueOnce(pending.promise).mockResolvedValue([])
+    }));
+    dom.window.document.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    await page.openProject('new-project', { section: 'services' }); await flushAsync();
+    pending.resolve([service()]); await flushAsync();
+    expect(page.state.selectedProjectId).toBe('new-project');
+    expect(dom.window.document.querySelectorAll('#projectServicesList article')).toHaveLength(0);
+    expect(page.state.services).toEqual([]);
+    page.dispose();
+  });
+});
+
+describe('project dashboard and entity sections', () => {
+  it('keeps overview DOM constant for large collections and uses server task totals', async () => {
+    const { dom, page } = await openedProject(api({
+      listProjectAgents: vi.fn().mockResolvedValue(Array.from({ length: 500 }, (_, i) => agent(`agent-${i}`, `Agent ${i}`))),
+      listProjectRepositories: vi.fn().mockResolvedValue(Array.from({length:250}, (_, i) => repository(`repo-${i}`))),
+      listProjectAssets: vi.fn().mockResolvedValue(Array.from({length:250}, (_, i) => ({id:`asset-${i}`,name:`Host ${i}`,projectId:project().id}))),
+      listServices: vi.fn().mockResolvedValue(Array.from({length:400}, (_, i) => service(`service-${i}`))),
+      listProjectWorkflows: vi.fn().mockResolvedValue(Array.from({length:300}, (_, i) => workflow(`workflow-${i}`))),
+      listProjectTasks: vi.fn().mockResolvedValue({ items: [task()], totalItems: 4321, totalPages: 217 })
+    }));
+    const dashboard = dom.window.document.getElementById('projectDashboard')!;
+    expect(dashboard).not.toBeNull();
+    expect(dashboard.querySelector('[data-kpi="agents"]')?.textContent).toBe('500');
+    expect(dashboard.querySelector('[data-kpi="resources"]')?.textContent).toBe('500');
+    expect(dashboard.querySelector('[data-kpi="tasks"]')?.textContent).toBe('4321');
+    expect(dashboard.querySelector('[data-kpi="services"]')?.textContent).toBe('400');
+    expect(dom.window.document.querySelectorAll('#agentsV2AgentsList > *')).toHaveLength(0);
+    expect(dom.window.document.querySelectorAll('#agentsV2TasksList > *')).toHaveLength(0);
+    expect(dashboard.querySelectorAll('*').length).toBeLessThan(130);
+    page.dispose();
+  });
+  it('distinguishes failed requests from successful empty counts', async () => {
+    const { dom, page } = await openedProject(api({
+      listProjectAgents: vi.fn().mockRejectedValue(new Error('Agents unavailable')),
+      listProjectAssets: vi.fn().mockRejectedValue(new Error('SSH unavailable')),
+      listServices: vi.fn().mockRejectedValue(new Error('Services unavailable')),
+      listProjectTasks: vi.fn().mockRejectedValue(new Error('Tasks unavailable')),
+      listProjectWorkflows: vi.fn().mockResolvedValue([])
+    }));
+    for (const key of ['agents', 'resources', 'services', 'tasks']) {
+      expect(dom.window.document.querySelector(`[data-kpi="${key}"]`)?.textContent).toMatch(/unavailable/i);
+    }
+    expect(dom.window.document.querySelector('[data-kpi="workflows"]')?.textContent).toBe('0');
+    page.dispose();
+  });
+  it.each(['resources', 'agents', 'workflows', 'tasks', 'services'])('navigates to %s and restores it from a direct link', async (section) => {
+    const { dom, page, fakeApi } = await openedProject();
+    dom.window.document.querySelector<HTMLAnchorElement>(`[data-project-section="${section}"]`)!.click();
+    await flushAsync();
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/${section}`);
+    expect(page.state.projectSection).toBe(section);
+    expect(dom.window.document.getElementById('agentsV2ProjectCrumbs')?.textContent).toContain(section[0]!.toUpperCase() + section.slice(1));
+    expect(fakeApi.listProjectAgents).toHaveBeenCalledTimes(1);
+    const fresh = agentProjectsDom(dom.window.location.href);
+    const freshPage = new AgentProjectsPage({ document: fresh.window.document, window: fresh.window, api: api() });
+    freshPage.mount(); await flushAsync();
+    expect(freshPage.state.projectSection).toBe(section);
+    expect(freshPage.state.selectedProjectId).toBe(project().id);
+    freshPage.dispose(); page.dispose();
+  });
+  it.each([
+    ['resources', 'agentsV2RepositoryDialog'], ['agents', 'agentsV2AgentDialog'],
+    ['workflows', 'agentsV2WorkflowDialog'], ['tasks', 'agentsV2TaskDialog'],
+    ['services', 'projectServiceDialog']
+  ])('opens the existing %s creation dialog from overview', async (section, dialogId) => {
+    const { dom, page } = await openedProject();
+    dom.window.document.querySelector<HTMLButtonElement>(`[data-project-create="${section}"]`)!.click();
+    await flushAsync();
+    expect(dom.window.document.getElementById(dialogId!)?.hasAttribute('open')).toBe(true);
+    expect(page.state.projectSection).toBe('overview'); page.dispose();
+  });
+  it('polls active tasks only on Tasks and retains its page across execution', async () => {
+    const { dom, page } = await openedProject(api({
+      listProjectTasks: vi.fn((projectId: string, pageIndex = 0) => Promise.resolve({
+        items: [task(undefined, 'RUNNING', projectId)], totalItems: 45, totalPages: 3, page: pageIndex
+      }))
+    }));
+    expect(page.shouldPollTasks()).toBe(false);
+    await page.openProject(project().id, { section: 'tasks' });
+    expect(page.shouldPollTasks()).toBe(true);
+    await page.goToTaskPage(1); await page.openTaskExecution(task().id); await page.closeTaskExecution();
+    expect(page.state.projectSection).toBe('tasks'); expect(page.state.tasksPage).toBe(1);
+    expect(dom.window.location.hash).toContain('/tasks?page=1'); page.dispose();
+  });
+  it('searches the complete Agents collection and restores Overview through browser history', async () => {
+    const { dom, page } = await openedProject();
+    await page.openProject(project().id, { section: 'agents' });
+    const search = dom.window.document.getElementById('projectEntitySearch') as HTMLInputElement;
+    search.value = 'Reviewer'; search.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    expect(dom.window.document.querySelectorAll('#agentsV2AgentsList article')).toHaveLength(1);
+    expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('Reviewer');
+    await goBack(dom); expect(page.state.projectSection).toBe('overview');
+    await goForward(dom); expect(page.state.projectSection).toBe('agents'); page.dispose();
+  });
+});
+
+describe('dashboard detail route data ownership', () => {
+  it('loads project collections when returning from a fresh direct Service link', async () => {
+    const dom = agentProjectsDom(`http://127.0.0.1/fgaisox/operator/agent-projects.html#/projects/${project().id}/services/service-1`);
+    const fakeApi = api();
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: fakeApi });
+    page.mount(); await flushAsync();
+    await page.returnToProject();
+    expect(page.state.projectSection).toBe('services');
+    expect(dom.window.document.getElementById('projectServicesList')?.textContent).toContain('No services yet');
+    expect(dom.window.document.querySelector('[data-kpi="agents"]')?.textContent).toBe('3');
+    page.dispose();
+  });
+  it('retains the loaded Services KPI after visiting Logs', async () => {
+    const { dom, page } = await openedProject();
+    await page.openLogsWorkspace(project().id); await page.returnToProject();
+    expect(dom.window.document.querySelector('[data-kpi="services"]')?.textContent).toBe('0');
+    page.dispose();
+  });
+});
+
+describe('project dashboard creation and route races', () => {
+  it('refreshes an agent count after creation without leaving Overview', async () => {
+    const fakeApi = api({listProjectAgents: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([agent('new-a', 'New agent')])});
+    const { dom, page } = await openedProject(fakeApi);
+    await page.openAgentModal();
+    (dom.window.document.getElementById('agentsV2AgentName') as HTMLInputElement).value = 'New agent';
+    selectValue(dom, 'agentsV2AgentProvider', 'codex');
+    selectValue(dom, 'agentsV2AgentModel', 'discovered-model');
+    await page.submitAgent(new dom.window.Event('submit'));
+    expect(page.state.projectSection).toBe('overview');
+    expect(dom.window.document.querySelector('[data-kpi="agents"]')?.textContent).toBe('1');
+    expect(dom.window.document.getElementById('agentsV2AgentsList')?.childElementCount).toBe(0);
+    await page.openProject(project().id, { section: 'agents' });
+    expect(dom.window.document.getElementById('agentsV2AgentsList')?.textContent).toContain('New agent');
+    page.dispose();
+  });
+  it('creates an independent Service and refreshes its list and KPI even when repository loading fails', async () => {
+    const fakeApi = api({
+      listProjectRepositories: vi.fn().mockRejectedValue(new Error('Repository unavailable')),
+      listServices: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([service('new-service')])
+    });
+    const { dom, page } = await openedProject(fakeApi);
+    expect((dom.window.document.querySelector('[data-project-create="services"]') as HTMLButtonElement).disabled).toBe(false);
+    await page.openProject(project().id, { section: 'services' });
+    dom.window.document.getElementById('projectCreateService')!.click(); await flushAsync();
+    expect(dom.window.document.getElementById('projectServiceDialog')?.hasAttribute('open')).toBe(true);
+    (dom.window.document.getElementById('projectServiceName') as HTMLInputElement).value = 'Independent service';
+    (dom.window.document.getElementById('projectServiceContainer') as HTMLInputElement).value = 'runtime-target';
+    await page.submitService(new dom.window.Event('submit'));
+    expect(page.state.projectSection).toBe('services');
+    expect(dom.window.document.querySelector('[data-kpi="services"]')?.textContent).toBe('1');
+    expect(dom.window.document.querySelector('[data-service-id="new-service"]')).not.toBeNull();
+    page.dispose();
+  });
+  it('ignores an execution route continuation after switching to another project', async () => {
+    const pending = deferred<any[]>();
+    const second = project('project-b', 'Second');
+    const { dom, page } = await mountedPage(api({
+      listProjects: vi.fn().mockResolvedValue([project(), second]),
+      listProjectAgents: vi.fn((id: string) => id === project().id ? pending.promise : Promise.resolve([agent('b', 'B', second.id)]))
+    }));
+    dom.window.history.pushState({}, '', `#/projects/${project().id}/tasks/task-old`);
+    const oldRoute = page.syncRoute(); await flushAsync();
+    await page.openProject(second.id);
+    pending.resolve([agent('a', 'A')]); await oldRoute; await flushAsync();
+    expect(page.state.view).toBe('project');
+    expect(page.state.selectedProjectId).toBe(second.id);
+    expect(dom.window.document.querySelector('[data-kpi="agents"]')?.textContent).toBe('1');
+    expect(dom.window.document.getElementById('agentsV2TaskExecution')?.classList.contains('hidden')).toBe(true);
+    page.dispose();
+  });
+  it('returns from Workflow Builder to Workflows with updated count', async () => {
+    const nextWorkflow = workflow('new-workflow');
+    const { dom, page } = await openedProject(api({
+      listProjectWorkflows: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([nextWorkflow]),
+      createWorkflow: vi.fn().mockResolvedValue(nextWorkflow)
+    }));
+    page.openWorkflowModal();
+    (dom.window.document.getElementById('agentsV2WorkflowName') as HTMLInputElement).value = 'New workflow';
+    await page.submitWorkflow(new dom.window.Event('submit'));
+    expect(page.state.view).toBe('workflow');
+    page.closeWorkflowBuilder();
+    expect(page.state.projectSection).toBe('workflows');
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/workflows`);
+    expect(dom.window.document.querySelector('[data-kpi="workflows"]')?.textContent).toBe('1');
+    page.dispose();
+  });
+});
+
+describe('overview after leaving large entity workspaces', () => {
+  it('releases the hidden Workflow Builder agent palette on returning to Overview', async () => {
+    const { dom, page } = await openedProject(api({
+      listProjectAgents: vi.fn().mockResolvedValue(Array.from({length: 300}, (_, i) => agent(`a${i}`, `Agent ${i}`)))
+    }));
+    const overviewSize = dom.window.document.querySelectorAll('*').length;
+    await page.openWorkflowBuilder(workflow().id);
+    expect(dom.window.document.querySelectorAll('#agentsV2WorkflowAgentList button').length).toBeGreaterThan(300);
+    page.closeWorkflowBuilder();
+    await page.openProject(project().id);
+    expect(dom.window.document.querySelectorAll('#agentsV2WorkflowAgentList button')).toHaveLength(0);
+    expect(dom.window.document.querySelectorAll('*').length).toBeLessThanOrEqual(overviewSize + 5);
+    page.dispose();
+  });
+});
+
+describe('project scoped execution navigation', () => {
+  it('rejects a task belonging to another project without exposing its details', async () => {
+    const { dom, page } = await openedProject(api({
+      getProjectTask: vi.fn().mockResolvedValue({...task('foreign-task', 'SUCCEEDED', 'other-project'), title:'Foreign confidential task', input:'foreign input', runs:[]})
+    }));
+    await page.openTaskExecution('foreign-task');
+    expect(page.taskExecutionView.state.task).toBeNull();
+    expect(dom.window.document.getElementById('agentsV2TaskExecution')?.textContent).not.toContain('Foreign confidential task');
+    expect(page.taskExecutionView.state.taskError).toMatch(/does not belong/i);
+    page.dispose();
+  });
+  it.each(['tasks', 'workflows'])('closes Service details when history opens %s in the same project', async (section) => {
+    const { dom, page } = await openedProject();
+    await page.openServiceWorkspace(project().id, 'service-1');
+    dom.window.history.pushState({}, '', `#/projects/${project().id}/${section}/${section === 'tasks' ? task().id : workflow().id}`);
+    await page.syncRoute();
+    expect(dom.window.document.getElementById('projectLogsWorkspace')?.classList.contains('hidden')).toBe(true);
+    expect(page.state.view).toBe(section === 'tasks' ? 'task' : 'workflow');
+    page.dispose();
+  });
+  it('ignores a pending Workflow load when a Service was opened later', async () => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedProject(api({getWorkflow: vi.fn(() => pending.promise)}));
+    const opening = page.openWorkflowBuilder(workflow().id);
+    await page.openServiceWorkspace(project().id, 'service-1');
+    pending.resolve(workflow()); await opening;
+    expect(page.state.view).toBe('service');
+    expect(dom.window.location.hash).toContain('/services/service-1');
+    expect(dom.window.document.getElementById('agentsV2Builder')?.classList.contains('hidden')).toBe(true);
+    page.dispose();
+  });
+});
+
+describe('partially available Resources', () => {
+  it('keeps Git resources usable when SSH resource loading fails, while the combined KPI is unavailable', async () => {
+    const { dom, page } = await openedSection('resources', api({listProjectAssets: vi.fn().mockRejectedValue(new Error('SSH unavailable'))}));
+    expect(dom.window.document.querySelector('[data-kpi="resources"]')?.textContent).toBe('Unavailable');
+    expect(dom.window.document.querySelector('[data-repository-id]')?.textContent).toContain('service-a');
+    expect(dom.window.document.getElementById('agentsV2RepositoriesError')?.textContent).toContain('SSH unavailable');
+    page.dispose();
+  });
+});
+
+describe('direct Workflow navigation during project loading', () => {
+  it('waits for the current project collections before opening the requested Builder', async () => {
+    const pending = deferred<any[]>();
+    const { dom, page, fakeApi } = await mountedPage(api({ listProjectAgents: vi.fn(() => pending.promise) }));
+    const opening = page.openProject(project().id);
+    await flushAsync();
+    dom.window.history.pushState({}, '', `#/projects/${project().id}/workflows/${workflow().id}`);
+    const routing = page.syncRoute();
+    pending.resolve([agent('a', 'A')]); await opening; await routing;
+    expect(page.state.view).toBe('workflow');
+    expect(dom.window.document.getElementById('agentsV2Builder')?.classList.contains('hidden')).toBe(false);
+    expect(fakeApi.getWorkflow).toHaveBeenCalledTimes(1);
+    page.dispose();
+  });
+});
+
+describe('Resources detail back navigation', () => {
+  it('keeps Back operational for a repository without a configured Service', async () => {
+    const { dom, page } = await openedSection('resources');
+    await page.openRepositoryWorkspace(project().id, repository().id);
+    dom.window.document.getElementById('projectLogsBack')!.click(); await flushAsync();
+    expect(page.state.view).toBe('project');
+    expect(page.state.projectSection).toBe('resources');
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/resources`);
+    page.dispose();
+  });
+});
+
+describe('overview after execution history', () => {
+  it('releases large hidden execution history when returning to Overview', async () => {
+    const { dom, page } = await openedProject(api({
+      getProjectTask: vi.fn().mockResolvedValue(taskDetail(task().id, Array.from({length:300}, (_, i) => taskRun(`run-${i}`, 'SUCCEEDED', '2026-08-13T10:00:00Z'))))
+    }));
+    const initialSize = dom.window.document.querySelectorAll('*').length;
+    await page.openTaskExecution(task().id);
+    expect(dom.window.document.querySelectorAll('[data-run-id]')).toHaveLength(300);
+    await page.closeTaskExecution(); await page.openProject(project().id);
+    expect(dom.window.document.querySelectorAll('[data-run-id]')).toHaveLength(0);
+    expect(dom.window.document.querySelectorAll('*').length).toBeLessThanOrEqual(initialSize + 5);
+    page.dispose();
+  });
+});
+
+describe('overview after quick-create dialogs', () => {
+  it.each(['tasks', 'services'])('does not retain large entity choices after closing %s creation', async (section) => {
+    const { dom, page } = await openedProject(api({
+      listProjectRepositories: vi.fn().mockResolvedValue(Array.from({length:300}, (_, i) => repository(`r-${i}`))),
+      listProjectWorkflows: vi.fn().mockResolvedValue(Array.from({length:300}, (_, i) => workflow(`w-${i}`)))
+    }));
+    const initialSize = dom.window.document.querySelectorAll('*').length;
+    await page.createProjectEntity(section);
+    expect(dom.window.document.querySelectorAll('*').length).toBeGreaterThan(initialSize + 250);
+    if (section === 'tasks') page.closeDialog('agentsV2TaskDialog'); else page.closeServiceModal();
+    expect(dom.window.document.querySelectorAll('*').length).toBeLessThanOrEqual(initialSize + 5);
+    page.dispose();
+  });
+});
+
+describe('overview after large resource and log selectors', () => {
+  it('does not retain Repository service selectors after returning to Overview', async () => {
+    const { dom, page } = await openedProject(api({listServices:vi.fn().mockResolvedValue(Array.from({length:300},(_,i)=>({...service(`s-${i}`),repositoryId:repository().id})))}));
+    const initialSize = dom.window.document.querySelectorAll('*').length;
+    await page.openRepositoryWorkspace(project().id,repository().id);
+    expect(dom.window.document.querySelectorAll('[data-runtime-service-id]')).toHaveLength(300);
+    await page.returnToProject(); await page.openProject(project().id);
+    expect(dom.window.document.querySelectorAll('[data-runtime-service-id]')).toHaveLength(0);
+    expect(dom.window.document.querySelectorAll('*').length).toBeLessThanOrEqual(initialSize + 5);
+    page.dispose();
+  });
+  it('releases Logs source and service choices on returning to Overview', async () => {
+    const { dom, page } = await openedProject(api({listLogSources:vi.fn().mockResolvedValue(Array.from({length:300},(_,i)=>({id:`source-${i}`,name:`Source ${i}`,enabled:true,serviceId:`s-${i}`,assetId:null,provider:'FILE'})))}));
+    const initialSize = dom.window.document.querySelectorAll('*').length;
+    await page.openLogsWorkspace(project().id);
+    expect(dom.window.document.getElementById('projectLogsSources')!.childElementCount).toBe(300);
+    await page.returnToProject();
+    expect(dom.window.document.getElementById('projectLogsSources')!.childElementCount).toBe(0);
+    expect(dom.window.document.querySelectorAll('*').length).toBeLessThanOrEqual(initialSize + 5);
+    page.dispose();
   });
 });

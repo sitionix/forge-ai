@@ -33,36 +33,6 @@ export class ProjectWorkspace {
     this.byId('agentsV2CreateTask')?.addEventListener('click', () => this.onNewTask());
   }
 
-  render(project, repositories, services, agents, workflows, tasks, repositoriesCurrent, servicesLoadState, dataCurrent, workflowsCurrent, tasksCurrent, repositoriesLoadFailed, tasksLoadFailed, runtimeCatalog = null, taskPage = null, assets = []) {
-    this.byId('agentsV2ProjectTitle').textContent = project ? project.name : 'Project';
-    this.byId('agentsV2ProjectCrumbs').textContent = project ? `Projects / ${project.name}` : 'Projects';
-    this.byId('agentsV2ImportRepository').disabled = !project || !repositoriesCurrent;
-    this.byId('agentsV2CreateAgent').disabled = !dataCurrent;
-    this.byId('agentsV2CreateWorkflow').disabled = !dataCurrent;
-    this.byId('agentsV2CreateTask').disabled = !project
-      || !repositoriesCurrent
-      || repositoriesLoadFailed
-      || !workflowsCurrent
-      || !tasksCurrent
-      || !workflows.length
-      || !repositories.length;
-    this.renderRepositories(repositories, assets, repositoriesCurrent, repositoriesLoadFailed);
-    this.renderAgents(agents, runtimeCatalog);
-    this.renderWorkflows(workflows);
-    this.renderTasks(tasks, workflowsCurrent, workflows.length > 0, tasksCurrent, tasksLoadFailed, taskPage);
-  }
-
-  renderLoading() {
-    this.byId('agentsV2CreateAgent').disabled = true;
-    this.byId('agentsV2ImportRepository').disabled = true;
-    this.byId('agentsV2CreateWorkflow').disabled = true;
-    this.byId('agentsV2CreateTask').disabled = true;
-    this.byId('agentsV2RepositoriesList').innerHTML = '<div class="muted-state">Loading repositories...</div>';
-    this.byId('agentsV2AgentsList').innerHTML = '<div class="muted-state">Loading agents...</div>';
-    this.byId('agentsV2WorkflowsList').innerHTML = '<div class="muted-state">Loading workflows...</div>';
-    this.byId('agentsV2TasksList').innerHTML = '<div class="muted-state">Loading tasks...</div>';
-  }
-
   renderRepositories(repositories, assets, repositoriesCurrent, repositoriesLoadFailed) {
     const list = this.byId('agentsV2RepositoriesList');
     if (repositoriesLoadFailed) {

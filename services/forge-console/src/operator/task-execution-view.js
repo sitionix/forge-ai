@@ -717,6 +717,7 @@ export class TaskExecutionView {
     this.applyViewportTransform();
     this.byId('agentsV2ExecutionCanvas')?.classList.remove('panning');
     this.setTaskSummaryExpanded(false);
+    for (const id of ['agentsV2TaskExecutionSummary', 'agentsV2ExecutionHistory', 'agentsV2ExecutionState', 'agentsV2ExecutionEdges', 'agentsV2ExecutionNodes', 'agentsV2NodeRunDetails']) this.byId(id)?.replaceChildren();
   }
 
   async open(taskId, project, repositories = []) {
@@ -741,6 +742,9 @@ export class TaskExecutionView {
       const task = await this.api.getProjectTask(taskId);
       if (!this.isCurrentTask(taskId, taskSequence)) {
         return;
+      }
+      if (!project?.id || task.projectId !== project.id) {
+        throw new Error('Task does not belong to the opened project.');
       }
       this.state.task = task;
       this.state.loadingTask = false;

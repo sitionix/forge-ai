@@ -122,13 +122,13 @@ describe('Dialogue execution integration',()=>{
     runtimeGraph:{nodes:[{sourceNodeId:'source',nodeType:'DIALOGUE',agentName:'Groomer',scopeMode:'GLOBAL',position:{x:20,y:20}}],
       ports:ports.map(port=>({...port,sourceNodeId:'source',direction:'OUTPUT',order:0})),connections:[]},
     nodeRuns:[{id:'node',sourceNodeId:'source',nodeType:'DIALOGUE',agentName:'Groomer',status:'WAITING_FOR_DIALOGUE',repositoryId:null,contextMode:'DIALOGUE_WITHIN_NODE_RUN'}]};
-  const api:any={getProjectTask:vi.fn(async()=>({id:'task',input:'Groom task',runs:[run]})),getWorkflowRun:vi.fn(async()=>run),
+  const api:any={getProjectTask:vi.fn(async()=>({id:'task',projectId:'project',input:'Groom task',runs:[run]})),getWorkflowRun:vi.fn(async()=>run),
     getAgentExecutionContexts:vi.fn(async()=>[1,2].map(sequence=>({nodeRunId:'node',turnId:`exact-turn-${sequence}`,sequence,contextMode:'DIALOGUE_WITHIN_NODE_RUN'}))),
     getAgentExecutionEvents:vi.fn(async(turnId:string)=>({events:[{id:`event-${turnId}`,sequence:1,type:'AGENT_MESSAGE',phase:'FINAL',payload:{message:`Activity for ${turnId}`}}],captureStatus:'COMPLETE',nextAfterSequence:1,hasMore:false})),
     getDialogue:vi.fn(async()=>summary()),listDialogueMessages:vi.fn(),
     completeDialogue:vi.fn(async()=>state({state:'COMPLETED',revision:8}))};
   const view:any=new TaskExecutionView({document:dom.window.document,window:dom.window as any,api,onBack:vi.fn(),runtimeConfig:{activeJobPollIntervalMs:60000}});
-  cleanup.push(()=>{view.dispose();dom.window.close();});view.bind();await view.open('task',{name:'Project'});view.selectNodeRun('node');
+  cleanup.push(()=>{view.dispose();dom.window.close();});view.bind();await view.open('task',{id:'project',name:'Project'});view.selectNodeRun('node');
   for(let i=0;i<12;i++) await Promise.resolve();
   const panel=dom.window.document.getElementById('agentsV2NodeRunDetails')!;
   expect(api.getDialogue).toHaveBeenCalledWith('run','node');expect(api.getAgentExecutionEvents.mock.calls[0]?.[0]).toBe('exact-turn-2');
