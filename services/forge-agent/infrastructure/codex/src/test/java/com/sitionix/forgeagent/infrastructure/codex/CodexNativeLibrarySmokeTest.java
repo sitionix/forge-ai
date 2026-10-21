@@ -18,7 +18,7 @@ class CodexNativeLibrarySmokeTest {
   Path home=root.resolve("home");Path codex=home.resolve(".codex");Files.createDirectories(codex);
   Path a=root.resolve("a"),b=root.resolve("b");Files.createDirectories(a);Files.createDirectories(b);
   skill(codex.resolve("skills/shared"),"same","global");skill(home.resolve(".agents/skills/alternate"),"alternate","alternate global");
-  skill(a.resolve(".agents/skills/local"),"same","project A");skill(b.resolve(".agents/skills/local"),"only-b","project B");
+  skill(a.resolve(".agents/skills/local"),"same","project A");skill(a.resolve(".codex/skills/legacy"),"codex-local","Codex project skills");skill(b.resolve(".agents/skills/local"),"only-b","project B");
   var foreign=root.resolve("foreign");skill(foreign,"foreign-directory","must not escape");
   Files.createSymbolicLink(codex.resolve("skills/directory-link"),foreign);
   var foreignFile=root.resolve("foreign-file");skill(foreignFile,"foreign-file","must not escape");
@@ -43,6 +43,8 @@ class CodexNativeLibrarySmokeTest {
    assertEquals(2,ai.items().stream().filter(s->s.name().equals("same")).count());
    assertEquals(1,bi.items().stream().filter(s->s.name().equals("same")).count());assertTrue(bi.items().stream().anyMatch(s->s.name().equals("only-b")));
    assertTrue(ai.items().stream().anyMatch(s->s.name().equals("alternate")));
+   assertTrue(ai.items().stream().anyMatch(s->s.name().equals("codex-local")));
+   assertFalse(bi.items().stream().anyMatch(s->s.name().equals("codex-local")));
    assertFalse(ai.items().stream().anyMatch(s->s.name().contains("foreign")));
    assertFalse(bi.items().stream().anyMatch(s->s.description().equals("project A")));
    var nativeNames=new HashSet<String>();
@@ -84,7 +86,7 @@ class CodexNativeLibrarySmokeTest {
    try(var session=new CodexLibrarySessionFactory(client).open(context)) {
     var result=session.tools().discover(context);assertEquals(InventoryStatus.AVAILABLE,result.status());assertEquals(1,result.items().size());assertEquals("echo",result.items().getFirst().name());
     assertTrue(result.diagnostics().contains(InventoryDiagnostic.MCP_TOOLS_ONLY));
-    assertEquals(InventoryStatus.UNSUPPORTED,session.agents().discover(context).status());assertEquals(InventoryStatus.UNSUPPORTED,session.flows().discover(context).status());
+    assertEquals(InventoryStatus.EMPTY,session.agents().discover(context).status());assertEquals(InventoryStatus.UNSUPPORTED,session.flows().discover(context).status());
    }
    assertTrue(methods.contains("tools/list"));assertTrue(methods.stream().allMatch(m->Set.of("initialize","notifications/initialized","tools/list").contains(m)),methods.toString());
   }finally{server.stop(0);}

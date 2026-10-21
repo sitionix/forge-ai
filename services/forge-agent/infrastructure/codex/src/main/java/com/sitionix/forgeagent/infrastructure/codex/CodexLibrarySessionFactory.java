@@ -29,7 +29,7 @@ final class CodexLibrarySessionFactory implements LibraryProviderSessionFactory 
    catch(CodexRemoteException remote){return "-32601".equals(remote.code())?InventoryResult.unsupported():InventoryResult.failed();}
    catch(RuntimeException failed){return InventoryResult.failed();}
   };}
-  @Override public AgentInventoryPort agents(){return context->{var reason=initialize(context);return reason==null?InventoryResult.unsupported():InventoryResult.unavailable(reason);};}
+  @Override public AgentInventoryPort agents(){return new CodexProjectAgentInventory();}
   @Override public FlowInventoryPort flows(){return context->{var reason=initialize(context);return reason==null?InventoryResult.unsupported():InventoryResult.unavailable(reason);};}
   @Override public ToolInventoryPort tools(){return context->{var reason=initialize(context);return reason==null?new CodexLibraryToolInventory(runtime).discover(context):InventoryResult.unavailable(reason);};}
   @Override public void close(){if(runtime!=null)runtime.close();}

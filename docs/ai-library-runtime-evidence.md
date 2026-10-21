@@ -38,7 +38,7 @@ request allowlist remains intact.
 | Category | Current Codex result |
 | --- | --- |
 | Skills | Native skills/list, unified provider-global plus selected-project contexts |
-| Agents | UNSUPPORTED for verified 0.163.0 protocol |
+| Agents | Bounded read-only project `.codex/agents/*.toml` definitions; no runtime agent-list RPC |
 | Flows | UNSUPPORTED for verified 0.163.0 protocol |
 | Tools | Native threadless mcpServerStatus/list, MCP-only catalog |
 
@@ -51,8 +51,7 @@ native read-only operation, not execution grants or Forge MCP database inventory
 `MCP_TOOLS_ONLY` explicitly describes coverage. Built-in Codex tools are not
 exposed by this inventory API; a supported empty MCP list never claims that Codex
 has no built-in tools. Dashboard counts say MCP tools and Library explains scope.
-Agents/Flows remain UNSUPPORTED: the installed protocol has no native inventory
-operation for either. User explicitly requested native resources only; Forge
+Flows remain UNSUPPORTED and were explicitly deferred by the user. Agents use native project definition files, without claiming a complete built-in/user-wide agent catalog. User explicitly requested native resources only; Forge
 Agents, Workflows and configured MCP catalog entities are not substituted.
 
 The production launcher forbids arbitrary mcp_servers/plugins in base/project
@@ -72,8 +71,8 @@ explicit incomplete failures. Native tool schemas, endpoint/config/auth metadata
 and credentials are never projected into Library DTOs.
 
 Canonical native skill metadata is capability-gated to exactly **0.163.0**;
-unverified versions return UNAVAILABLE/RUNTIME_PROTOCOL_UNVERIFIED for all
-categories. This affects inventory only, not existing model/execution support.
+unverified versions return UNAVAILABLE/RUNTIME_PROTOCOL_UNVERIFIED for runtime
+categories. Project agent definitions remain readable independently of runtime startup. This affects inventory only, not existing model/execution support.
 Requests have a 30-second inventory deadline, existing transport frame limit,
 32 managed CWD limit and 10,000-entry processing bound. Limit failures are explicit.
 Nexus caps response bytes at 8 MiB and the complete HTTP response at 45 seconds,
@@ -122,7 +121,7 @@ credentials, transport metadata and dependency commands are not returned.
 - PASS: final Codex/domain/application/local suites, with opt-in native smoke.
 - PASS: `mvn -f services/forge-nexus/pom.xml -Dapi.version=1.44 verify`, including
   typed GET/client composition, real local HTTP auth and bounded streaming tests.
-- PASS: Console **840 tests / 42 files**, typecheck and production build.
+- PASS: Console **841 tests / 42 files**, typecheck and production build.
 - PASS: real installed Codex read-only inventory smoke with isolated temporary
   HOME/CODEX_HOME and project A/B. Distinct same-name global/repo skills,
   alternate global location, canonical symlink cases and process cleanup checked.
@@ -146,7 +145,7 @@ archive in /tmp independently passed the migration test; no migrations were edit
   Error/failure variants and 10,000-item behavior remain deterministic fixtures.
 - Native Tools cover MCP catalog metadata only. Built-in tool inventory remains
   unsupported, and execution-scoped MCP catalogs are not included.
-- Agents/Flows have no native inventory operation in the verified protocol.
+- Agents/Flows have no native inventory operation in the verified protocol. Project agent definitions are supported through the native TOML file format; Flows are deferred.
 - A new runtime version requires canonical-path/protocol validation before enabling
   its inventory adapter capability. Existing inference support is unchanged.
 - No new credentials are provisioned: normal runtime startup already installs the
@@ -329,3 +328,90 @@ states explain recovery and errors remain announced through the live status regi
 - `services/forge-agent/infrastructure/codex/src/main/java/com/sitionix/forgeagent/infrastructure/codex/CodexLibraryToolInventory.java`
 
 - `services/forge-agent/infrastructure/codex/src/test/java/com/sitionix/forgeagent/infrastructure/codex/CodexLibraryToolsInventoryTest.java`
+
+
+## Native project definitions follow-up
+
+The installed 0.163.0 read-only smoke confirms native `skills/list` discovers
+both `.codex/skills/*/SKILL.md` and `.agents/skills/*/SKILL.md` within the selected
+managed project. Skills continue using that operation, without a second scanner.
+
+Agents use the official standalone `.codex/agents/*.toml` format documented at
+https://learn.chatgpt.com/docs/agent-configuration/subagents. A bundled metadata
+reader validates `name`, `description` and `developer_instructions`, returning
+only sanitized names/descriptions and opaque resource identities. Instructions
+are never executed or exposed; model settings never change Knowledge selection.
+`PROJECT_AGENT_FILES_ONLY` makes the coverage explicit in the typed API and UI.
+Different files with identical names remain distinct, rather than inventing
+runtime precedence for a catalog the runtime does not expose.
+
+The file adapter reads only trusted managed roots through anchored directory FDs,
+rejects symlinks, hardlinks and nonregular files, and bounds roots, directory
+entries, files, bytes, output and process lifetime. It runs a fixed bundled Python
+stdlib parser with an empty environment; no shell or project code is executed.
+This metadata reader runs as the control service UID; existing native runtime UID,
+sandbox and MCP authorization are unchanged. Missing native folders mean EMPTY,
+malformed/unsafe files mean FAILED with any valid entries retained. Excessively
+nested TOML and FIFO inputs have focused regressions.
+
+Project-defined MCP servers in `.codex/config.toml` remain blocked by Forge's
+existing launcher policy. A server declaration cannot be presented as a tool,
+and this feature does not launch arbitrary project commands or create MCP grants.
+Only tools returned by the authorized native runtime catalog are listed.
+
+
+### Project-native follow-up verification (2026-10-21)
+
+- Full Agent `verify` PASS with installed-Codex smoke enabled: 2 native smoke
+  tests and 5 project-agent tests pass, including local `.codex/skills` discovery.
+- Full Nexus `verify` PASS; focused typed HTTP fixture roundtrip additionally
+  passes with `PROJECT_AGENT_FILES_ONLY` and native agent metadata.
+- Console 841 tests / 42 files PASS, typecheck PASS, production build PASS.
+- Updated Agent/Nexus services restarted successfully. Live public Nexus snapshot
+  for Ancestor returns the unchanged Knowledge revision 2/model selection,
+  5 Skills AVAILABLE, 0 project Agents EMPTY, 419 MCP Tools AVAILABLE and
+  Flows UNSUPPORTED. The inspected managed project has no native agent definitions.
+- Chrome against deployed services confirms the scoped empty Agents state,
+  native Tools catalog, search, details and source `MCP · codex_apps`.
+- Independent review ACCEPT after fixing per-file TOML RecursionError handling.
+- `git diff --check` PASS. No push/merge/PR changes.
+
+```text
+ACTIVE_LLM_SOURCE=PASS
+DDD_BOUNDARIES=PASS
+SOLID_PORT_DESIGN=PASS
+CODEX_RUNTIME_ADAPTER=PASS
+GLOBAL_LOCAL_UNIFICATION=PASS
+PROJECT_ISOLATION=PASS
+SKILLS_INVENTORY=PASS
+AGENTS_INVENTORY=PASS
+FLOWS_INVENTORY=UNSUPPORTED
+TOOLS_INVENTORY=PASS
+AI_LIBRARY_UI=PASS
+SECURITY=PASS
+NO_HARDCODE=PASS
+
+AGENT_TESTS=PASS
+NEXUS_TESTS=PASS
+CONSOLE_TESTS=PASS
+TYPECHECK=PASS
+BUILD=PASS
+LIVE_CODEX_SMOKE=PASS
+BROWSER_E2E=PASS
+DIFF_CHECK=PASS
+
+CHANGED_FILES=See Git branch diff and project-native file list below
+SUPPORTED_RUNTIME_OPERATIONS=skills/list,mcpServerStatus/list
+UNSUPPORTED_CAPABILITIES=Flows (deferred), built-in Tools catalog, runtime agent-list RPC
+REMAINING_FINDINGS=Project Agents coverage is native project TOML definitions only; arbitrary project MCP configuration remains blocked by existing Forge policy; no blocking review findings
+```
+
+Project-native file list:
+- Agent domain `InventoryDiagnostic.java`
+- Codex `CodexProjectAgentInventory.java`, `codex/project_agent_inventory.py`,
+  `CodexLibrarySessionFactory.java`
+- Codex tests `CodexProjectAgentInventoryTest.java`,
+  `CodexLibraryInventoryTest.java`, `CodexNativeLibrarySmokeTest.java`
+- Console `ai-library-view.js`, `ai-library-view.test.ts`
+- Nexus `LibrarySnapshot.java`, `AiLibraryClientAdapterTest.java`
+- This verification evidence document

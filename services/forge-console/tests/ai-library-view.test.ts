@@ -2,9 +2,18 @@ import {describe,it,expect,vi} from 'vitest';
 import {JSDOM} from 'jsdom';
 import {AiLibraryView,librarySummary} from '../src/operator/ai-library-view.js';
 const empty={status:'EMPTY',items:[],diagnostics:[]};
-const unsupported={status:'UNSUPPORTED',items:[],diagnostics:[]};
+const unsupported={status:'UNSUPPORTED',items:[],diagnostics:[] as string[]};
 function state(){return {projectId:'p',loading:false,error:'',snapshot:{projectId:'p',provider:{providerDisplayName:'Codex',modelDisplayName:'Model'},categories:{skills:{status:'AVAILABLE',items:Array.from({length:10000},(_,i)=>({id:`id${i}`,name:i===0?'<img src=x onerror=alert(1)>':`skill ${i}`,description:'description',source:'repo'})),diagnostics:[]},agents:unsupported,flows:unsupported,tools:{status:'UNAVAILABLE',items:[],diagnostics:['MCP_EXECUTION_CONTEXT_REQUIRED']}}}};}
 describe('AI Library rendering',()=>{
+ it('shows project agent definitions as a scoped supported catalog',()=>{
+  const dom=new JSDOM('<section id="aiLibrary"></section>');
+  const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});
+  const inventory=state();inventory.snapshot.categories.agents={status:'EMPTY',items:[],diagnostics:['PROJECT_AGENT_FILES_ONLY']};
+  view.render(inventory,{category:'agents'});
+  expect(librarySummary(inventory)).toContain('0 project agents');
+  expect(dom.window.document.body.textContent).toContain('Project agent definitions');
+  expect(dom.window.document.body.textContent).not.toContain('does not expose');
+ });
  it('bounds large inventories and renders provider text safely',()=>{const dom=new JSDOM('<section id="aiLibrary"></section>');const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});view.render(state(),{category:'all',search:'',page:0});expect(dom.window.document.querySelectorAll('[data-library-item]').length).toBe(100);expect(dom.window.document.querySelector('img')).toBeNull();expect(dom.window.document.body.textContent).toContain('10000');expect(dom.window.document.body.textContent).toContain('Codex');});
  it('distinguishes unsupported and unavailable without fake zero counts',()=>{expect(librarySummary(state())).toContain('10000 Skills');expect(librarySummary(state())).toContain('Tools: Unavailable');expect(librarySummary(state())).not.toContain('0 Agents');});
  it('shows unsupported category and missing item details explicitly',()=>{const dom=new JSDOM('<section id="aiLibrary"></section>');const view=new AiLibraryView({document:dom.window.document,onRefresh:vi.fn(),onNavigate:vi.fn()});view.render(state(),{category:'agents'});expect(dom.window.document.body.textContent).toContain('does not expose');view.render(state(),{category:'tools'});expect(dom.window.document.body.textContent).toContain('approved execution context');expect(dom.window.document.querySelector('[data-library-status]')?.textContent).not.toContain('0 results');view.render(state(),{category:'skills',itemId:'missing'});expect(dom.window.document.body.textContent).toContain('no longer available');});
