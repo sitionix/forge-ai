@@ -31,6 +31,12 @@ class ForgeAiInfrastructureAgentsExceptionHandlerTest {
         }
     }
 
+    @Test void libraryErrorsCannotBeCached() {
+        var response = this.handler.handleAgentClientException(new AgentClientException(404,
+            "{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Project was not found.\"}", Map.of(), null));
+        assertThat(response.getHeaders().getCacheControl()).isEqualTo("no-store");
+    }
+
     @BeforeEach
     void setUp() {
         this.handler = new ForgeAiInfrastructureAgentsExceptionHandler(new ObjectMapper());
