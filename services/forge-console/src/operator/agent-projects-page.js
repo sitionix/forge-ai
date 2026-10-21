@@ -74,6 +74,7 @@ export class AgentProjectsPage {
     };
     this.projectLoadSequence = 0;
     this.serviceRuntimeLoadGeneration = 0;
+    this.serviceWorkspaceRuntimeGeneration = 0;
     this.repositoryWorkspaceSequence = 0;
     this.repositoryRuntimeLoadGeneration = 0;
     this.serviceModalLoadGeneration = 0;
@@ -120,6 +121,7 @@ export class AgentProjectsPage {
       onSearch: () => this.renderProjectWorkspace(),
       onOpenService: (id) => this.openServiceWorkspace(this.state.selectedProjectId, id),
       onEditService: (id) => this.openServiceModal(id),
+      onRetryServices: () => this.loadServices(),
       onDeleteService: (id) => this.deleteService(id).catch((error) => this.showError('projectServicesError', error.message || 'Service could not be deleted.'))
     });
     this.taskExecutionView = new TaskExecutionView({
@@ -422,7 +424,7 @@ export class AgentProjectsPage {
   }
 
   async loadServices(projectId = this.state.selectedProjectId, loadSequence = this.projectLoadSequence) {
-    if (!projectId || !this.isCurrentProjectLoad(projectId, loadSequence)) return;
+    if (this.disposed || !projectId || !this.isCurrentProjectLoad(projectId, loadSequence)) return;
     if (!this.api.listServices) { this.state.servicesLoadState = 'UNAVAILABLE'; this.renderProjectWorkspace(); return; }
     const runtimeGeneration = ++this.serviceRuntimeLoadGeneration;
     this.state.servicesLoadState = 'LOADING';
@@ -431,7 +433,7 @@ export class AgentProjectsPage {
     }
     try {
       const services = await this.api.listServices(projectId);
-      if (this.isCurrentProjectLoad(projectId, loadSequence)
+      if (!this.disposed && this.isCurrentProjectLoad(projectId, loadSequence)
           && this.serviceRuntimeLoadGeneration === runtimeGeneration) {
         this.state.services = services;
         this.state.servicesLoadState = 'CURRENT';
@@ -440,7 +442,7 @@ export class AgentProjectsPage {
         }
       }
     } catch {
-      if (this.isCurrentProjectLoad(projectId, loadSequence)
+      if (!this.disposed && this.isCurrentProjectLoad(projectId, loadSequence)
           && this.serviceRuntimeLoadGeneration === runtimeGeneration) {
         this.state.services = [];
         this.state.servicesLoadState = 'FAILED';
@@ -672,23 +674,95 @@ export class AgentProjectsPage {
     this.byId('serviceOverview').classList.remove('hidden');
     this.hideRepositoryWorkspacePanels();
     this.showLogSections(false);
-    const [service, runtime] = await Promise.all([
-      this.api.getService(projectId, serviceId),
-      this.api.getServiceRuntime(projectId, serviceId),
-    ]);
-    if (generation !== this.repositoryWorkspaceSequence || this.state.view !== 'service' || this.state.selectedProjectId !== projectId || this.state.openServiceId !== serviceId) return;
-    this.byId('projectLogsTitle').textContent = service.name;
-    this.byId('projectLogsCrumbs').textContent = `Projects / ${this.currentProject()?.name || 'Project'} / Services / ${service.name}`;
-    this.byId('serviceRuntimeStatus').textContent = runtime.status;
-    this.byId('serviceOverviewSummary').textContent = `${runtime.connection} · ${runtime.provider} · ${runtime.targetIdentity}`;
-    this.byId('serviceRuntimeDetails').innerHTML = Object.entries(runtime.metadata || {})
-      .map(([key, value]) => `<div><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value)}</div>`).join('')
-      + (runtime.uptime ? `<div><strong>Uptime</strong>: ${escapeHtml(runtime.uptime)}</div>` : '');
+    this.byId('projectLogsTitle').textContent = 'Service';
+    this.byId('projectLogsCrumbs').textContent = `Projects / ${this.currentProject()?.name || 'Project'} / Services / Service`;
+    this.byId('serviceConfigurationDetails').replaceChildren();
+    this.showError('serviceConfigurationError', '');
+    this.showError('serviceRuntimeError', '');
+    this.byId('serviceRuntimeSummary').textContent = '';
+    this.byId('serviceRuntimeStatus').textContent = 'Loading…';
+    this.byId('serviceRuntimeRetry').classList.add('hidden');
+    this.byId('serviceConfigurationRetry').classList.add('hidden');
+    this.byId('serviceOpenLogs').disabled = true;
     this.byId('serviceOpenLogs').onclick = () => this.openLogsWorkspace(projectId, { serviceId });
     this.byId('projectLogsBack').onclick = () => this.returnToProject();
+    this.byId('serviceConfigurationRetry').onclick = () => this.loadServiceConfiguration(projectId, serviceId, generation);
+    this.byId('serviceRuntimeRetry').onclick = () => this.loadServiceWorkspaceRuntime(projectId, serviceId, generation);
     if (options.pushState !== false) this.window.history.pushState(
       { projectId, serviceId, view: 'service' }, '',
       this.pageUrl(`#/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(serviceId)}`));
+    await this.loadServiceConfiguration(projectId, serviceId, generation);
+  }
+
+  isCurrentServiceWorkspace(projectId, serviceId, generation) {
+    return !this.disposed && generation === this.repositoryWorkspaceSequence && this.state.view === 'service'
+      && this.state.selectedProjectId === projectId && this.state.openServiceId === serviceId;
+  }
+
+  async loadServiceConfiguration(projectId, serviceId, generation) {
+    if (!this.isCurrentServiceWorkspace(projectId, serviceId, generation)) return;
+    const retry = this.byId('serviceConfigurationRetry');
+    retry.disabled = true;
+    this.byId('serviceOverviewSummary').textContent = 'Loading saved service configuration…';
+    this.showError('serviceConfigurationError', '');
+    let service;
+    try {
+      service = await this.api.getService(projectId, serviceId);
+      if (!this.isCurrentServiceWorkspace(projectId, serviceId, generation)) return;
+      if (service.projectId !== projectId || service.id !== serviceId) throw new Error('Service ownership mismatch');
+    } catch {
+      if (!this.isCurrentServiceWorkspace(projectId, serviceId, generation)) return;
+      this.byId('serviceOverviewSummary').textContent = 'Saved configuration unavailable.';
+      this.showError('serviceConfigurationError', 'Saved service configuration could not be loaded. Retry or return to Services.');
+      this.byId('serviceRuntimeStatus').textContent = 'Unavailable';
+      this.byId('serviceRuntimeSummary').textContent = 'Load the saved configuration to request live runtime information.';
+      retry.classList.remove('hidden');
+      retry.disabled = false;
+      return;
+    }
+    retry.classList.add('hidden');
+    this.byId('projectLogsTitle').textContent = service.name;
+    this.byId('projectLogsCrumbs').textContent = `Projects / ${this.currentProject()?.name || 'Project'} / Services / ${service.name}`;
+    this.byId('serviceOverviewSummary').textContent = 'Saved service configuration loaded.';
+    const target = service.runtimeTarget || {};
+    const repository = this.state.repositories.find((item) => item.id === service.repositoryId);
+    this.byId('serviceConfigurationDetails').innerHTML = Object.entries({
+      Name: service.name, Repository: repository?.name || (service.repositoryId ? 'Repository unavailable' : 'No repository'),
+      Connection: target.connection || 'Not configured', Provider: target.provider || 'Not configured',
+      Target: target.container || target.unit || 'Not configured'
+    }).map(([key, value]) => `<div><strong>${escapeHtml(key)}:</strong> <span>${escapeHtml(value)}</span></div>`).join('');
+    this.byId('serviceOpenLogs').disabled = false;
+    await this.loadServiceWorkspaceRuntime(projectId, serviceId, generation);
+  }
+
+  async loadServiceWorkspaceRuntime(projectId, serviceId, generation) {
+    if (!this.isCurrentServiceWorkspace(projectId, serviceId, generation)) return;
+    const requestGeneration = ++this.serviceWorkspaceRuntimeGeneration;
+    const current = () => this.isCurrentServiceWorkspace(projectId, serviceId, generation)
+      && requestGeneration === this.serviceWorkspaceRuntimeGeneration;
+    const retry = this.byId('serviceRuntimeRetry');
+    retry.disabled = true;
+    this.byId('serviceRuntimeStatus').textContent = 'Loading…';
+    this.byId('serviceRuntimeSummary').textContent = '';
+    this.showError('serviceRuntimeError', '');
+    this.byId('serviceRuntimeDetails').replaceChildren();
+    try {
+      const runtime = await this.api.getServiceRuntime(projectId, serviceId);
+      if (!current()) return;
+      this.byId('serviceRuntimeStatus').textContent = runtime.status;
+      this.byId('serviceRuntimeSummary').textContent = [runtime.connection, runtime.provider, runtime.targetIdentity].filter(Boolean).join(' · ');
+      this.byId('serviceRuntimeDetails').innerHTML = Object.entries(runtime.metadata || {})
+        .map(([key, value]) => `<div><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value)}</div>`).join('')
+        + (runtime.uptime ? `<div><strong>Uptime</strong>: ${escapeHtml(runtime.uptime)}</div>` : '');
+      retry.classList.add('hidden');
+    } catch {
+      if (!current()) return;
+      this.byId('serviceRuntimeStatus').textContent = 'Unavailable';
+      this.showError('serviceRuntimeError', 'Live runtime information could not be loaded. Saved configuration remains available. Retry runtime or return to Services.');
+      retry.classList.remove('hidden');
+    } finally {
+      if (current()) retry.disabled = false;
+    }
   }
 
   async openAssetWorkspace(projectId, assetId, options = {}) {

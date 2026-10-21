@@ -3,7 +3,7 @@ import { escapeHtml } from './dom-render-helpers.js';
 const LIST_IDS = { resources: 'agentsV2RepositoriesList', agents: 'agentsV2AgentsList', workflows: 'agentsV2WorkflowsList', tasks: 'agentsV2TasksList', services: 'projectServicesList' };
 
 export class ProjectEntityListView {
-  constructor({ document, workspace, onSearch, onOpenService, onEditService, onDeleteService }) {
+  constructor({ document, workspace, onSearch, onOpenService, onEditService, onDeleteService, onRetryServices }) {
     this.document = document;
     this.workspace = workspace;
     this.search = document.getElementById('projectEntitySearch');
@@ -12,7 +12,7 @@ export class ProjectEntityListView {
     services.addEventListener('click', (event) => {
       const button = event.target.closest('[data-service-action]');
       if (!button) return;
-      const handlers = { open: onOpenService, edit: onEditService, delete: onDeleteService };
+      const handlers = { open: onOpenService, edit: onEditService, delete: onDeleteService, retry: onRetryServices };
       handlers[button.dataset.serviceAction](button.dataset.serviceId);
     });
   }
@@ -31,6 +31,10 @@ export class ProjectEntityListView {
     }
     if (!LIST_IDS[section]) return;
     const list = this.document.getElementById(LIST_IDS[section]);
+    if (section === 'services' && state.servicesLoadState === 'FAILED') {
+      list.innerHTML = '<p class="error-box" role="alert">Services could not be loaded. Retry to load this list.</p><button id="projectServicesRetry" class="button small secondary" type="button" data-service-action="retry">Retry</button>';
+      return;
+    }
     if (section === 'resources' && typeof counts.resources !== 'number') {
       const states = state.collectionStates;
       const repositories = states.repositories === 'CURRENT' ? state.repositories : [];

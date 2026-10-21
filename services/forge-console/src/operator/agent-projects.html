@@ -118,8 +118,15 @@
       </section>
 
       <section id="serviceOverview" class="panel project-section hidden">
-        <div class="agents-v2-pane-head"><div><h2>Overview</h2><p id="serviceOverviewSummary"></p></div><div><span id="serviceRuntimeStatus" class="agents-v2-status">UNKNOWN</span> <button id="serviceOpenLogs" class="button small secondary" type="button">Open Logs</button></div></div>
-        <div id="serviceRuntimeDetails" class="repository-list"></div>
+        <div class="agents-v2-pane-head"><div><h2>Saved configuration</h2><p id="serviceOverviewSummary" role="status"></p></div><button id="serviceOpenLogs" class="button small secondary" type="button" disabled>Open Logs</button></div>
+        <p id="serviceConfigurationError" class="error-box hidden" role="alert"></p>
+        <button id="serviceConfigurationRetry" class="button small secondary hidden" type="button">Retry service</button>
+        <div id="serviceConfigurationDetails" class="repository-detail-grid"></div>
+        <div class="agents-v2-pane-head"><h3>Live runtime</h3><span id="serviceRuntimeStatus" class="agents-v2-status" role="status">Loading…</span></div>
+        <p id="serviceRuntimeSummary"></p>
+        <p id="serviceRuntimeError" class="error-box hidden" role="alert"></p>
+        <button id="serviceRuntimeRetry" class="button small secondary hidden" type="button">Retry runtime</button>
+        <div id="serviceRuntimeDetails" class="repository-list" aria-live="polite"></div>
       </section>
 
       <section id="repositoryOverview" class="panel project-section hidden">

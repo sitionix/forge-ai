@@ -7662,6 +7662,221 @@ describe('Reusable context reset', () => {
   });
 });
 
+describe('Service workspace recovery', () => {
+  const runtime = { status: 'RUNNING', connection: 'LOCAL', provider: 'DOCKER', targetIdentity: 'api', metadata: { version: '2' }, uptime: '5m' };
+  const click = (dom: JSDOM, id: string) => dom.window.document.getElementById(id)!.click();
+
+  it('shows saved configuration before a pending runtime request finishes', async () => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedProject(api({ getServiceRuntime: vi.fn().mockReturnValue(pending.promise) }));
+    const opening = page.openServiceWorkspace(project().id, service().id);
+    await flushAsync();
+    expect(dom.window.document.getElementById('projectLogsTitle')?.textContent).toBe('api');
+    expect(dom.window.document.getElementById('serviceConfigurationDetails')?.textContent).toContain('DOCKER');
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).toMatch(/loading/i);
+    expect(dom.window.location.hash).toContain(`/services/${service().id}`);
+    pending.resolve(runtime); await opening;
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).toBe('RUNNING');
+    expect(dom.window.document.getElementById('serviceRuntimeDetails')?.textContent).toContain('5m');
+    page.dispose();
+  });
+
+  it('retains saved details through runtime failures and retries only runtime until recovery', async () => {
+    const getServiceRuntime = vi.fn().mockRejectedValueOnce(new Error('password=secret'))
+      .mockRejectedValueOnce(new Error('token=secret')).mockResolvedValue(runtime);
+    const { dom, page, fakeApi } = await openedProject(api({ getServiceRuntime }));
+    await page.openServiceWorkspace(project().id, service().id);
+    const doc = dom.window.document;
+    expect(doc.getElementById('serviceConfigurationDetails')?.textContent).toContain('api');
+    expect(doc.getElementById('serviceRuntimeStatus')?.textContent).toBe('Unavailable');
+    expect(doc.getElementById('serviceRuntimeError')?.getAttribute('role')).toBe('alert');
+    expect(doc.getElementById('serviceRuntimeError')?.textContent).toMatch(/live runtime information.*could not be loaded/i);
+    expect(doc.getElementById('serviceOverview')?.textContent).not.toContain('secret');
+    expect((doc.getElementById('serviceOpenLogs') as HTMLButtonElement).disabled).toBe(false);
+    click(dom, 'serviceRuntimeRetry'); await flushAsync();
+    expect(doc.getElementById('serviceRuntimeStatus')?.textContent).toBe('Unavailable');
+    expect(doc.getElementById('serviceConfigurationDetails')?.textContent).toContain('DOCKER');
+    click(dom, 'serviceRuntimeRetry'); await flushAsync();
+    expect(doc.getElementById('serviceRuntimeStatus')?.textContent).toBe('RUNNING');
+    expect(doc.getElementById('serviceRuntimeDetails')?.textContent).toContain('version');
+    expect(doc.getElementById('serviceRuntimeError')?.textContent).toBe('');
+    expect(getServiceRuntime).toHaveBeenCalledTimes(3);
+    expect(fakeApi.getService).toHaveBeenCalledTimes(1);
+    expect(fakeApi.listProjectAgents).toHaveBeenCalledTimes(1);
+    click(dom, 'projectLogsBack'); await flushAsync();
+    expect(page.state.projectSection).toBe('services');
+    page.dispose();
+  });
+
+  it('provides service recovery and Back when the saved configuration fails', async () => {
+    const { dom, page, fakeApi } = await openedProject(api({
+      getService: vi.fn().mockRejectedValueOnce(new Error('unsafe credentials')).mockResolvedValue(service())
+    }));
+    await page.openServiceWorkspace(project().id, service().id);
+    expect(dom.window.document.getElementById('serviceConfigurationError')?.textContent).toMatch(/saved service configuration.*could not be loaded/i);
+    expect(dom.window.document.getElementById('serviceOverview')?.textContent).not.toContain('credentials');
+    expect((dom.window.document.getElementById('serviceOpenLogs') as HTMLButtonElement).disabled).toBe(true);
+    click(dom, 'serviceConfigurationRetry'); await flushAsync();
+    expect(dom.window.document.getElementById('projectLogsTitle')?.textContent).toBe('api');
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).toBe('RUNNING');
+    expect(fakeApi.getService).toHaveBeenCalledTimes(2);
+    click(dom, 'projectLogsBack'); await flushAsync();
+    expect(dom.window.location.hash).toBe(`#/projects/${project().id}/services`);
+    page.dispose();
+  });
+
+  it('can return to Services immediately while saved configuration is still loading', async () => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedProject(api({ getService: vi.fn().mockReturnValue(pending.promise) }));
+    const opening = page.openServiceWorkspace(project().id, service().id);
+    click(dom, 'projectLogsBack'); await flushAsync();
+    expect(page.state.projectSection).toBe('services');
+    expect(page.state.view).toBe('project');
+    pending.reject(new Error('late failure')); await opening;
+    expect(dom.window.document.getElementById('projectLogsWorkspace')?.classList.contains('hidden')).toBe(true);
+    page.dispose();
+  });
+
+  it('retains Back and direct route recovery after a saved configuration failure', async () => {
+    const dom = agentProjectsDom(`http://127.0.0.1/fgaisox/operator/agent-projects.html#/projects/${project().id}/services/${service().id}`);
+    const page = new AgentProjectsPage({ document: dom.window.document, window: dom.window, api: api({
+      getService: vi.fn().mockRejectedValue(new Error('offline'))
+    }) });
+    page.mount(); await flushAsync();
+    expect(dom.window.document.getElementById('serviceConfigurationRetry')?.classList.contains('hidden')).toBe(false);
+    expect(dom.window.document.getElementById('serviceConfigurationError')?.classList.contains('hidden')).toBe(false);
+    click(dom, 'projectLogsBack'); await flushAsync();
+    expect(page.state.view).toBe('project');
+    expect(page.state.projectSection).toBe('services');
+    page.dispose();
+  });
+
+  it('keeps Logs usable when runtime fails and restores detail history', async () => {
+    const { dom, page } = await openedProject(api({
+      getServiceRuntime: vi.fn().mockRejectedValue(new Error('offline')),
+      listLogSources: vi.fn().mockResolvedValue([{ id: 'service-log', projectId: project().id, name: 'Service log', serviceId: service().id, assetId: null, enabled: true, provider: 'FILE', connection: 'LOCAL', config: {} }])
+    }));
+    await page.openServiceWorkspace(project().id, service().id);
+    click(dom, 'serviceOpenLogs'); await flushAsync();
+    expect(page.state.view).toBe('logs');
+    expect((dom.window.document.getElementById('projectLogsServiceFilter') as HTMLSelectElement).value).toBe(service().id);
+    expect(dom.window.document.getElementById('projectLogsSources')?.textContent).toContain('Service log');
+    await goBack(dom);
+    expect(page.state.view).toBe('service');
+    expect(dom.window.document.getElementById('serviceConfigurationDetails')?.textContent).toContain('api');
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).toBe('Unavailable');
+    await goForward(dom);
+    expect(page.state.view).toBe('logs');
+    page.dispose();
+  });
+
+  it('ignores saved configuration arriving after switching projects', async () => {
+    const pending = deferred<any>();
+    const { dom, page, fakeApi } = await openedProject(api({ getService: vi.fn().mockReturnValue(pending.promise) }));
+    const opening = page.openServiceWorkspace(project().id, service().id);
+    await page.openProject('new-project');
+    pending.resolve({ ...service(), name: 'Old service' }); await opening;
+    expect(page.state.selectedProjectId).toBe('new-project');
+    expect(dom.window.document.getElementById('serviceConfigurationDetails')?.textContent).toBe('');
+    expect(fakeApi.getServiceRuntime).not.toHaveBeenCalled();
+    page.dispose();
+  });
+
+  it.each(['overview', 'another service', 'another project'])('ignores a runtime retry after navigating to %s', async (destination) => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedProject(api({
+      getServiceRuntime: vi.fn().mockRejectedValueOnce(new Error('offline')).mockReturnValueOnce(pending.promise).mockResolvedValue(runtime),
+      getService: vi.fn((_projectId, id) => Promise.resolve({ ...service(id, _projectId), name: id === 'other-service' ? 'Other service' : 'api' }))
+    }));
+    await page.openServiceWorkspace(project().id, service().id);
+    click(dom, 'serviceRuntimeRetry'); await flushAsync();
+    if (destination === 'overview') await page.openProject(project().id);
+    if (destination === 'another service') await page.openServiceWorkspace(project().id, 'other-service');
+    if (destination === 'another project') await page.openProject('other-project');
+    const before = dom.window.document.getElementById('serviceOverview')!.innerHTML;
+    pending.resolve({ ...runtime, status: 'STALE', metadata: { stale: 'old service' } }); await flushAsync();
+    expect(dom.window.document.getElementById('serviceOverview')!.innerHTML).toBe(before);
+    expect(dom.window.document.getElementById('serviceRuntimeStatus')?.textContent).not.toBe('STALE');
+    page.dispose();
+  });
+
+  it('does not display another project’s saved service configuration', async () => {
+    const { dom, page } = await openedProject(api({ getService: vi.fn().mockResolvedValue(service('foreign-service', 'foreign-project')) }));
+    await page.openServiceWorkspace(project().id, 'foreign-service');
+    expect(dom.window.document.getElementById('serviceConfigurationError')?.textContent).toMatch(/could not be loaded/i);
+    expect(dom.window.document.getElementById('serviceConfigurationDetails')?.textContent).toBe('');
+    page.dispose();
+  });
+});
+
+describe('Services list recovery', () => {
+  it.each(['resolve', 'reject'])('ignores a Services retry %s after disposal', async (completion) => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedSection('services', api({
+      listServices: vi.fn().mockRejectedValueOnce(new Error('offline')).mockReturnValueOnce(pending.promise)
+    }));
+    dom.window.document.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    page.dispose();
+    const before = dom.window.document.getElementById('agentsV2Workspace')!.innerHTML;
+    if (completion === 'resolve') pending.resolve([service()]);
+    else pending.reject(new Error('late failure'));
+    await flushAsync();
+    expect(page.state.servicesLoadState).toBe('LOADING');
+    expect(page.state.services).toEqual([]);
+    expect(dom.window.document.getElementById('agentsV2Workspace')!.innerHTML).toBe(before);
+  });
+
+  it('announces failure and retries only Services, refreshing the list and Dashboard count', async () => {
+    const pending = deferred<any>();
+    const { dom, page, fakeApi } = await openedSection('services', api({
+      listServices: vi.fn().mockRejectedValueOnce(new Error('unsafe upstream token')).mockReturnValueOnce(pending.promise)
+    }));
+    const doc = dom.window.document;
+    expect(doc.querySelector('#projectServicesList [role="alert"]')?.textContent).toMatch(/services.*could not be loaded/i);
+    expect(doc.getElementById('projectServicesList')?.textContent).not.toContain('token');
+    expect(doc.querySelector('[data-kpi="services"]')?.textContent).toBe('Unavailable');
+    expect((doc.getElementById('projectCreateService') as HTMLButtonElement).disabled).toBe(false);
+    const agents = page.state.agents;
+    doc.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    expect(doc.querySelector('#projectServicesList [role="status"]')?.textContent).toMatch(/loading/i);
+    pending.resolve([service()]); await flushAsync();
+    expect(doc.querySelectorAll('#projectServicesList article')).toHaveLength(1);
+    expect(page.state.agents).toBe(agents);
+    expect(fakeApi.listServices).toHaveBeenCalledTimes(2);
+    expect(fakeApi.listProjectAgents).toHaveBeenCalledTimes(1);
+    await page.openProject(project().id);
+    expect(doc.querySelector('[data-kpi="services"]')?.textContent).toBe('1');
+    page.dispose();
+  });
+
+  it('keeps a failed retry actionable and distinguishes successful empty data', async () => {
+    const { dom, page } = await openedSection('services', api({
+      listServices: vi.fn().mockRejectedValueOnce(new Error('offline')).mockRejectedValueOnce(new Error('still offline')).mockResolvedValue([])
+    }));
+    dom.window.document.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    expect(dom.window.document.querySelector('#projectServicesList [role="alert"]')?.textContent).toMatch(/could not be loaded/i);
+    dom.window.document.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    expect(dom.window.document.getElementById('projectServicesList')?.textContent).toMatch(/no services yet/i);
+    await page.openProject(project().id);
+    expect(dom.window.document.querySelector('[data-kpi="services"]')?.textContent).toBe('0');
+    page.dispose();
+  });
+
+  it('ignores an old Services retry after a project switch', async () => {
+    const pending = deferred<any>();
+    const { dom, page } = await openedSection('services', api({
+      listServices: vi.fn().mockRejectedValueOnce(new Error('offline')).mockReturnValueOnce(pending.promise).mockResolvedValue([])
+    }));
+    dom.window.document.getElementById('projectServicesRetry')!.click(); await flushAsync();
+    await page.openProject('new-project', { section: 'services' }); await flushAsync();
+    pending.resolve([service()]); await flushAsync();
+    expect(page.state.selectedProjectId).toBe('new-project');
+    expect(dom.window.document.querySelectorAll('#projectServicesList article')).toHaveLength(0);
+    expect(page.state.services).toEqual([]);
+    page.dispose();
+  });
+});
+
 describe('project dashboard and entity sections', () => {
   it('keeps overview DOM constant for large collections and uses server task totals', async () => {
     const { dom, page } = await openedProject(api({
