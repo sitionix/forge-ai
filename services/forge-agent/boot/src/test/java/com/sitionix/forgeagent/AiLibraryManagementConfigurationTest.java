@@ -7,7 +7,7 @@ import static org.assertj.core.api.Assertions.*;
 class AiLibraryManagementConfigurationTest {
  @TempDir Path directory;
  @Test void authenticatesLibraryWithExistingIdentityWhenRemoteAccessIsDisabled() throws Exception {
-  var secret=directory.resolve("service");Files.writeString(secret,"s".repeat(43));Files.setAttribute(secret,"unix:mode",0600);
+  var secret=directory.resolve("service");Files.writeString(secret,"s".repeat(43)+"\n");Files.setAttribute(secret,"unix:mode",0400);
   new ApplicationContextRunner().withUserConfiguration(AiLibraryManagementConfiguration.class)
    .withPropertyValues("forge.agent.remote-access.management-enabled=false","forge.agent.remote-access.service-secret-file="+secret)
    .run(context->assertThat(context).hasNotFailed().hasBean("aiLibraryServiceAuthentication"));
@@ -21,5 +21,11 @@ class AiLibraryManagementConfigurationTest {
     assertThatThrownBy(()->bind.customize(factory)).isInstanceOf(IllegalStateException.class).hasMessageContaining("forwarded headers");
    });
  }
- @Test void missingIdentityDoesNotCreateUnprotectedFallback(){new ApplicationContextRunner().withUserConfiguration(AiLibraryManagementConfiguration.class).run(context->assertThat(context).hasNotFailed().doesNotHaveBean("aiLibraryServiceAuthentication"));}
+ @Test void authenticatesWithNormalRuntimeIdentityWithoutRemoteAccess() throws Exception {
+  var secret=directory.resolve("runtime-token");Files.writeString(secret,"r".repeat(32));Files.setAttribute(secret,"unix:mode",0600);
+  new ApplicationContextRunner().withUserConfiguration(AiLibraryManagementConfiguration.class)
+   .withPropertyValues("FORGE_CODEX_SERVICE_TOKEN_FILE="+secret)
+   .run(context->assertThat(context).hasNotFailed().hasBean("aiLibraryServiceAuthentication"));
+ }
+ @Test void missingIdentityDoesNotCreateUnprotectedFallback(){new ApplicationContextRunner().withUserConfiguration(AiLibraryManagementConfiguration.class).withPropertyValues("FORGE_CODEX_SERVICE_TOKEN_FILE="+directory.resolve("missing")).run(context->assertThat(context).hasNotFailed().doesNotHaveBean("aiLibraryServiceAuthentication"));}
 }

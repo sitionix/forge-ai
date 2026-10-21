@@ -14,7 +14,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
 /** Dedicated local service identity; SSH keys never authenticate management HTTP. */
 public final class RemoteAccessServiceFilter implements Filter {
     private final byte[] credential;
-    public RemoteAccessServiceFilter(Path path) { credential=readCredential(path).getBytes(StandardCharsets.UTF_8); }
+    private final boolean libraryOnly;
+    public RemoteAccessServiceFilter(Path path) { this(readCredential(path),false); }
+    public RemoteAccessServiceFilter(String serviceCredential) { this(serviceCredential,true); }
+    private RemoteAccessServiceFilter(String serviceCredential,boolean libraryOnly) { credential=serviceCredential.getBytes(StandardCharsets.UTF_8);this.libraryOnly=libraryOnly; }
     public static String readCredential(Path path) {
         try {
             var absolute=path.toAbsolutePath().normalize();
@@ -41,7 +44,7 @@ public final class RemoteAccessServiceFilter implements Filter {
     @Override public void doFilter(ServletRequest input,ServletResponse output,FilterChain chain) throws IOException,ServletException {
         var request=(HttpServletRequest)input;var response=(HttpServletResponse)output;
         try {
-            if (!com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.remoteAccess(request) && !com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.library(request)) { chain.doFilter(input,output);return; }
+            if (libraryOnly ? !com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.library(request) : !com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.remoteAccess(request)) { chain.doFilter(input,output);return; }
         } catch (IllegalArgumentException invalid) { response.setStatus(401);return; }
         response.setHeader("Cache-Control","no-store");
         String authorization=request.getHeader("Authorization");

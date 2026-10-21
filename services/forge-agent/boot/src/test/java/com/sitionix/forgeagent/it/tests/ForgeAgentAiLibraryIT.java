@@ -24,13 +24,13 @@ class ForgeAgentAiLibraryIT extends AgentManagementFixture {
  @Autowired MockMvc mvc;
  @Autowired ProjectRepository projects;
  @MockBean LibraryProviderSessionFactory provider;
- static final String TOKEN="i".repeat(43);
+ static final String TOKEN="i".repeat(32);
  static {try {Files.writeString(ROOT.resolve("library-service"),TOKEN);Files.setAttribute(ROOT.resolve("library-service"),"unix:mode",0600);}catch(Exception failure){throw new IllegalStateException(failure);}}
  @org.springframework.test.context.DynamicPropertySource
  static void libraryIdentity(org.springframework.test.context.DynamicPropertyRegistry properties) {
   properties.add("server.address",()->"127.0.0.1");
   properties.add("server.forward-headers-strategy",()->"none");
-  properties.add("forge.agent.remote-access.service-secret-file",()->ROOT.resolve("library-service").toString());
+  properties.add("forge.ai-library.service-token-file",()->ROOT.resolve("library-service").toString());
  }
  @BeforeEach void fixture(){
   when(provider.supports("codex")).thenReturn(true);

@@ -147,6 +147,8 @@
                         <include>**/*IT.java</include>
                     </includes>
                     <systemPropertyVariables>
+                        <!-- Integration tests never consume the workstation service identity. -->
+                        <FORGE_CODEX_SERVICE_TOKEN_FILE>${project.build.directory}/missing-test-service-token</FORGE_CODEX_SERVICE_TOKEN_FILE>
                         <forge.agent.worker.scheduling-enabled>false</forge.agent.worker.scheduling-enabled>
                     </systemPropertyVariables>
                 </configuration>

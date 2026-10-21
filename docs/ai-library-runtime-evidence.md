@@ -59,12 +59,16 @@ Snapshots are not persisted; immediate navigation reuse expires after 30 seconds
 
 ## Authorization and provenance
 
-Internal Agent query requires the existing protected local service identity:
-Agent `forge.agent.remote-access.service-secret-file`, Nexus
-`forge.remote-access.service-secret-file`, explicit loopback server bind and
-`server.forward-headers-strategy=none`. Library does not require Remote Access to
-be enabled. It shares the existing bind/header guard, secret validation and
-runtime process/authorization infrastructure. Missing identity fails closed and
+Internal Agent query reuses the installer's protected local service identity,
+`FORGE_CODEX_SERVICE_TOKEN_FILE` (default `/etc/forge-ai/codex-service/token`).
+Both services accept `forge.ai-library.service-token-file` as a deployment
+identity override. Existing Agent `forge.agent.remote-access.service-secret-file`
+and Nexus `forge.remote-access.service-secret-file` remain legacy fallbacks;
+their original protected-file format is preserved. Library requires explicit
+loopback server bind and `server.forward-headers-strategy=none`; it does not
+require Remote Access activation. Library and Remote Access filters each own
+only their own routes, so independently configured identities do not conflict.
+It shares the existing bind/header guard and runtime authorization infrastructure. Missing identity fails closed and
 returns unavailable library data; browser headers cannot authorize internal calls.
 Existing Project has no owner ACL field: authorization follows the installation's
 existing operator/project management model rather than introducing fictitious
@@ -115,15 +119,14 @@ archive in /tmp independently passed the migration test; no migrations were edit
 
 ## Not verified / remaining limitations
 
-- Full deployed managed-launcher/UID/authorized-session end-to-end inventory was
-  not run. The native smoke used the real installed binary with an isolated HOME;
-  production retains the existing managed starter and lifecycle.
+- Browser checks used a deterministic API fixture, not the deployed Nexus.
+  Deployed API/runtime inventory has now been checked separately (see below).
 - Native Tools remain UNAVAILABLE under the execution-scoped grants contract.
 - Agents/Flows have no native inventory operation in the verified protocol.
 - A new runtime version requires canonical-path/protocol validation before enabling
   its inventory adapter capability. Existing inference support is unchanged.
-- Existing service identity must be configured; no credential provisioning or
-  workstation service deployment was performed.
+- No new credentials are provisioned: normal runtime startup already installs the
+  service identity. Missing identity still fails closed.
 
 ## Execution rulings
 
@@ -137,8 +140,38 @@ archive in /tmp independently passed the migration test; no migrations were edit
   inventory is unavailable until a safe native/context contract exists.
 - Reused service identity independently of Remote Access activation and shared its
   bind guard. Cost: identity and explicit loopback settings remain prerequisites.
-- Native smoke and browser fixture prove their stated scopes, not deployment.
-  Cost: full deployed managed-runtime integration remains unverified.
+- Native smoke, browser fixture and deployed API smoke each prove their stated
+  scopes. Browser verification against deployed Nexus remains unverified.
+
+## Deployed API verification after startup
+
+The first real Nexus query returned HTTP 200 with the correct active profile but
+all categories `UNAVAILABLE / RUNTIME_UNAVAILABLE`. The original wiring required
+Remote Access credentials, absent from normal runtime installation. The fix uses
+the existing installer-owned service identity by default, retaining legacy
+configuration validation and keeping the two authentication routes independent.
+Regression tests exercise normal runtime identity without Remote Access, legacy
+0400/newline format, independent credentials, and strict service token safety.
+Maven integration tests explicitly avoid reading the workstation service identity.
+Full Agent and Nexus `verify` passed after the fix; independent review accepted
+the final source changes. No Console sources changed in this follow-up.
+
+After rebuilding and restarting Agent/Nexus, actual public Nexus queries returned:
+
+| Project | Skills | Agents | Flows | Tools |
+| --- | --- | --- | --- | --- |
+| Ancestor | AVAILABLE, 5 | UNSUPPORTED | UNSUPPORTED | UNAVAILABLE |
+| Dashboard smoke | AVAILABLE, 5 | UNSUPPORTED | UNSUPPORTED | UNAVAILABLE |
+
+Both snapshots used Knowledge's active revision 2, `codex / gpt-5.6-sol`, and
+returned real native skills: `imagegen`, `openai-docs`, `review-agent`,
+`skill-creator`, `skill-installer`. Tools diagnostics were
+`MCP_EXECUTION_CONTEXT_REQUIRED`. Responses took about 7.8s and 2.6s respectively;
+these are observations, not latency guarantees. No project files or provider
+selection were changed for the smoke. Matching skill lists do not themselves prove
+project-local differences; isolated native A/B fixtures cover that case.
+Unauthenticated internal Library POST returned 401; a public request for an
+unknown project returned 404.
 
 ## Changed files
 
@@ -213,3 +246,11 @@ archive in /tmp independently passed the migration test; no migrations were edit
 - `services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/model/library/LibrarySnapshot.java`
 - `services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/port/AiLibraryClient.java`
 - `services/forge-nexus/domain/src/main/java/com/sitionix/forgeai/domain/usecase/GetAiLibrary.java`
+
+- `services/forge-agent/api-rest/src/main/java/com/sitionix/forgeagent/api/security/ServiceTokenFile.java`
+- `services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/security/ServiceTokenFileTest.java`
+- `services/forge-nexus/clients/agent-client/src/main/java/com/sitionix/forgeai/infrastructure/agentclient/library/ServiceTokenFile.java`
+- `services/forge-nexus/clients/agent-client/src/test/java/com/sitionix/forgeai/infrastructure/agentclient/library/ServiceTokenFileTest.java`
+- `services/forge-agent/boot/pom.xml`
+- `services/forge-agent/api-rest/src/test/java/com/sitionix/forgeagent/api/remoteaccess/RemoteAccessServiceFilterTest.java`
+- `services/forge-agent/boot/src/test/java/com/sitionix/forgeagent/it/infra/AgentManagementFixture.java`
