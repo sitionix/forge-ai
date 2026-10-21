@@ -52,7 +52,7 @@ async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 async function opened(initial = run()) {
   const dom = new JSDOM(readFileSync('src/operator/agent-projects.html', 'utf8'), { url: 'http://localhost/', pretendToBeVisual: true });
   const api = {
-    getProjectTask: vi.fn(async () => ({ id: 'task', input: 'Do work', runs: [initial] })),
+    getProjectTask: vi.fn(async () => ({ id: 'task', projectId: 'project', input: 'Do work', runs: [initial] })),
     getWorkflowRun: vi.fn(async () => initial),
     getAgentExecutionContexts: vi.fn(async () => []),
     getAgentExecutionEvents: vi.fn(),
@@ -65,7 +65,7 @@ async function opened(initial = run()) {
     onBack: vi.fn(), runtimeConfig: { activeJobPollIntervalMs: 60_000 } });
   view.bind();
   cleanup.push(() => { view.dispose(); dom.window.close(); });
-  await view.open('task', { name: 'Project' });
+  await view.open('task', { id: 'project', name: 'Project' });
   view.selectNodeRun(MANUAL);
   const panel = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
   const buttons = () => [...panel.querySelectorAll<HTMLButtonElement>('[data-manual-output-port]')];
@@ -83,7 +83,7 @@ describe('Manual Task Execution', () => {
     const initial = run();
     const fetcher = vi.fn(async (url: string, init: RequestInit) => {
       if (init.method === 'GET' && url === `${base}/tasks/task`) {
-        return Response.json({ id: 'task', input: 'Do work', runs: [initial] });
+        return Response.json({ id: 'task', projectId: 'project', input: 'Do work', runs: [initial] });
       }
       if (init.method === 'GET' && url === `${base}/workflow-runs/${RUN}`) return Response.json(initial);
       if (init.method === 'GET' && url === `${base}/workflow-runs/${RUN}/agent-execution-contexts`) return Response.json([]);
@@ -96,7 +96,7 @@ describe('Manual Task Execution', () => {
       onBack: vi.fn(), runtimeConfig: { activeJobPollIntervalMs: 60_000 } });
     view.bind();
     cleanup.push(() => { view.dispose(); dom.window.close(); });
-    await view.open('task', { name: 'Project' });
+    await view.open('task', { id: 'project', name: 'Project' });
     view.selectNodeRun(MANUAL);
     const panel = dom.window.document.getElementById('agentsV2NodeRunDetails')!;
     expect(panel.textContent).toContain('WAITING_FOR_MANUAL');

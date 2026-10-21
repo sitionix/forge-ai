@@ -6218,3 +6218,46 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .dialogue-completion { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; font-size: 12px; }
 .dialogue-completion dd { margin: 0; }
 .dialogue-outcome-description { width: 100%; color: var(--muted); }
+
+/* Project overview remains a fixed-size navigation surface. */
+.project-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 18px;
+}
+.project-kpis > div { padding: 14px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); min-width: 0; }
+.project-kpis dt { color: var(--muted); font-size: 13px; }
+.project-kpis dd { margin: 6px 0 0; font-size: clamp(16px, 2vw, 25px); font-weight: 650; overflow-wrap: anywhere; }
+.project-dashboard-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.project-navigation-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 20px; }
+.project-navigation-card h2, .project-navigation-card p { margin: 0; }
+.project-navigation-card p { color: var(--muted); }
+.project-navigation-icon { font-size: 25px; color: var(--accent); }
+.project-navigation-actions { display: flex; align-items: center; gap: 12px; margin-top: auto; padding-top: 12px; }
+.project-navigation-actions a { flex: 1; text-align: center; text-decoration: none; }
+.project-quick-create { min-width: 44px; min-height: 44px; font-size: 22px; }
+.project-action-hint { font-size: 12px; line-height: 1.45; }
+.project-action-hint:empty { display: none; }
+#projectEntityToolbar:not(.hidden) { display: flex; align-items: center; gap: 12px; }
+#projectEntitySearch { width: min(100%, 420px); }
+#agentsV2Workspace :is(a, button, input, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+@media (max-width: 900px) {
+  .project-dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .project-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .project-dashboard-grid { grid-template-columns: minmax(0, 1fr); }
+  .project-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  #projectEntityToolbar:not(.hidden) { align-items: stretch; flex-direction: column; }
+  .project-navigation-actions .button { min-height: 44px; }
+  #agentsV2Workspace .agents-v2-task-list { overflow-x: auto; }
+  #agentsV2Workspace .agents-v2-pane-head { flex-wrap: wrap; gap: 12px; }
+}
+@media (max-width: 560px) {
+  #agentsV2Workspace .project-workspace-header .panel-head { flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+  #agentsV2Workspace .project-workspace-header .panel-head > div { flex: 1 1 100%; }
+  #agentsV2Workspace .project-workspace-header h1 { font-size: 28px; overflow-wrap: anywhere; }
+  #agentsV2Workspace .project-workspace-header p { overflow-wrap: anywhere; }
+  #agentsV2Workspace .project-navigation-card { padding: 16px; }
+}

@@ -164,6 +164,7 @@ export class WorkflowBuilder {
     this.connectionDrag = null;
     this.closeNodeEditor();
     this.clearConnectionTargetClasses();
+    for (const id of ['agentsV2WorkflowAgentList', 'agentsV2WorkflowNodes', 'agentsV2WorkflowEdges']) this.byId(id)?.replaceChildren();
   }
 
   setAgents(agents) {

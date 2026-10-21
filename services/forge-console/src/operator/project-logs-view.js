@@ -79,6 +79,11 @@ export class ProjectLogsView {
     this.renderedRows.clear();
     this.paused = false;
     this.selectedSourceIds.clear();
+    for (const id of ['projectLogsSources', 'projectLogsOutput']) this.byId(id)?.replaceChildren();
+    for (const id of ['projectLogsResourceFilter', 'projectLogsServiceFilter']) {
+      const select = this.byId(id);
+      if (select) select.innerHTML = '<option value="">All</option>';
+    }
   }
 
   renderFilterOptions() {
