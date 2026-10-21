@@ -146,3 +146,19 @@ Agent paths below are rooted at `services/forge-agent`; Nexus paths at `services
 Coverage: domain/ports (1), project aggregation/isolation (2), native protocol and lifecycle (3), trusted composition/API/security (4), UI/counts/large inventories (5), revision races/history (6), full checks and independent evidence (7). Review Focus cases are assigned explicitly above. No new persistence, execution permissions or provider selection state is introduced.
 
 Execution recommendation: Native implementation in this session, followed by the user-requested independent whole-branch review. Tasks share typed contracts and lifecycle helpers, so sequential implementation reduces interface drift without repeated implementation contexts. Await user review of this plan and execution-method selection before product code.
+
+## Execution record
+
+Tasks 1–7 implemented; final evidence is `docs/ai-library-runtime-evidence.md`.
+The original task checklists above are retained as the approved proposal.
+Execution adaptations: shared lifecycle helpers reused existing construction/cleanup
+race tests; inventory-specific logout coverage added; global metadata validation
+uses the verified canonical-path native contract because managed HOME0700 is
+intentionally inaccessible to control UID. Native SKILL.md file symlinks are
+ignored, while directory/intermediate symlinks resolve canonically. Tools remain
+explicitly unavailable under the existing execution-grant contract.
+
+Final review: independent reviewer ACCEPT; no deferred code findings. Full clean
+Agent verify, final focused guards/feature IT, Nexus verify, Console835 tests,
+typecheck/build, real native smoke and actual Chrome fixture-backed checks pass.
+No push, merge, PR changes or deployment.

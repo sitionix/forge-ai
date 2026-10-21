@@ -1,6 +1,6 @@
 # AI Library: project-aware runtime inventory
 
-Status: proposed for user review; implementation has not started.
+Status: implemented. Final evidence and limits: `docs/ai-library-runtime-evidence.md`. Historical inspection findings below describe the design stage; final runtime findings are recorded in that evidence.
 
 ## Intent and constraints
 
@@ -183,10 +183,8 @@ Console tests/typecheck/build, runtime launcher tests if changed, and
 lifecycle and regression risks independently after implementation. Report browser
 and managed-runtime smoke only when actually performed. No push, merge or PR edits.
 
-## Approval handoff
+## Implementation status
 
-Review this design before writing the detailed implementation plan. The planning
-stage must resolve exact DTOs, session ownership and permitted MCP discovery from
-the existing contracts, then present an execution method for approval as required
-by the brainstorming workflow. No product changes or implementation test claims
-are made by this document.
+Design and execution plan were approved. Implementation and independent review
+are complete; consult `docs/ai-library-runtime-evidence.md` for actual supported
+operations, verification scope, operational prerequisites and limitations.
