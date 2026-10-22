@@ -37,14 +37,17 @@ public final class McpExecutionSelectionService {
         if (claim == null || deadline == null) throw new IllegalArgumentException("Invalid MCP execution");
         var workflow = workflows.findById(claim.workflowRunId())
                 .orElseThrow(() -> new IllegalStateException("MCP execution workflow is unavailable"));
+        return prepareProject(workflow.projectId(),claim.agentSessionClaim(),null,deadline);
+    }
+    public McpExecutionPreparation prepareStandalone(com.sitionix.forgeagent.domain.model.standalone.StandaloneExecutionClaim claim,Instant deadline) {
+        return prepareProject(claim.session().projectId(),null,claim,deadline);
+    }
+    private McpExecutionPreparation prepareProject(java.util.UUID projectId,AgentSessionExecutionClaim session,
+            com.sitionix.forgeagent.domain.model.standalone.StandaloneExecutionClaim standalone,Instant deadline) {
         var eligible = connections.findAll(identity.getOrCreate()).stream()
-                .filter(connection -> connection.enabled() && connection.projectAccess().allows(workflow.projectId())
-                        && !connection.allowedTools().isEmpty())
-                .sorted(Comparator.comparing(McpConnection::id))
-                .toList();
-        AgentSessionExecutionClaim session = claim.agentSessionClaim();
-        if (session == null && !eligible.isEmpty())
-            throw new IllegalStateException("MCP execution requires a tracked session");
+                .filter(connection -> connection.enabled() && connection.projectAccess().allows(projectId) && !connection.allowedTools().isEmpty())
+                .sorted(Comparator.comparing(McpConnection::id)).toList();
+        if(session==null && standalone==null && !eligible.isEmpty()) throw new IllegalStateException("MCP execution requires a tracked session");
         var entries = new ArrayList<McpExecutionSelection.Entry>();
         var diagnostics = new ArrayList<McpExecutionSelection.Diagnostic>();
         var tokens = new HashMap<String, String>();
@@ -52,7 +55,7 @@ public final class McpExecutionSelectionService {
             for (var connection : eligible) {
                 String alias = "forge_" + connection.id().toString().replace("-", "");
                 try {
-                    var grant = gateway.issue(session, deadline, connection.id());
+                    var grant = standalone==null?gateway.issue(session, deadline, connection.id()):gateway.issueStandalone(standalone,deadline,connection.id());
                     entries.add(new McpExecutionSelection.Entry(alias, connection.id(),
                             connection.displayName(), connection.allowedTools()));
                     tokens.put(alias, grant.token());
@@ -62,8 +65,8 @@ public final class McpExecutionSelectionService {
                 }
             }
         } catch (RuntimeException failure) {
-            if (session != null) {
-                try { gateway.revokeExecution(session.turnId()); }
+            if (session != null || standalone != null) {
+                try { gateway.revokeExecution(standalone==null?session.turnId():standalone.turnId()); }
                 catch (RuntimeException cleanupFailure) { /* No bearer escaped this preparation boundary. */ }
             }
             throw new IllegalStateException("MCP execution preparation failed");
@@ -71,6 +74,9 @@ public final class McpExecutionSelectionService {
         return new McpExecutionPreparation(new McpExecutionSelection(entries, diagnostics),
                 new McpRuntimeLaunchGrants(tokens));
     }
+
+    public void activateStandalone(com.sitionix.forgeagent.domain.model.standalone.StandaloneExecutionClaim claim) { gateway.activateStandalone(claim); }
+    public void revokeExecution(java.util.UUID turnId) { gateway.revokeExecution(turnId); }
 
     public void activateForDispatch(AgentSessionExecutionClaim claim) {
         if (claim == null) throw new IllegalArgumentException("Tracked MCP execution is required");

@@ -33,7 +33,7 @@ final class CodexAppServerClient implements CodexClient {
     static final String SUPPORTED_RECOVERY_VERSION = SUPPORTED_DURABLE_VERSION;
 
     static boolean supportsDurableVersion(String version) {
-        return SUPPORTED_DURABLE_VERSION.equals(version) || "0.160.0".equals(version) || "0.160.1".equals(version);
+        return SUPPORTED_DURABLE_VERSION.equals(version) || "0.160.0".equals(version) || "0.160.1".equals(version) || "0.163.0".equals(version);
     }
 
     private final ObjectMapper objectMapper;
@@ -211,17 +211,18 @@ final class CodexAppServerClient implements CodexClient {
                 throw new CodexMcpExecutionException("Codex MCP launch grants do not match selection");
             this.threadStartParams(request);
         }
-        final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
+        final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker(request.nativeSubagents());
         final CodexExecutionEventObserver eventObserver = new CodexExecutionEventObserver(
                 new CodexAgentExecutionEventMapper(this.objectMapper), callbacks);
         final CodexJsonRpcTransport transport = this.startWorkspaceTransport(
                 request.executionWorkspace().cwd(), turnStateTracker, eventObserver, grants,
-                request.mcpSelection() != null, lease);
+                request.mcpSelection() != null, lease, request.resourceSnapshot());
         CodexExecution execution = null;
         try {
             this.authorizationGate.registerCancellation(lease, transport::close);
             if (callbacks != null) callbacks.executionStarted(transport::close);
             final String providerVersion = this.initialize(transport);
+            if(request.nativeSubagents() && !"0.163.0".equals(providerVersion))throw new CodexTransportException("Native subagent runtime contract is unverified");
             if (durable) {
                 this.validateDurableVersion(providerVersion, expectedProviderVersion);
             }
@@ -301,10 +302,10 @@ final class CodexAppServerClient implements CodexClient {
                                                            final CodexTurnStateTracker turnStateTracker,
                                                            final CodexExecutionEventObserver eventObserver,
                                                            final McpRuntimeLaunchGrants grants,
-                                                           final boolean mcpConfigured, final AuthorizationLease lease) {
+                                                           final boolean mcpConfigured, final AuthorizationLease lease, final java.util.Map<String,String> resources) {
         final StartedCodexAppServer started;
         try {
-            started = mcpConfigured
+            started = resources != null ? this.processStarter.startPinned(workingDirectory,grants,resources) : mcpConfigured
                     ? this.processStarter.start(workingDirectory, grants)
                     : this.processStarter.start(workingDirectory);
         } catch (RuntimeException failure) {
@@ -385,7 +386,7 @@ final class CodexAppServerClient implements CodexClient {
                             ? sessionProtocol.startDurableThread(current, this.threadStartParams(request), this.properties.getRequestTimeout())
                             : existingThreadId != null
                                 ? sessionProtocol.resumeThread(current, existingThreadId,
-                                        request.sharedSessionGroup() || request.mcpSelection() != null
+                                        request.sharedSessionGroup() || request.mcpSelection() != null || request.outputSchema() == null
                                                 ? this.developerInstructions(request) : null,
                                         this.threadStartParams(request),
                                         this.properties.getRequestTimeout())
@@ -563,7 +564,7 @@ final class CodexAppServerClient implements CodexClient {
         params.put("cwd", request.executionWorkspace().cwd().toString());
         params.set("runtimeWorkspaceRoots", this.runtimeWorkspaceRoots(request));
         params.put("ephemeral", true);
-        final ObjectNode config = this.codexConfig();
+        final ObjectNode config = this.codexConfig(request.nativeSubagents());
         if (request.mcpSelection() != null) {
             if (this.gatewayAddress == null)
                 throw new CodexMcpExecutionException("Codex MCP gateway is unavailable");
@@ -592,11 +593,11 @@ final class CodexAppServerClient implements CodexClient {
         if (request.effortId() != null) {
             params.put("effort", request.effortId());
         }
-        params.set("outputSchema", request.outputSchema().deepCopy());
+        if (request.outputSchema() != null) params.set("outputSchema", request.outputSchema().deepCopy());
         return params;
     }
 
-    private ObjectNode codexConfig() {
+    private ObjectNode codexConfig(boolean nativeSubagents) {
         final ObjectNode config = this.objectMapper.createObjectNode();
         config.put("model_provider", "openai");
         config.put("cli_auth_credentials_store", "file");
@@ -605,8 +606,9 @@ final class CodexAppServerClient implements CodexClient {
         final ObjectNode features = config.putObject("features");
         features.put("shell_tool", true);
         features.put("apps", false);
+        features.put("multi_agent", nativeSubagents);
         final ObjectNode agents = config.putObject("agents");
-        agents.put("enabled", false);
+        if(nativeSubagents){agents.put("max_threads",2);agents.put("max_depth",1);}else agents.put("enabled", false);
         return config;
     }
 

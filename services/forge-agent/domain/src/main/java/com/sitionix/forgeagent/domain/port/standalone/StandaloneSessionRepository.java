@@ -1,0 +1,30 @@
+package com.sitionix.forgeagent.domain.port.standalone;
+import com.sitionix.forgeagent.domain.model.standalone.*;
+import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
+import java.util.*;
+public interface StandaloneSessionRepository {
+    Optional<StandaloneCommandReceipt> creationReceipt(UUID projectId,UUID requestId,String requestHash);
+    StandaloneCommandReceipt create(StandaloneAgentSession session,UUID requestId,String requestHash,String text);
+    StandaloneCommandReceipt send(UUID projectId,UUID sessionId,UUID requestId,long expectedRevision,String text);
+    Optional<StandaloneAgentSession> find(UUID projectId,UUID sessionId);
+    List<StandaloneAgentSession> list(UUID projectId,String search,String before,int limit);
+    List<StandaloneAgentMessage> messages(UUID projectId,UUID sessionId,long after,int limit);
+    List<StandaloneAgentEvent> events(UUID projectId,UUID sessionId,long after,int limit);
+    StandaloneCommandReceipt cancel(UUID projectId,UUID sessionId,UUID requestId,long expectedRevision);
+    Optional<StandaloneExecutionClaim> claim(String owner,int timeoutSeconds);
+    boolean current(StandaloneExecutionClaim claim);
+    boolean current(UUID projectId,UUID sessionId,UUID turnId,String owner,long token);
+    boolean renew(StandaloneExecutionClaim claim);
+    boolean runtimeStarted(StandaloneExecutionClaim claim);
+    boolean runtimeCleaned(StandaloneExecutionClaim claim);
+    boolean persistConversation(StandaloneExecutionClaim claim,String id,String version);
+    boolean persistTurn(StandaloneExecutionClaim claim,String id);
+    void dispatch(StandaloneExecutionClaim claim,Runnable write);
+    boolean appendEvent(StandaloneExecutionClaim claim,AgentExecutionEventCandidate event);
+    boolean finish(StandaloneExecutionClaim claim,String status,String text,String failureCode,boolean uncertain);
+    List<StandaloneExecutionClaim> expired(int limit);
+    boolean quarantine(StandaloneExecutionClaim claim,String code);
+    List<UUID> cancellationRequests(int limit);
+    Optional<StandaloneExecutionClaim> claimRecovery(String owner);
+    boolean reconcileRecovery(StandaloneExecutionClaim claim,String outcome,String assistantText,String code);
+}

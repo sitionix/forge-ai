@@ -29,12 +29,16 @@ final class CodexRecoveryProtocol {
     ProviderTurnRecoveryResult inspectTurn(final CodexJsonRpcTransport transport, final String threadId,
                                            final String turnId, final Instant deadline,
                                            final Duration maxRequestTimeout) {
+        return this.inspectTurn(transport,threadId,turnId,deadline,maxRequestTimeout,false);
+    }
+    ProviderTurnRecoveryResult inspectTurn(final CodexJsonRpcTransport transport,final String threadId,
+            final String turnId,final Instant deadline,final Duration maxRequestTimeout,final boolean recoverReply) {
         if (transport == null || isBlank(threadId) || isBlank(turnId) || deadline == null
                 || maxRequestTimeout == null || maxRequestTimeout.isZero() || maxRequestTimeout.isNegative()) {
             return ProviderTurnRecoveryResult.unknown("Codex recovery inspection identity or timeout is invalid");
         }
         try {
-            return this.inspectPages(transport, threadId, turnId, deadline, maxRequestTimeout);
+            return this.inspectPages(transport, threadId, turnId, deadline, maxRequestTimeout,recoverReply);
         } catch (final RuntimeException exception) {
             return ProviderTurnRecoveryResult.unknown("Codex recovery inspection failed: "
                     + exception.getClass().getSimpleName());
@@ -43,18 +47,19 @@ final class CodexRecoveryProtocol {
 
     private ProviderTurnRecoveryResult inspectPages(final CodexJsonRpcTransport transport, final String threadId,
                                                     final String turnId, final Instant deadline,
-                                                    final Duration maxRequestTimeout) {
+                                                    final Duration maxRequestTimeout,final boolean recoverReply) {
         final Set<String> observedCursors = new HashSet<>();
         String cursor = null;
         String targetStatus = null;
         int targetMatches = 0;
+        String reply=null;
         for (int page = 0; page < MAX_PAGES; page++) {
             final Duration timeout = this.remainingTimeout(deadline, maxRequestTimeout);
             if (timeout == null) {
                 return ProviderTurnRecoveryResult.unknown("Codex recovery inspection deadline was exhausted");
             }
             final JsonNode response = transport.request(
-                    CodexProtocol.THREAD_TURNS_LIST, this.params(threadId, cursor), timeout);
+                    CodexProtocol.THREAD_TURNS_LIST, this.params(threadId, cursor,recoverReply), timeout);
             if (response == null || !response.isObject() || !response.path("data").isArray()) {
                 return ProviderTurnRecoveryResult.unknown("Codex turns list response was malformed");
             }
@@ -71,11 +76,20 @@ final class CodexRecoveryProtocol {
                 if (turnId.equals(turn.path("id").asText())) {
                     targetMatches++;
                     targetStatus = turn.path("status").asText();
+                    if(recoverReply)for(var item:turn.path("items")) {
+                        if("agentMessage".equals(item.path("type").asText())&&item.path("text").isTextual()) {
+                            String value=item.path("text").asText();
+                            if(value.length()>1048576)return ProviderTurnRecoveryResult.unknown("Recovered reply exceeded limit");
+                            reply=value;
+                        }
+                    }
                 }
             }
             final JsonNode nextCursor = response.get("nextCursor");
             if (nextCursor == null || nextCursor.isNull()) {
-                return this.classify(targetMatches, targetStatus);
+                var classified=this.classify(targetMatches,targetStatus);
+                return new ProviderTurnRecoveryResult(classified.state(),classified.terminalOutcome(),classified.diagnostic(),reply);
+
             }
             if (!nextCursor.isTextual() || isBlank(nextCursor.asText())) {
                 return ProviderTurnRecoveryResult.unknown("Codex turns list cursor was malformed");
@@ -96,7 +110,7 @@ final class CodexRecoveryProtocol {
         return remaining.compareTo(maxRequestTimeout) < 0 ? remaining : maxRequestTimeout;
     }
 
-    private ObjectNode params(final String threadId, final String cursor) {
+    private ObjectNode params(final String threadId, final String cursor,final boolean recoverReply) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         params.put("threadId", threadId);
         if (cursor != null) {
@@ -104,7 +118,7 @@ final class CodexRecoveryProtocol {
         }
         params.put("limit", PAGE_LIMIT);
         params.put("sortDirection", "desc");
-        params.put("itemsView", "notLoaded");
+        params.put("itemsView", recoverReply?"full":"notLoaded");
         return params;
     }
 

@@ -4,7 +4,7 @@ const title = (key) => key[0].toUpperCase() + key.slice(1);
 const statusLabel = (category) => ({ EMPTY: 'Empty', UNSUPPORTED: 'No catalog', UNAVAILABLE: 'Unavailable', FAILED: 'Failed · incomplete' }[category?.status] || 'Unavailable');
 const complete = (category) => ['AVAILABLE', 'EMPTY'].includes(category?.status) && !(category.diagnostics || []).some((d) => !['MCP_TOOLS_ONLY', 'PROJECT_AGENT_FILES_ONLY', 'AGENT_FILES_ONLY'].includes(d));
 const icon = (path) => `<svg class="ai-library-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
-const capabilityIcon = icon('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>');
+export const capabilityIcon = icon('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>');
 const numberLabel = (count, category = 'all') => `${count} ${category === 'all' ? (count === 1 ? 'capability' : 'capabilities') : count === 1 ? category.slice(0, -1) : category}`;
 
 function descriptionPreview(description) {
@@ -28,15 +28,17 @@ export function librarySummary(state) {
 }
 
 export class AiLibraryView {
-  constructor({ document, onRefresh, onNavigate }) {
+  constructor({ document, onRefresh, onNavigate, onStartSession }) {
     this.root = document.getElementById('aiLibrary'); this.onNavigate = onNavigate;
     this.root.innerHTML = `<header class="ai-library-header"><div><h2>AI Library</h2><p>Explore the capabilities available to your project.</p><div class="ai-library-provider" data-library-provider></div></div>
       <button type="button" class="ai-library-refresh" data-library-refresh>${icon('<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/>')}<span>Refresh inventory</span></button></header>
       <div class="ai-library-toolbar"><label class="ai-library-search">${icon('<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>')}<span class="ai-library-sr-only">Search capabilities</span><input type="search" placeholder="Search capabilities…" data-library-search autocomplete="off"></label>
-      <span class="ai-library-readonly">Read-only library</span></div>
+      <span class="ai-library-readonly">Native capabilities</span></div>
       <nav class="ai-library-categories" aria-label="Capability categories" data-library-categories>${['all', ...CATEGORIES].map((key) => `<a class="ai-library-tab" data-library-category="${key}"><span>${title(key)}</span><span class="ai-library-tab-meta" hidden></span></a>`).join('')}</nav>
       <div class="ai-library-status" role="status" aria-live="polite" data-library-status></div><div data-library-notices></div><div data-library-results></div><nav class="ai-library-pages" aria-label="Inventory pages" data-library-pages></nav>`;
     this.click = (event) => {
+      const launch = event.target.closest('[data-library-launch]');
+      if (launch) { onStartSession?.(launch.dataset.libraryLaunch); return; }
       if (event.target.closest('[data-library-refresh]')) { onRefresh(); return; }
       if (event.target.closest('[data-library-clear-search]')) { onNavigate({ search: '', page: 0, itemId: null }); return; }
       const link = event.target.closest('[data-library-route]');
@@ -91,7 +93,7 @@ export class AiLibraryView {
     if (itemId) {
       const item = all.find((item) => item.id === itemId);
       status.textContent = '';
-      results.innerHTML = `<div class="ai-library-back">${this.link('← Back to results', { itemId: null })}</div>${item ? `<article class="ai-library-detail"><div class="ai-library-detail-heading"><span class="ai-library-resource-icon">${capabilityIcon}</span><div><span class="ai-library-badge">${escapeHtml(title(item.category))}</span><h3>${escapeHtml(item.name)}</h3></div></div><h4>About this capability</h4><p class="ai-library-description">${escapeHtml(item.description || 'No description provided by the active provider.')}</p>${item.source ? `<dl class="ai-library-source"><dt>Source</dt><dd>${escapeHtml(item.source)}</dd></dl>` : ''}</article>` : this.emptyState('Capability not found', 'This capability is no longer available in this inventory. Refresh to check again.')}`; return;
+      results.innerHTML = `<div class="ai-library-back">${this.link('← Back to results', { itemId: null })}</div>${item ? `<article class="ai-library-detail"><div class="ai-library-detail-heading"><span class="ai-library-resource-icon">${capabilityIcon}</span><div><span class="ai-library-badge">${escapeHtml(title(item.category))}</span><h3>${escapeHtml(item.name)}</h3></div></div><h4>About this capability</h4><p class="ai-library-description">${escapeHtml(item.description || 'No description provided by the active provider.')}</p>${item.category === 'agents' ? `<button type="button" class="button" data-library-launch="${escapeHtml(item.id)}">Start Session</button><p class="muted">Availability and effective model are verified before launch.</p>` : ''}${item.source ? `<dl class="ai-library-source"><dt>Source</dt><dd>${escapeHtml(item.source)}</dd></dl>` : ''}</article>` : this.emptyState('Capability not found', 'This capability is no longer available in this inventory. Refresh to check again.')}`; return;
     }
     const matches = all.filter((item) => `${item.name} ${item.description || ''}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
     const lastPage = Math.max(0, Math.ceil(matches.length / 100) - 1); const page = Math.min(Math.max(0, this.options.page || 0), lastPage);

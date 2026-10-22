@@ -1,3 +1,6 @@
+import { AgentSessionsController } from './agent-sessions-controller.js';
+import { AgentSessionsView } from './agent-sessions-view.js';
+import { AgentSessionLaunch } from './agent-session-launch.js';
 import { AiLibraryController } from './ai-library-controller.js';
 import { AiLibraryView, librarySummary } from './ai-library-view.js';
 import { observeActiveProfileChanges } from './active-profile-invalidation.js';
@@ -104,6 +107,7 @@ export class AgentProjectsPage {
       onPullRepository: (repositoryId) => this.pullRepository(repositoryId),
       onNewAgent: () => this.openAgentModal(),
       onEditAgent: (agentId) => this.openAgentModal(agentId),
+      onStartAgent: (agentId) => this.launchAgentSession('FORGE', agentId),
       onNewWorkflow: () => this.openWorkflowModal(),
       onOpenWorkflow: (workflowId) => this.openWorkflowBuilder(workflowId),
       onDeleteAgent: (agentId) => this.deleteAgent(agentId),
@@ -128,11 +132,24 @@ export class AgentProjectsPage {
       onRetryServices: () => this.loadServices(),
       onDeleteService: (id) => this.deleteService(id).catch((error) => this.showError('projectServicesError', error.message || 'Service could not be deleted.'))
     });
+    this.sessionsView = new AgentSessionsView({ document: this.document,
+      onSend: () => this.sessionsController.send(), onStop: () => this.sessionsController.cancel(),
+      onDraft: text => this.sessionsController.setDraft(text), onSearch: search => {
+        clearTimeout(this.sessionSearchTimer); this.sessionSearchTimer = setTimeout(() => this.openProject(this.state.selectedProjectId, { section: 'sessions', search, replace: true }), 200);
+      }, onOpen: id => this.openProject(this.state.selectedProjectId, { section: 'sessions', sessionId: id }),
+      onNext: () => this.openProject(this.state.selectedProjectId, { section: 'sessions', search: this.sessionsController.state.search, before: this.sessionsController.state.nextCursor })
+    });
+    this.sessionsController = new AgentSessionsController({ api: this.api, document: this.document, onChange: state => {
+      if (!this.disposed && this.state.view === 'project' && this.state.projectSection === 'sessions') this.sessionsView.render(state);
+    } });
+    this.sessionLaunch = new AgentSessionLaunch({ document: this.document, api: this.api,
+      onCreated: (project, id) => this.openProject(project, { section: 'sessions', sessionId: id }) });
     this.libraryNavigation = { category: 'all', search: '', page: 0, itemId: null };
     this.libraryController = new AiLibraryController({ api: this.api, onChange: () => this.renderProjectWorkspace() });
     this.libraryView = new AiLibraryView({ document: this.document,
       onRefresh: () => this.libraryController.load(this.state.selectedProjectId, { force: true }),
-      onNavigate: (patch) => this.navigateAiLibrary(patch)
+      onNavigate: (patch) => this.navigateAiLibrary(patch),
+      onStartSession: id => this.launchAgentSession('NATIVE_CODEX', id)
     });
     this.libraryProfilePoll = new PollingCoordinator({ document: this.document, activeIntervalMs: 5000,
       isActive: () => !this.disposed && this.state.view === 'project' && this.state.projectSection === 'ai-library',
@@ -189,6 +206,7 @@ export class AgentProjectsPage {
 
   dispose() {
     this.disposed = true;
+    this.sessionsController.dispose(); this.sessionsView.dispose(); this.sessionLaunch.dispose(); clearTimeout(this.sessionSearchTimer);
     this.libraryController.dispose(); this.libraryView.dispose(); this.libraryProfilePoll.dispose();
     this.libraryProfileAbort?.abort(); this.libraryUnsubscribe?.();
     this.window.removeEventListener('hashchange', this.onPopState);
@@ -262,6 +280,7 @@ export class AgentProjectsPage {
   libraryVisible() { return this.state.view === 'project' && ['overview', 'ai-library'].includes(this.state.projectSection); }
 
   leaveAiLibrary() {
+    this.sessionsController?.leave(); this.byId('agentSessions')?.classList.add('hidden');
     this.libraryProfilePoll.stop(); this.libraryProfileAbort?.abort();
     this.libraryController.invalidate(); this.byId('aiLibrary').classList.add('hidden');
   }
@@ -292,6 +311,7 @@ export class AgentProjectsPage {
   }
 
   showProjectsIndex(options = {}) {
+    this.sessionsController.leave();
     this.leaveAiLibrary();
     if (options.pushState !== false) this.window.history.pushState({ view: 'projects' }, '', this.pageUrl());
     this.projectLoadSequence += 1;
@@ -1364,6 +1384,10 @@ export class AgentProjectsPage {
   }
 
   showProjectSection(section, options = {}) {
+    clearTimeout(this.sessionSearchTimer);
+    if (section !== 'sessions') this.sessionsController.leave();
+    this.state.selectedSessionId = options.sessionId || null;
+    this.state.sessionSearch = options.search || ''; this.state.sessionBefore = options.before || null;
     if (!['overview', 'ai-library'].includes(section)) this.leaveAiLibrary();
     if (section === 'ai-library') this.libraryNavigation = options.libraryNavigation || { category: 'all', search: '', page: 0, itemId: null };
     this.disposeLogsWorkspace();
@@ -1385,9 +1409,10 @@ export class AgentProjectsPage {
     for (const id of ['agentsV2ProjectsView', 'agentsV2Builder', 'agentsV2TaskExecution', 'projectLogsWorkspace']) this.byId(id).classList.add('hidden');
     this.byId('agentsV2Workspace').classList.remove('hidden');
     this.hideRepositoryWorkspacePanels();
-    if (options.pushState !== false) this.writeProjectRoute();
+    if (options.pushState !== false) this.writeProjectRoute(options.replace === true);
     this.renderProjectWorkspace();
     this.syncTaskPolling();
+    if (section === 'sessions') void this.sessionsController.open(this.state.selectedProjectId, options.sessionId || null, { search: options.search || '', before: options.before || null });
     if (['overview', 'ai-library'].includes(section)) {
       void this.libraryController.load(this.state.selectedProjectId);
       if (section === 'ai-library') this.libraryProfilePoll.start({ immediate: true });
@@ -1398,8 +1423,9 @@ export class AgentProjectsPage {
   writeProjectRoute(replace = false) {
     const projectId = this.state.selectedProjectId;
     const section = this.state.projectSection;
-    const suffix = section === 'overview' ? '' : `/${section}`;
-    const query = section === 'tasks' && this.state.tasksPage ? `?page=${this.state.tasksPage}` : '';
+    const suffix = section === 'overview' ? '' : section === 'sessions' && this.state.selectedSessionId ? `/sessions/${encodeURIComponent(this.state.selectedSessionId)}` : `/${section}`;
+    const sessionQuery = new URLSearchParams(); if (this.state.sessionSearch) sessionQuery.set('search', this.state.sessionSearch); if (this.state.sessionBefore) sessionQuery.set('before', this.state.sessionBefore);
+    const query = section === 'tasks' && this.state.tasksPage ? `?page=${this.state.tasksPage}` : section === 'sessions' && sessionQuery.size ? `?${sessionQuery}` : '';
     const hash = `#/projects/${encodeURIComponent(projectId)}${suffix}${query}`;
     if (this.window.location.hash !== hash) this.window.history[replace ? 'replaceState' : 'pushState'](
       { view: 'project', projectId, section, page: this.state.tasksPage }, '', this.pageUrl(hash));
@@ -1416,6 +1442,13 @@ export class AgentProjectsPage {
 
   async syncRoute() {
     const routeHash = this.window.location.hash;
+    const sessionsMatch = routeHash.match(/^#\/projects\/([^/?]+)\/sessions(?:\/([^/?]+))?\/?(?:\?([^#]*))?$/);
+    if (sessionsMatch) {
+      try { const query = new URLSearchParams(sessionsMatch[3] || '');
+        await this.openProject(decodeURIComponent(sessionsMatch[1]), { section: 'sessions', sessionId: sessionsMatch[2] ? decodeURIComponent(sessionsMatch[2]) : null, search: query.get('search') || '', before: query.get('before'), pushState: false });
+      } catch { this.sessionsController.leave(); }
+      return;
+    }
     const libraryMatch = routeHash.match(/^#\/projects\/([^/?]+)\/ai-library(?:\/(skills|agents|flows|tools)\/([^/?]+))?\/?(?:\?([^#]*))?$/);
     if (libraryMatch) {
       try {
@@ -1729,12 +1762,14 @@ export class AgentProjectsPage {
     this.byId('projectOverviewBack').classList.toggle('hidden', section === 'overview');
     this.byId('projectDashboard').classList.toggle('hidden', section !== 'overview');
     this.byId('aiLibrary').classList.toggle('hidden', section !== 'ai-library');
+    this.byId('agentSessions').classList.toggle('hidden', section !== 'sessions');
     if (section === 'ai-library') this.libraryView.render(this.libraryController.state, this.libraryNavigation);
     const value = (status, count) => status === 'CURRENT' ? count : status === 'FAILED' || status === 'UNAVAILABLE' ? 'Unavailable' : 'Loading…';
     const states = this.state.collectionStates;
     const resourceStatus = [states.repositories, states.assets].some((s) => ['FAILED', 'UNAVAILABLE'].includes(s)) ? 'FAILED'
       : states.repositories === 'CURRENT' && states.assets === 'CURRENT' ? 'CURRENT' : 'LOADING';
     const counts = {
+      sessions: 'Open conversations',
       'ai-library': librarySummary(this.libraryController.state),
       resources: value(resourceStatus, this.state.repositories.length + this.state.assets.length),
       agents: value(states.agents, this.state.agents.length),
@@ -1994,10 +2029,18 @@ export class AgentProjectsPage {
       && !this.state.repositoriesLoadFailed;
   }
 
+  launchAgentSession(source, id) {
+    const name = source === 'FORGE' ? this.state.agents.find(a => a.id === id)?.name : this.libraryController.state.snapshot?.categories?.agents?.items?.find(a => a.id === id)?.name;
+    return this.sessionLaunch.open({ projectId: this.state.selectedProjectId, projects: this.state.projects,
+      agentSource: source, agentId: id, agentName: name });
+  }
+
   async openAgentModal(agentId = null) {
     if (this.disposed || !this.projectDataCurrent()) {
       return;
     }
+    this.byId('agentsV2AgentStartSession')?.classList.toggle('hidden', !agentId);
+    if (this.byId('agentsV2AgentStartSession')) this.byId('agentsV2AgentStartSession').onclick = () => { this.closeDialog('agentsV2AgentDialog'); this.launchAgentSession('FORGE', agentId); };
     const generation = ++this.agentModalLoadGeneration;
     const projectId = this.state.selectedProjectId, sequence = this.projectLoadSequence;
     this.state.editingAgentId = agentId;

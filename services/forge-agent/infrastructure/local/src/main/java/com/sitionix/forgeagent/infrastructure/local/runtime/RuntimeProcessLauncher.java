@@ -34,6 +34,22 @@ public class RuntimeProcessLauncher {
                 grantEnvironment);
     }
 
+    /** Only the trusted application supplies this private snapshot; no browser paths. */
+    public ManagedRuntimeProcess startCodexPinned(Path directory,Map<String,String> grants,Map<String,String> resources)throws IOException {
+        if(!ready || resources==null || resources.size()>11000)throw unavailable();
+        String id=UUID.randomUUID().toString();
+        Process process=helper(List.of("start","codex",id,directory.toAbsolutePath().normalize().toString(),"--snapshot")).start();
+        var managed=new ManagedRuntimeProcess(process,()->stop(id));
+        try {
+            // Validate grants using the same narrow legacy envelope contract.
+            writeCodexEnvelope(OutputStream.nullOutputStream(),grants);
+            byte[] encoded=JSON.writeValueAsBytes(Map.of("grants",grants,"resources",resources));
+            if(encoded.length>2_097_152)throw unavailable();
+            process.getOutputStream().write(encoded);process.getOutputStream().write('\n');process.getOutputStream().flush();
+            return managed;
+        }catch(IOException|RuntimeException failure){managed.terminateOwnedUnit();throw unavailable();}
+    }
+
     public ManagedRuntimeProcess startGit(List<String> command) throws IOException {
         if (command.isEmpty() || !List.of("git", "/usr/bin/git").contains(command.getFirst())) throw unavailable();
         var arguments = new ArrayList<>(List.of("git", UUID.randomUUID().toString()));

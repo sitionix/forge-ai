@@ -1,4 +1,5 @@
 """Bounded metadata reader. Project roots come only from Forge's workspace port."""
+import hashlib
 import errno
 import json
 import os
@@ -18,6 +19,11 @@ MAX_ENTRIES = 2048
 FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
 DIRECTORY = FLAGS | os.O_DIRECTORY
 items = []
+resolved = []
+manifest = {}
+request = {}
+manifest_bytes = 0
+manifest_entries = 0
 diagnostics = set()
 seen = set()
 files = entries = total = output_bytes = 0
@@ -93,6 +99,16 @@ def scan(root):
                 identity = root + '/.codex/agents/' + name
                 if identity in seen:
                     continue
+                # Full private resolution is a separate server-only operation, never the inventory DTO.
+                if request.get('resolveId') == hashlib.sha256(('codex\0agent-file\0' + identity).encode()).hexdigest():
+                    allowed = {'name', 'description', 'developer_instructions', 'model', 'model_reasoning_effort'}
+                    if set(parsed) - allowed:
+                        raise ValueError('Unsupported definition configuration')
+                    if any(key in parsed and (not isinstance(parsed[key], str) or not parsed[key].strip()) for key in ('model','model_reasoning_effort')):
+                        raise ValueError('Invalid model configuration')
+                    resolved.append({'identity': identity, 'name': required[0], 'instructions': required[2],
+                                     'model': parsed.get('model'), 'effort': parsed.get('model_reasoning_effort'),
+                                     'fingerprint': hashlib.sha256(body).hexdigest()})
                 # Instructions, model settings and unknown configuration never leave this reader.
                 item = {'name': required[0].strip(), 'description': required[1].strip()[:2000], 'identity': identity}
                 encoded = json.dumps(item, ensure_ascii=False).encode('utf-8')
@@ -116,19 +132,95 @@ def scan(root):
                 os.close(fd)
 
 
+def scan_resources(root, global_source=False):
+    global manifest_bytes, manifest_entries
+    def read_file(parent, name, identity, agent=False):
+        global manifest_bytes
+        fd=os.open(name,FLAGS,dir_fd=parent)
+        try:
+            info=os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError()
+            data=os.read(fd,1048577)
+            manifest_bytes+=len(data)
+            if len(data)>1048576 or manifest_bytes>16777216:
+                raise LimitReached()
+            if agent:
+                parsed=tomllib.loads(data.decode('utf-8',errors='strict'))
+                if set(parsed)-{'name','description','developer_instructions','model','model_reasoning_effort'}:
+                    raise ValueError()
+            manifest[identity]=hashlib.sha256(data).hexdigest()
+            if info.st_mode & 0o111:manifest['@executable:'+identity]='executable'
+        finally:
+            os.close(fd)
+    def tree(parent,name,identity,depth=0,agent=False):
+        global manifest_entries
+        if depth>16: raise LimitReached()
+        fd=os.open(name,DIRECTORY,dir_fd=parent)
+        try:
+            with os.scandir(fd) as listing:
+                entries=sorted(list(listing),key=lambda e:e.name)
+            for entry in entries:
+                manifest_entries+=1
+                if manifest_entries>10000: raise LimitReached()
+                info=entry.stat(follow_symlinks=False)
+                child=identity+'/'+entry.name
+                if stat.S_ISDIR(info.st_mode):tree(fd,entry.name,child,depth+1,agent)
+                elif stat.S_ISREG(info.st_mode):read_file(fd,entry.name,child,agent and entry.name.endswith('.toml'))
+                else:raise ValueError()
+        finally:
+            os.close(fd)
+    manifest[('@global:' if global_source else '@project:')+root]='directory'
+    fd=directory(root)
+    try:
+        if not global_source:
+            for name in ('AGENTS.md','AGENTS.override.md'):
+                try:read_file(fd,name,root+'/'+name)
+                except FileNotFoundError:manifest[root+'/'+name]=hashlib.sha256(b'').hexdigest()
+        for config in ('.codex','.agents'):
+            sub=None
+            try:
+                sub=os.open(config,DIRECTORY,dir_fd=fd)
+                for folder in (('skills','agents') if config=='.codex' else ('skills',)):
+                    try:tree(sub,folder,root+'/'+config+'/'+folder,agent=folder=='agents')
+                    except FileNotFoundError:pass
+                if config=='.codex' and not global_source:
+                    try:read_file(sub,'config.toml',root+'/'+config+'/config.toml')
+                    except FileNotFoundError:manifest[root+'/.codex/config.toml']=hashlib.sha256(b'').hexdigest()
+            except FileNotFoundError:
+                if config=='.codex' and not global_source:manifest[root+'/.codex/config.toml']=hashlib.sha256(b'').hexdigest()
+            finally:
+                if sub is not None:os.close(sub)
+    finally:
+        os.close(fd)
+
+
 try:
     request = json.loads(sys.stdin.buffer.read(131073))
+    if (request.get('resolveId') or request.get('resourceManifest')) and sys.version_info[:3] != (3, 14, 4):
+        raise ValueError('Execution TOML parser version is unverified')
     roots = request['roots']
     project = request['projectRoot']
     if not isinstance(project, str) or not project.startswith('/') or len(project) > 4096 or str(PurePosixPath(project)) != project:
         raise ValueError()
     if not isinstance(roots, list) or len(roots) > 32:
         raise ValueError()
+    if request.get('resourceManifest'):
+        expanded=set(roots)
+        for entry in roots:
+            current=PurePosixPath(entry)
+            while current.is_relative_to(PurePosixPath(project)):
+                expanded.add(str(current))
+                if str(current)==project:break
+                current=current.parent
+        roots=sorted(expanded)
     global_home=request.get('globalHome')
     if global_home is not None:
         if (not isinstance(global_home,str) or global_home == '/' or not global_home.startswith('/') or '..' in PurePosixPath(global_home).parts or str(PurePosixPath(global_home)) != global_home or len(global_home)>4096):
             raise ValueError()
-        try: scan(global_home)
+        try:
+            if request.get('resourceManifest'): scan_resources(global_home,True)
+            else: scan(global_home)
         except OSError as failure: diagnostics.add('UNSAFE_RESOURCE' if failure.errno in (errno.ELOOP,errno.ENOTDIR) else 'WORKSPACE_UNAVAILABLE')
     for root in roots:
         if (not isinstance(root, str) or len(root) > 4096 or root == '/' or
@@ -136,11 +228,11 @@ try:
                 not PurePosixPath(root).is_relative_to(PurePosixPath(project))):
             raise ValueError()
         try:
-            scan(root)
+            (scan_resources if request.get('resourceManifest') else scan)(root)
         except OSError as failure:
             diagnostics.add('UNSAFE_RESOURCE' if failure.errno in (errno.ELOOP, errno.ENOTDIR) else 'WORKSPACE_UNAVAILABLE')
 except LimitReached:
     diagnostics.add('LIMIT_EXCEEDED')
 except Exception:
     diagnostics.add('DISCOVERY_FAILED')
-print(json.dumps({'items': items, 'diagnostics': sorted(diagnostics)}, ensure_ascii=False))
+print(json.dumps({'items': items, 'diagnostics': sorted(diagnostics), **({'resolved': resolved} if request.get('resolveId') else {}), **({'manifest': manifest} if request.get('resourceManifest') else {})}, ensure_ascii=False))

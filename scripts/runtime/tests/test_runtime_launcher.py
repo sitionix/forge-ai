@@ -23,6 +23,73 @@ class LauncherTests(unittest.TestCase):
             cls.launcher = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(cls.launcher)
 
+    def test_standalone_resources_are_copied_verified_and_immutable_after_source_changes(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder); project=root/'project';project.mkdir();(project/'.agents/skills/proof').mkdir(parents=True)
+            skill=project/'.agents/skills/proof/SKILL.md';skill.write_text('original')
+            manifest={'@project:'+str(project):'directory',str(skill):hashlib.sha256(b'original').hexdigest()}
+            config={'workspace_roots':[str(project)],'control_uid':os.getuid(),'runtime_home':str(root/'runtime')}
+            with self.launcher.pinned_resource_mounts(config,str(project),manifest) as mounts:
+                source=next(pathlib.Path(src) for src,dst in mounts if dst==str(project/'.agents'))
+                skill.write_text('changed after pinning')
+                self.assertEqual((source/'skills/proof/SKILL.md').read_text(),'original')
+                self.assertEqual((source/'skills/proof/SKILL.md').stat().st_mode & 0o222,0)
+            with self.assertRaises(ValueError):
+                with self.launcher.pinned_resource_mounts(config,str(project),manifest):pass
+            skill.unlink();skill.symlink_to('/etc/passwd')
+            with self.assertRaises((ValueError,OSError)):
+                with self.launcher.pinned_resource_mounts(config,str(project),manifest):pass
+
+    def test_pinned_resources_reject_untrusted_paths_and_mask_new_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder); project=root/'project';project.mkdir()
+            config={'workspace_roots':[str(project)],'control_uid':os.getuid(),'runtime_home':str(root/'runtime')}
+            manifest={'@project:'+str(project):'directory'}
+            with self.launcher.pinned_resource_mounts(config,str(project),manifest) as mounts:
+                source=next(pathlib.Path(src) for src,dst in mounts if dst==str(project/'.codex'))
+                (project/'.codex/agents').mkdir(parents=True);(project/'.codex/agents/new.toml').write_text('new content')
+                self.assertEqual(list(source.iterdir()),[])
+            for invalid in ({'@project:/etc':'directory'},{'@project:'+str(project):'directory','/etc/passwd':'0'*64}):
+                with self.assertRaises(ValueError):
+                    with self.launcher.pinned_resource_mounts(config,str(project),invalid):pass
+
+    def test_pinned_skill_helper_preserves_verified_executable_semantics(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder);project=root/'project';helper=project/'.agents/skills/proof/scripts/run.sh';helper.parent.mkdir(parents=True)
+            helper.write_text('#!/bin/sh\nprintf PINNED-EXECUTABLE\n');helper.chmod(0o755)
+            manifest={'@project:'+str(project):'directory',str(helper):hashlib.sha256(helper.read_bytes()).hexdigest(),'@executable:'+str(helper):'executable'}
+            config={'workspace_roots':[str(project)],'control_uid':os.getuid(),'runtime_home':str(root/'runtime')}
+            with self.launcher.pinned_resource_mounts(config,str(project),manifest) as mounts:
+                source=next(pathlib.Path(src) for src,dst in mounts if dst==str(project/'.agents'))
+                pinned=source/'skills/proof/scripts/run.sh';self.assertEqual(pinned.stat().st_mode & 0o7777,0o555)
+                self.assertEqual(subprocess.check_output([str(pinned)],text=True),'PINNED-EXECUTABLE')
+            helper.chmod(0o644)
+            with self.assertRaises(ValueError):
+                with self.launcher.pinned_resource_mounts(config,str(project),manifest):pass
+
+    def test_pinned_global_resources_keep_existing_directory_ownership_policy(self):
+        import types
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder);project=root/'project';project.mkdir();home=root/'home';(home/'.codex/skills').mkdir(parents=True);(home/'.codex/skills').chmod(0o777)
+            config={'workspace_roots':[str(project)],'control_uid':os.getuid(),'runtime_home':str(root/'runtime'),'global_resources_enabled':True}
+            manifest={'@project:'+str(project):'directory','@global:'+str(home):'directory'}
+            with patch.object(self.launcher.pwd,'getpwuid',return_value=types.SimpleNamespace(pw_dir=str(home))):
+                with self.assertRaises(ValueError):
+                    with self.launcher.pinned_resource_mounts(config,str(project),manifest):pass
+
+    def test_actual_inventory_manifest_launches_an_empty_workspace(self):
+        reader=SOURCE.parents[1].parent/'services/forge-agent/infrastructure/codex/src/main/resources/codex/project_agent_inventory.py'
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder);project=root/'project';project.mkdir()
+            result=subprocess.run([sys.executable,'-I',str(reader)],input=json.dumps({'roots':[str(project)],'projectRoot':str(project),'resourceManifest':True}),text=True,capture_output=True,check=True)
+            value=json.loads(result.stdout);self.assertEqual(value['diagnostics'],[])
+            config={'workspace_roots':[str(project)],'control_uid':os.getuid(),'runtime_home':str(root/'runtime')}
+            with self.launcher.pinned_resource_mounts(config,str(project),value['manifest']) as mounts:
+                source=next(pathlib.Path(src) for src,dst in mounts if dst==str(project/'.codex'))
+                self.assertEqual((source/'config.toml').read_bytes(),b'')
+
     def test_global_resources_are_opt_in_read_only_and_only_resource_directories(self):
         import types
         with tempfile.TemporaryDirectory() as folder:

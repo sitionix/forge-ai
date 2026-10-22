@@ -24,6 +24,7 @@ import org.springframework.web.client.RestClientException;
 @RestControllerAdvice(
     assignableTypes = {
       ForgeAiInfrastructureAgentsController.class,
+      com.sitionix.forgeai.api.standalone.ForgeAiStandaloneAgentSessionController.class,
       ForgeAiDialogueController.class,
       WorkflowTriggerController.class,
       ForgeAiProjectLogsController.class,

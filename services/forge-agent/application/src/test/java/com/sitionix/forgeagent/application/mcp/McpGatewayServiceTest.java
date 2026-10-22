@@ -18,6 +18,21 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class McpGatewayServiceTest {
+    @Test void standaloneGrantUsesOwnFencedProjectIdentityAndRevocationPolicy() {
+        var standalone=mock(com.sitionix.forgeagent.domain.port.standalone.StandaloneSessionRepository.class);service.withStandaloneSessions(standalone);
+        var d=new com.sitionix.forgeagent.domain.model.execution.EffectiveAgentDefinition("FORGE","a","a","i",new AgentModelSelection("codex","m",null),"f",java.util.Map.of(),false);
+        var s=new com.sitionix.forgeagent.domain.model.standalone.StandaloneAgentSession(sessionId,projectId,d,List.of(),"workspace","root","0.163.0","RUNNING",1,turnId,null,now,now,now);
+        var c=new com.sitionix.forgeagent.domain.model.standalone.StandaloneExecutionClaim(s,turnId,"task","turn","owner",7,now.plusSeconds(60),false,true);
+        when(standalone.current(c)).thenReturn(true);when(standalone.current(projectId,sessionId,turnId,"owner",7)).thenReturn(true);
+        when(cipher.decrypt(installation,connectionId,"credential",encrypted)).thenReturn(new byte[]{42});
+        when(grants.issue(any())).thenAnswer(i->new McpRuntimeGrantHandle(i.<McpRuntimeGrant>getArgument(0).id(),"standalone-token"));
+        var handle=service.issueStandalone(c,now.plusSeconds(60),connectionId);var capture=org.mockito.ArgumentCaptor.forClass(McpRuntimeGrant.class);verify(grants).issue(capture.capture());
+        var grant=capture.getValue();assertThat(grant.executionOwner()).isInstanceOf(McpExecutionOwner.Standalone.class);assertThat(grant.projectId()).isEqualTo(projectId);
+        when(grants.resolve(handle.token(),connectionId)).thenReturn(Optional.of(grant));assertThat(service.authorize(handle.token(),connectionId)).isEqualTo(grant);
+        clearInvocations(sessions,nodes,workflows);when(standalone.current(projectId,sessionId,turnId,"owner",7)).thenReturn(false);
+        assertThatThrownBy(()->service.authorize(handle.token(),connectionId)).isInstanceOf(McpGatewayAccessException.class);
+        verify(grants).remove(grant.id());verifyNoInteractions(sessions,nodes,workflows);
+    }
     private final UUID installation = UUID.randomUUID(), sessionId = UUID.randomUUID(), turnId = UUID.randomUUID();
     private final UUID nodeId = UUID.randomUUID(), workflowId = UUID.randomUUID(), projectId = UUID.randomUUID();
     private final UUID connectionId = UUID.randomUUID();

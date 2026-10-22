@@ -33,6 +33,11 @@ final class DefaultCodexAppServerProcessStarter implements CodexAppServerProcess
         return this.startProcess(workingDirectory, grants);
     }
 
+    @Override public StartedCodexAppServer startPinned(Path directory,McpRuntimeLaunchGrants grants,java.util.Map<String,String> resources) {
+        try { return new StartedCodexAppServer(launcher.startCodexPinned(directory,grants.environment(),resources),List.of("codex","app-server","--stdio"),Instant.now()); }
+        catch(IOException|IllegalStateException failure){throw new CodexTransportException("Immutable agent resource runtime is unavailable",failure);}
+    }
+
     private StartedCodexAppServer startProcess(final Path workingDirectory, final McpRuntimeLaunchGrants grants) {
         final List<String> command = List.copyOf(this.properties.getCommand());
         final Path launchDirectory = workingDirectory.toAbsolutePath().normalize();

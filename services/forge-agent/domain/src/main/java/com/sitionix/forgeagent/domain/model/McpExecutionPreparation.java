@@ -9,5 +9,7 @@ public record McpExecutionPreparation(McpExecutionSelection selection, McpRuntim
         Objects.requireNonNull(launchGrants);
     }
 
+    public boolean hasContext() { return !selection.entries().isEmpty() || !selection.diagnostics().isEmpty() || !launchGrants.isEmpty(); }
+
     @Override public String toString() { return "McpExecutionPreparation[selection=" + selection + ", launchGrants=[REDACTED]]"; }
 }

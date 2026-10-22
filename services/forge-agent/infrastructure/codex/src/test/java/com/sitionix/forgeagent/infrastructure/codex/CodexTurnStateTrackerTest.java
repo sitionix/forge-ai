@@ -9,6 +9,15 @@ import org.junit.jupiter.api.Test;
 class CodexTurnStateTrackerTest {
     private final ObjectMapper json=new ObjectMapper();
 
+    @Test void standaloneNativeChildrenAreAcceptedOnlyUnderExplicitPolicy() throws Exception {
+        for(String type:java.util.List.of("subAgentActivity","collabAgentToolCall")){
+            for(boolean allowed:java.util.List.of(false,true)){
+                var tracker=new CodexTurnStateTracker(allowed);var state=tracker.register("root");tracker.bindTurnId(state,"turn");
+                tracker.handleNotification("item/completed",json.createObjectNode().put("threadId","root").put("turnId","turn").set("item",json.createObjectNode().put("id","child-event").put("type",type)));
+                assertThat(state.done()).isEqualTo(!allowed);
+            }
+        }
+    }
     @Test
     void providerErrorStillUsesTopLevelReasonWhenNestedErrorHasOnlyACode() throws Exception {
         var tracker = new CodexTurnStateTracker();

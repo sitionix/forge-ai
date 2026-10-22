@@ -4,6 +4,7 @@ export const PROJECT_SECTIONS = [
   { key: 'workflows', title: 'Workflows', description: 'Workflow orchestration', action: 'New Workflow', icon: '⇄' },
   { key: 'tasks', title: 'Tasks', description: 'Tasks and execution history', action: 'New Task', icon: '☷' },
   { key: 'services', title: 'Services', description: 'Runtime services and status', action: 'New Service', icon: '⚙' },
+  { key: 'sessions', title: 'Sessions', description: 'Persistent conversations and live agent activity', icon: '◌' },
   { key: 'ai-library', title: 'AI Library', description: 'Capabilities available to the active AI provider', icon: '▧' },
   { key: 'logs', title: 'Logs & Health', description: 'Logs, monitoring, diagnostics', icon: '⌁' }
 ];

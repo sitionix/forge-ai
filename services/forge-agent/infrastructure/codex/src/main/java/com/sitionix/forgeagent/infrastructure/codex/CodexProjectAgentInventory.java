@@ -20,32 +20,8 @@ final class CodexProjectAgentInventory implements AgentInventoryPort {
  private static final ObjectMapper JSON=new ObjectMapper();
  private boolean allowedAgentPath(Path file,LibraryContext context){return context.workspaceRoots().stream().anyMatch(r->file.getParent().equals(r.resolve(".codex/agents"))) || globalHome!=null && file.getParent().equals(globalHome.resolve(".codex/agents"));}
  @Override public InventoryResult<AgentDescriptor> discover(LibraryContext context) {
-  Process process=null;FutureTask<byte[]> reading=null;
-  long deadline=System.nanoTime()+BUDGET_NANOS;
   try {
-   Path project=context.cwd();
-   if(!project.isAbsolute() || !project.normalize().equals(project) || project.getParent()==null || context.workspaceRoots().size()>32
-      || context.workspaceRoots().stream().anyMatch(p->!p.isAbsolute() || !p.normalize().equals(p) || !p.startsWith(project)))throw new IOException();
-   final String script;
-   try(var input=CodexProjectAgentInventory.class.getResourceAsStream("/codex/project_agent_inventory.py")) {
-    if(input==null)throw new IOException();script=new String(input.readNBytes(16385),StandardCharsets.UTF_8);if(script.length()>16384)throw new IOException();
-   }
-   var request=JSON.createObjectNode().put("projectRoot",project.toString());var roots=request.putArray("roots");context.workspaceRoots().forEach(p->roots.add(p.toString()));
-   if(globalHome!=null){if(!globalHome.isAbsolute() || !globalHome.normalize().equals(globalHome) || globalHome.getParent()==null)throw new IOException();request.put("globalHome",globalHome.toString());}
-   byte[] input=JSON.writeValueAsBytes(request);if(input.length>131072)throw new IOException();
-   var builder=new ProcessBuilder("/usr/bin/python3","-I","-c",script).directory(project.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD);
-   builder.environment().clear();builder.environment().put("LANG","C.UTF-8");
-   process=builder.start();final Process owned=process;
-   reading=new FutureTask<>(()->{
-    try(var stdin=owned.getOutputStream()){stdin.write(input);}
-    try(var stdout=owned.getInputStream()){return stdout.readNBytes(MAX_OUTPUT+1);}
-   });
-   Thread.startVirtualThread(reading);
-   long remaining=deadline-System.nanoTime()-TimeUnit.MILLISECONDS.toNanos(250);if(remaining<=0)throw new TimeoutException();
-   byte[] output=reading.get(remaining,TimeUnit.NANOSECONDS);
-   remaining=deadline-System.nanoTime()-TimeUnit.MILLISECONDS.toNanos(250);
-   if(output.length>MAX_OUTPUT || remaining<=0 || !process.waitFor(remaining,TimeUnit.NANOSECONDS) || process.exitValue()!=0)throw new IOException();
-   var response=JSON.readTree(output);if(!response.path("items").isArray() || !response.path("diagnostics").isArray() || response.path("items").size()>512)throw new IOException();
+   var response=query(context,null,false);
    var diagnostics=new LinkedHashSet<InventoryDiagnostic>();diagnostics.add(globalHome==null?InventoryDiagnostic.PROJECT_AGENT_FILES_ONLY:InventoryDiagnostic.AGENT_FILES_ONLY);
    for(var value:response.path("diagnostics")) {
     var diagnostic=InventoryDiagnostic.valueOf(value.asText());
@@ -61,8 +37,39 @@ final class CodexProjectAgentInventory implements AgentInventoryPort {
     items.add(new AgentDescriptor(id,CodexLibraryMetadataMapper.safeText(item.path("name").asText()),CodexLibraryMetadataMapper.safeText(item.path("description").asText()),new LibraryProvenance(globalHome==null?"Project Codex agent":"Codex agent",identity)));
    }
    return new InventoryResult<>(diagnostics.size()>1?InventoryStatus.FAILED:items.isEmpty()?InventoryStatus.EMPTY:InventoryStatus.AVAILABLE,items,List.copyOf(diagnostics));
-  } catch(InterruptedException interrupted) {Thread.currentThread().interrupt();return InventoryResult.unavailable(InventoryDiagnostic.RUNTIME_UNAVAILABLE);}
-  catch(Exception unavailable) {return InventoryResult.unavailable(InventoryDiagnostic.RUNTIME_UNAVAILABLE);}
+  } catch(Exception unavailable) {return InventoryResult.unavailable(InventoryDiagnostic.RUNTIME_UNAVAILABLE);}
+ }
+ com.fasterxml.jackson.databind.JsonNode resolve(LibraryContext context,String id) throws Exception { return query(context,id,false); }
+ com.fasterxml.jackson.databind.JsonNode manifest(LibraryContext context) throws Exception { return query(context,null,true); }
+ private com.fasterxml.jackson.databind.JsonNode query(LibraryContext context,String resolveId,boolean manifest) throws Exception {
+  Process process=null;FutureTask<byte[]> reading=null;
+  long deadline=System.nanoTime()+BUDGET_NANOS;
+  try {
+   Path project=context.cwd();
+   if(!project.isAbsolute() || !project.normalize().equals(project) || project.getParent()==null || context.workspaceRoots().size()>32
+      || context.workspaceRoots().stream().anyMatch(p->!p.isAbsolute() || !p.normalize().equals(p) || !p.startsWith(project)))throw new IOException();
+   final String script;
+   try(var input=CodexProjectAgentInventory.class.getResourceAsStream("/codex/project_agent_inventory.py")) {
+    if(input==null)throw new IOException();script=new String(input.readNBytes(16385),StandardCharsets.UTF_8);if(script.length()>16384)throw new IOException();
+   }
+   var request=JSON.createObjectNode().put("projectRoot",project.toString());if(resolveId!=null)request.put("resolveId",resolveId);if(manifest)request.put("resourceManifest",true);var roots=request.putArray("roots");context.workspaceRoots().forEach(p->roots.add(p.toString()));
+   if(globalHome!=null){if(!globalHome.isAbsolute() || !globalHome.normalize().equals(globalHome) || globalHome.getParent()==null)throw new IOException();request.put("globalHome",globalHome.toString());}
+   byte[] input=JSON.writeValueAsBytes(request);if(input.length>131072)throw new IOException();
+   var builder=new ProcessBuilder("/usr/bin/python3","-I","-c",script).directory(project.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD);
+   builder.environment().clear();builder.environment().put("LANG","C.UTF-8");
+   process=builder.start();final Process owned=process;
+   reading=new FutureTask<>(()->{
+    try(var stdin=owned.getOutputStream()){stdin.write(input);}
+    try(var stdout=owned.getInputStream()){return stdout.readNBytes(MAX_OUTPUT+1);}
+   });
+   Thread.startVirtualThread(reading);
+   long remaining=deadline-System.nanoTime()-TimeUnit.MILLISECONDS.toNanos(250);if(remaining<=0)throw new TimeoutException();
+   byte[] output=reading.get(remaining,TimeUnit.NANOSECONDS);
+   remaining=deadline-System.nanoTime()-TimeUnit.MILLISECONDS.toNanos(250);
+   if(output.length>MAX_OUTPUT || remaining<=0 || !process.waitFor(remaining,TimeUnit.NANOSECONDS) || process.exitValue()!=0)throw new IOException();
+   var response=JSON.readTree(output);if(!response.path("items").isArray() || !response.path("diagnostics").isArray() || response.path("items").size()>512)throw new IOException();
+   return response;
+  } catch(InterruptedException interrupted) {Thread.currentThread().interrupt();throw interrupted;}
   finally {
    if(process!=null && process.isAlive()) {
     process.destroyForcibly();

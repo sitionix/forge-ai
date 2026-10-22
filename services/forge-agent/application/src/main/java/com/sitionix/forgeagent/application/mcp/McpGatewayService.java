@@ -28,6 +28,7 @@ public class McpGatewayService implements McpGatewayRuntime {
     private final McpCredentialService credentials;
     private final McpRemoteToolClient remote;
     private final Clock clock;
+    private com.sitionix.forgeagent.domain.port.standalone.StandaloneSessionRepository standalone;
 
     public McpGatewayService(AgentExecutionSessionRepository sessions, NodeRunRepository nodes,
                              WorkflowRunRepository workflows, ProjectRepository projects,
@@ -47,6 +48,21 @@ public class McpGatewayService implements McpGatewayRuntime {
         this.clock = Objects.requireNonNull(clock);
     }
 
+    public McpGatewayService withStandaloneSessions(com.sitionix.forgeagent.domain.port.standalone.StandaloneSessionRepository repository) {
+        if (this.standalone != null) throw new IllegalStateException("Standalone ownership already configured");
+        this.standalone = Objects.requireNonNull(repository); return this;
+    }
+
+    public McpRuntimeGrantHandle issueStandalone(com.sitionix.forgeagent.domain.model.standalone.StandaloneExecutionClaim claim, Instant deadline, UUID connectionId) {
+        if (standalone == null || !standalone.current(claim)) throw denied();
+        return issueOwned(claim.session().projectId(), claim.session().id(), claim.turnId(),
+                new McpExecutionOwner.Standalone(claim.session().id(),claim.turnId()), claim.owner(),claim.token(),deadline,connectionId);
+    }
+    public void activateStandalone(com.sitionix.forgeagent.domain.model.standalone.StandaloneExecutionClaim claim) {
+        if (standalone == null || !standalone.current(claim)) throw denied();
+        grants.activateForDispatch(claim.turnId());
+    }
+
     /** Callable only from an Agent-owned execution path, never from HTTP management. */
     public McpRuntimeGrantHandle issue(AgentSessionExecutionClaim claim, Instant executionDeadline, UUID connectionId) {
         if (claim == null || executionDeadline == null || connectionId == null) throw denied();
@@ -57,16 +73,19 @@ public class McpGatewayService implements McpGatewayRuntime {
         var workflow = workflows.findById(session.workflowRunId()).orElseThrow(McpGatewayService::denied);
         if (workflow.status() != WorkflowRunStatus.RUNNING || projects.findById(workflow.projectId()).isEmpty())
             throw denied();
+        return issueOwned(workflow.projectId(),claim.sessionId(),claim.turnId(),
+                new McpExecutionOwner.Workflow(claim.nodeRunId(),session.workflowRunId()),claim.leaseOwnerId(),claim.leaseToken(),executionDeadline,connectionId);
+    }
+
+    private McpRuntimeGrantHandle issueOwned(UUID projectId,UUID sessionId,UUID turnId,McpExecutionOwner owner,String leaseOwner,long token,Instant deadline,UUID connectionId) {
         UUID installation = identity.getOrCreate();
         var connection = connections.findById(installation, connectionId).orElseThrow(McpGatewayService::denied);
-        if (!connection.enabled() || !connection.projectAccess().allows(workflow.projectId())
+        if (!connection.enabled() || !connection.projectAccess().allows(projectId)
                 || connection.allowedTools().isEmpty()) throw denied();
         var encrypted = credential(installation, connection);
-        Instant deadline = executionDeadline;
-        if (!deadline.isAfter(clock.instant())) throw denied();
-        var grant = new McpRuntimeGrant(UUID.randomUUID(), installation, claim.sessionId(), claim.turnId(),
-                claim.nodeRunId(), session.workflowRunId(), workflow.projectId(), claim.leaseOwnerId(),
-                claim.leaseToken(), connectionId, connection.endpoint(), connection.authType(),
+        if (deadline == null || !deadline.isAfter(clock.instant())) throw denied();
+        var grant = new McpRuntimeGrant(UUID.randomUUID(), installation, sessionId, turnId, owner,
+                projectId, leaseOwner,token, connectionId, connection.endpoint(), connection.authType(),
                 credentialIdentity(connection, encrypted), connection.allowedTools(), deadline);
         McpRuntimeGrantHandle handle = grants.issue(grant);
         byte[] plaintext = null;
@@ -158,11 +177,14 @@ public class McpGatewayService implements McpGatewayRuntime {
     }
 
     private void validate(McpRuntimeGrant grant) {
-        if (executionSession(grant.sessionId(), grant.turnId(), grant.nodeRunId(),
-                grant.leaseOwnerId(), grant.leaseToken()) == null) throw denied();
-        var workflow = workflows.findById(grant.workflowRunId()).orElseThrow(McpGatewayService::denied);
-        if (workflow.status() != WorkflowRunStatus.RUNNING || !grant.projectId().equals(workflow.projectId())
-                || projects.findById(grant.projectId()).isEmpty()) throw denied();
+        if (grant.executionOwner() instanceof McpExecutionOwner.Workflow workflowOwner) {
+            if (executionSession(grant.sessionId(), grant.turnId(), workflowOwner.nodeRunId(),grant.leaseOwnerId(),grant.leaseToken()) == null) throw denied();
+            var workflow=workflows.findById(workflowOwner.workflowRunId()).orElseThrow(McpGatewayService::denied);
+            if(workflow.status()!=WorkflowRunStatus.RUNNING || !grant.projectId().equals(workflow.projectId())) throw denied();
+        } else if (grant.executionOwner() instanceof McpExecutionOwner.Standalone) {
+            if(standalone==null || !standalone.current(grant.projectId(),grant.sessionId(),grant.turnId(),grant.leaseOwnerId(),grant.leaseToken())) throw denied();
+        } else throw denied();
+        if(projects.findById(grant.projectId()).isEmpty()) throw denied();
         var connection = connections.findById(grant.installationId(), grant.connectionId())
                 .orElseThrow(McpGatewayService::denied);
         if (!connection.enabled() || !connection.projectAccess().allows(grant.projectId())

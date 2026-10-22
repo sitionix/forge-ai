@@ -7,8 +7,10 @@ import java.util.Objects;
 public record ProviderTurnRecoveryResult(
         ProviderTurnRecoveryState state,
         ProviderTurnRecoveryTerminalOutcome terminalOutcome,
-        String diagnostic
+        String diagnostic,
+        String assistantText
 ) {
+    public ProviderTurnRecoveryResult(ProviderTurnRecoveryState state,ProviderTurnRecoveryTerminalOutcome outcome,String diagnostic){this(state,outcome,diagnostic,null);}
     public ProviderTurnRecoveryResult {
         state = Objects.requireNonNull(state, "state");
         terminalOutcome = Objects.requireNonNull(terminalOutcome, "terminalOutcome");
