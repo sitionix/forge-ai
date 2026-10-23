@@ -6,10 +6,6 @@ import os
 from pathlib import PurePosixPath
 import stat
 import sys
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
 
 MAX_FILE = 65536
 MAX_TOTAL = 2097152
@@ -25,12 +21,45 @@ request = {}
 manifest_bytes = 0
 manifest_entries = 0
 diagnostics = set()
+runtime_compatible = False
 seen = set()
 files = entries = total = output_bytes = 0
 
 
 class LimitReached(Exception):
     pass
+
+
+class RuntimeUnsupported(Exception):
+    pass
+
+
+def verified_parser():
+    """TOML 1.0 contract on characterized CPython minor lines, never a backport."""
+    if (sys.implementation.name != 'cpython' or sys.version_info[:2] not in
+            ((3, 11), (3, 12), (3, 14)) or sys.version_info.releaselevel != 'final'):
+        raise RuntimeUnsupported()
+    try:
+        import tomllib
+        sample = ('name = "R\\u00e9viewer"\ndescription = \'Reviews # changes\'\n'
+                  'developer_instructions = """Keep complete instructions.\n'
+                  'Inspect \\"quoted\\" text and \\u03bb carefully."""\n'
+                  'model = \'native-model\'\nmodel_reasoning_effort = \'high\'\n')
+        if tomllib.loads(sample) != {
+                'name': 'Réviewer', 'description': 'Reviews # changes',
+                'developer_instructions': 'Keep complete instructions.\nInspect "quoted" text and λ carefully.',
+                'model': 'native-model', 'model_reasoning_effort': 'high'}:
+            raise RuntimeUnsupported()
+        for invalid in ('x=1\nx=2', 'x="\\e"', 'x="\\x41"', 'x="unterminated',
+                        '[x]\n[x]', 'x=01', 'x="raw\x01control"'):
+            try:
+                tomllib.loads(invalid)
+            except tomllib.TOMLDecodeError:
+                continue
+            raise RuntimeUnsupported()
+        return tomllib
+    except Exception as failure:
+        raise RuntimeUnsupported() from failure
 
 
 def directory(path):
@@ -158,11 +187,14 @@ def scan_resources(root, global_source=False):
         if depth>16: raise LimitReached()
         fd=os.open(name,DIRECTORY,dir_fd=parent)
         try:
+            entries=[]
             with os.scandir(fd) as listing:
-                entries=sorted(list(listing),key=lambda e:e.name)
+                for entry in listing:
+                    manifest_entries+=1
+                    if manifest_entries>10000: raise LimitReached()
+                    entries.append(entry)
+            entries.sort(key=lambda e:e.name)
             for entry in entries:
-                manifest_entries+=1
-                if manifest_entries>10000: raise LimitReached()
                 info=entry.stat(follow_symlinks=False)
                 child=identity+'/'+entry.name
                 if stat.S_ISDIR(info.st_mode):tree(fd,entry.name,child,depth+1,agent)
@@ -197,14 +229,19 @@ def scan_resources(root, global_source=False):
 
 try:
     request = json.loads(sys.stdin.buffer.read(131073))
-    if (request.get('resolveId') or request.get('resourceManifest')) and sys.version_info[:3] != (3, 14, 4):
-        raise ValueError('Execution TOML parser version is unverified')
+    tomllib = verified_parser()
+    runtime_compatible = True
     roots = request['roots']
     project = request['projectRoot']
-    if not isinstance(project, str) or not project.startswith('/') or len(project) > 4096 or str(PurePosixPath(project)) != project:
+    if not isinstance(project, str) or project == '/' or not project.startswith('/') or '..' in PurePosixPath(project).parts or len(project) > 4096 or str(PurePosixPath(project)) != project:
         raise ValueError()
     if not isinstance(roots, list) or len(roots) > 32:
         raise ValueError()
+    for root in roots:
+        if (not isinstance(root, str) or len(root) > 4096 or root == '/' or
+                not root.startswith('/') or '..' in PurePosixPath(root).parts or str(PurePosixPath(root)) != root or
+                not PurePosixPath(root).is_relative_to(PurePosixPath(project))):
+            raise ValueError()
     if request.get('resourceManifest'):
         expanded=set(roots)
         for entry in roots:
@@ -223,16 +260,21 @@ try:
             else: scan(global_home)
         except OSError as failure: diagnostics.add('UNSAFE_RESOURCE' if failure.errno in (errno.ELOOP,errno.ENOTDIR) else 'WORKSPACE_UNAVAILABLE')
     for root in roots:
-        if (not isinstance(root, str) or len(root) > 4096 or root == '/' or
-                not root.startswith('/') or '..' in PurePosixPath(root).parts or str(PurePosixPath(root)) != root or
-                not PurePosixPath(root).is_relative_to(PurePosixPath(project))):
-            raise ValueError()
         try:
             (scan_resources if request.get('resourceManifest') else scan)(root)
         except OSError as failure:
             diagnostics.add('UNSAFE_RESOURCE' if failure.errno in (errno.ELOOP, errno.ENOTDIR) else 'WORKSPACE_UNAVAILABLE')
+except RuntimeUnsupported:
+    diagnostics.add('RUNTIME_UNAVAILABLE')
 except LimitReached:
     diagnostics.add('LIMIT_EXCEEDED')
 except Exception:
     diagnostics.add('DISCOVERY_FAILED')
-print(json.dumps({'items': items, 'diagnostics': sorted(diagnostics), **({'resolved': resolved} if request.get('resolveId') else {}), **({'manifest': manifest} if request.get('resourceManifest') else {})}, ensure_ascii=False))
+response = {'items': items, 'diagnostics': sorted(diagnostics), 'runtimeCompatible': runtime_compatible,
+            **({'resolved': resolved} if request.get('resolveId') else {}),
+            **({'manifest': manifest} if request.get('resourceManifest') else {})}
+encoded = json.dumps(response, ensure_ascii=False)
+if len(encoded.encode('utf-8')) > MAX_OUTPUT:
+    response.update(items=[], resolved=[], manifest={}, diagnostics=['LIMIT_EXCEEDED'])
+    encoded = json.dumps(response)
+print(encoded)

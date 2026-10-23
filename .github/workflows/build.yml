@@ -11,6 +11,23 @@ permissions:
   contents: read
 
 jobs:
+  native-definition-reader:
+    name: Native definition reader / Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify the installed parser and secure reader contract
+        run: |
+          python -I --version
+          python -I -m unittest discover -s scripts/runtime/tests -p 'test_native_agent_reader.py' -v
+
   service:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -88,6 +105,8 @@ jobs:
               ;;
 
             forge-agent)
+              /usr/bin/python3 -I --version
+              /usr/bin/python3 -I -m unittest discover -s scripts/runtime/tests -p 'test_native_agent_reader.py' -v
               cat > .maven-settings.xml <<EOF
           <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"

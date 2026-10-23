@@ -25,8 +25,10 @@ gateway. Browser references cannot select paths, process commands or Codex confi
 
 Native resolution uses the existing bounded inventory reader through no-follow file
 access and opaque server-derived IDs. Full execution parsing is characterized against
-Python **3.14.4**, with an allowlist of name, description, developer instructions, model
-and reasoning effort. Unsupported execution configuration is rejected. Forge retains
+CPython **3.11.x, 3.12.x and 3.14.x**, with a checked TOML contract and an allowlist of
+name, description, developer instructions, model and reasoning effort. See the
+[reader compatibility policy](native-agent-definition-reader.md) for interpreter
+evidence and deployment prerequisites. Unsupported execution configuration is rejected. Forge retains
 its own persisted model/effort; the global profile is only a native fallback.
 
 Snapshots contain source fingerprints, instructions, model/effort, repository/workspace
