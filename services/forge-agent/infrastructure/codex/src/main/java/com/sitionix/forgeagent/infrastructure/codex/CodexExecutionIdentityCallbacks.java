@@ -2,7 +2,7 @@ package com.sitionix.forgeagent.infrastructure.codex;
 
 import com.sitionix.forgeagent.domain.model.AgentExecutionEventCandidate;
 
-interface CodexExecutionIdentityCallbacks {
+interface CodexExecutionIdentityCallbacks extends com.sitionix.forgeagent.application.runtime.AgentTurnIdentityCallbacks, com.sitionix.forgeagent.application.runtime.AgentTurnEventSink {
     default void executionStarted(final Runnable cancellation) { }
     void conversationStarted(String threadId, String providerVersion);
     void turnStarted(String turnId);

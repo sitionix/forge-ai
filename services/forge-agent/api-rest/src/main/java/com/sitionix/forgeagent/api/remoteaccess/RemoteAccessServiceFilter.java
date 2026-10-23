@@ -14,7 +14,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
 /** Dedicated local service identity; SSH keys never authenticate management HTTP. */
 public final class RemoteAccessServiceFilter implements Filter {
     private final byte[] credential;
-    public RemoteAccessServiceFilter(Path path) { credential=readCredential(path).getBytes(StandardCharsets.UTF_8); }
+    private final boolean libraryOnly;
+    public RemoteAccessServiceFilter(Path path) { this(readCredential(path),false); }
+    public RemoteAccessServiceFilter(String serviceCredential) { this(serviceCredential,true); }
+    private RemoteAccessServiceFilter(String serviceCredential,boolean libraryOnly) { credential=serviceCredential.getBytes(StandardCharsets.UTF_8);this.libraryOnly=libraryOnly; }
     public static String readCredential(Path path) {
         try {
             var absolute=path.toAbsolutePath().normalize();
@@ -41,7 +44,7 @@ public final class RemoteAccessServiceFilter implements Filter {
     @Override public void doFilter(ServletRequest input,ServletResponse output,FilterChain chain) throws IOException,ServletException {
         var request=(HttpServletRequest)input;var response=(HttpServletResponse)output;
         try {
-            if (!com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.remoteAccess(request)) { chain.doFilter(input,output);return; }
+            if (libraryOnly ? !com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.library(request) : !com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.remoteAccess(request)) { chain.doFilter(input,output);return; }
         } catch (IllegalArgumentException invalid) { response.setStatus(401);return; }
         response.setHeader("Cache-Control","no-store");
         String authorization=request.getHeader("Authorization");
@@ -51,6 +54,11 @@ public final class RemoteAccessServiceFilter implements Filter {
             response.setStatus(401);response.setContentType("application/json");
             response.getWriter().write("{\"code\":\"REMOTE_ACCESS_UNAUTHORIZED\",\"message\":\"Local service authentication required\",\"correlationId\":\""+java.util.UUID.randomUUID()+"\"}");
             return;
+        }
+        if (com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.library(request)) {
+            boolean browser=java.util.Collections.list(request.getHeaderNames()).stream().anyMatch(name->name.equalsIgnoreCase("Origin") || name.toLowerCase(java.util.Locale.ROOT).startsWith("sec-fetch-"));
+            if(browser){response.setStatus(403);return;}
+            request.setAttribute(com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.LIBRARY_AUTHENTICATED,Boolean.TRUE);
         }
         chain.doFilter(request,response);
     }

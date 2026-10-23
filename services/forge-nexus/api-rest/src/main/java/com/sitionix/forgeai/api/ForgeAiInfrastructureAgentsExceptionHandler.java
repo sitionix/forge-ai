@@ -24,12 +24,14 @@ import org.springframework.web.client.RestClientException;
 @RestControllerAdvice(
     assignableTypes = {
       ForgeAiInfrastructureAgentsController.class,
+      com.sitionix.forgeai.api.standalone.ForgeAiStandaloneAgentSessionController.class,
       ForgeAiDialogueController.class,
       WorkflowTriggerController.class,
       ForgeAiProjectLogsController.class,
       ForgeAiProjectSshConnectionsController.class,
       ForgeAiProjectServicesController.class,
       ForgeAiProjectAssetsController.class,
+      ForgeAiLibraryController.class,
       ForgeAiRuntimeTargetDiscoveryController.class
     })
 @RequiredArgsConstructor
@@ -53,7 +55,7 @@ public class ForgeAiInfrastructureAgentsExceptionHandler {
           "Forge Agent service returned an invalid response.",
           null);
     }
-    return ResponseEntity.status(statusCode).body(error);
+    return ResponseEntity.status(statusCode).cacheControl(org.springframework.http.CacheControl.noStore()).body(error);
   }
 
   @ExceptionHandler(ResourceAccessException.class)
@@ -106,6 +108,7 @@ public class ForgeAiInfrastructureAgentsExceptionHandler {
       final String message,
       final String correlationId) {
     return ResponseEntity.status(status)
+        .cacheControl(org.springframework.http.CacheControl.noStore())
         .body(new InfrastructureErrorResponse(code, message, correlationId));
   }
 

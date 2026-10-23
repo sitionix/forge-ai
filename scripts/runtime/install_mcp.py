@@ -14,6 +14,8 @@ import subprocess
 import tempfile
 import uuid
 import secrets
+import re
+import sys
 
 
 def trusted_parent(path, trusted_uid=0):
@@ -48,10 +50,33 @@ def provision_codex_home(home, runtime_uid, runtime_gid):
     # lifecycle and must survive repeat installs; personal HOME is never a source.
     codex_home = home / '.codex'
     protected_directory(codex_home, runtime_uid, runtime_gid, 0o700)
-    for directory in [codex_home / 'plugins', codex_home / '.agents', codex_home / '.agents/plugins']:
+    for directory in [home/'.agents', home/'.agents/skills', codex_home/'agents', codex_home / 'plugins', codex_home / '.agents', codex_home / '.agents/plugins']:
         protected_directory(directory, runtime_uid, runtime_gid, 0o700)
+    protected_directory(codex_home/'skills', runtime_uid, runtime_gid, 0o770)
+    provision_native_skill_target(codex_home/'skills', runtime_uid, runtime_gid)
     write_once(codex_home / 'config.toml', b'', runtime_uid, runtime_gid)
     return codex_home
+
+
+def provision_native_skill_target(parent,uid,gid):
+    fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        for component in parent.parts[1:]:
+            child=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+            os.close(fd);fd=child;info=os.fstat(fd)
+            if info.st_uid not in (0,uid) or (info.st_mode & 0o002 and not(info.st_uid==0 and info.st_mode & stat.S_ISVTX)) or (info.st_mode & 0o020 and not(info.st_uid==uid and info.st_gid==gid) and not(info.st_uid==0 and info.st_mode & stat.S_ISVTX)):
+                raise RuntimeError('Unsafe native Skills directory')
+        created=False
+        try: os.mkdir('forge-global',0o700,dir_fd=fd);created=True
+        except FileExistsError: pass
+        target=os.open('forge-global',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+        try:
+            if created: os.fchown(target,uid,gid)
+            info=os.fstat(target)
+            if info.st_uid!=uid or info.st_gid!=gid or stat.S_IMODE(info.st_mode)!=0o700:
+                raise RuntimeError('Unsafe native Skills mount target')
+        finally: os.close(target)
+    finally: os.close(fd)
 
 
 def provision_codex_service_token(directory, control_uid, control_gid):
@@ -114,6 +139,69 @@ def load_module(path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def global_resource_environment(config):
+    home=pwd.getpwuid(config['control_uid']).pw_dir
+    if not re.fullmatch(r'/[A-Za-z0-9_./-]+',home) or '..' in pathlib.Path(home).parts or home == '/':
+        raise RuntimeError('Unsafe operator resource home')
+    return ('FORGE_CODEX_LIBRARY_GLOBAL_HOME="'+home+'"\n').encode()
+
+
+def enable_global_resources():
+    """Explicit local opt-in, never accepts browser paths or provider secrets."""
+    if os.geteuid()!=0: raise RuntimeError('System privileges required')
+    path=pathlib.Path('/etc/forge/runtime-launcher.json')
+    trusted_parent(path)
+    info=path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_nlink!=1 or stat.S_IMODE(info.st_mode)!=0o600:
+        raise RuntimeError('Unsafe launcher configuration')
+    config=json.loads(path.read_text())
+    value=global_resource_environment(config)
+    provision_codex_home(pathlib.Path(config['runtime_home']),config['runtime_uid'],config['runtime_gid'])
+    environment=pathlib.Path('/etc/forge-ai/mcp/agent.env')
+    config['global_resources_enabled']=True
+    # Validate/read/update control-owned files by anchored descriptors, never reopen
+    # a checked pathname as root. No symlink, FIFO or unbounded secret read.
+    with global_environment_update(environment,config['control_uid'],value):
+        with tempfile.TemporaryDirectory() as folder:
+            candidate=pathlib.Path(folder)/'config';candidate.write_text(json.dumps(config,indent=2)+'\n')
+            install_file(candidate,path,0o600)
+
+
+from contextlib import contextmanager
+
+@contextmanager
+def global_environment_update(environment,control_uid,value):
+    parent=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    staging=None
+    try:
+        for component in environment.parent.parts[1:]:
+            child=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=parent)
+            os.close(parent);parent=child
+            info=os.fstat(parent)
+            if info.st_uid not in (0,control_uid) or (info.st_mode & 0o022 and not(info.st_uid==0 and info.st_mode & stat.S_ISVTX)):
+                raise RuntimeError('Unsafe Agent environment directory')
+        fd=os.open(environment.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=parent)
+        with os.fdopen(fd,'rb') as stream:
+            info=os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=control_uid or info.st_nlink!=1 or stat.S_IMODE(info.st_mode)!=0o600:
+                raise RuntimeError('Unsafe Agent environment')
+            before=stream.read(1048577)
+        if len(before)>1048576: raise RuntimeError('Invalid Agent environment')
+        content=b'\n'.join(line for line in before.splitlines() if not line.startswith(b'FORGE_CODEX_LIBRARY_GLOBAL_HOME='))+b'\n'+value
+        staging='.global-resources-'+uuid.uuid4().hex
+        fd=os.open(staging,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=parent)
+        with os.fdopen(fd,'wb') as stream:
+            os.fchown(stream.fileno(),info.st_uid,info.st_gid)
+            stream.write(content);stream.flush();os.fsync(stream.fileno())
+        yield
+        os.replace(staging,environment.name,src_dir_fd=parent,dst_dir_fd=parent)
+        staging=None
+    finally:
+        if staging is not None: os.unlink(staging,dir_fd=parent)
+        os.close(parent)
+
 
 
 def runtime_account():
@@ -188,6 +276,7 @@ def install(source, control_name, codex_source, database_file, workspace_root, m
             'agent_unit': 'forge-agent.service', 'max_lifetime_seconds': 7200,
             'codex_binary': str(codex_root / 'bin/codex'), 'codex_config': str(base), 'empty_system_config': str(empty),
             'git_binary': str(pathlib.Path('/usr/bin/git').resolve()), 'env_binary': str(environment_binary)}
+    if previous and previous.get('global_resources_enabled',False): data['global_resources_enabled']=True
     if previous is not None and previous != data:
         raise RuntimeError('Conflicting existing launcher configuration')
     write_once(config, config.read_bytes() if previous else (json.dumps(data, indent=2) + '\n').encode())
@@ -220,6 +309,7 @@ def install(source, control_name, codex_source, database_file, workspace_root, m
                     str(source / 'scripts/runtime/prepare_workspaces.py'),
                     str(source / 'forge-projects'), str(workspace_root)], check=True)
     content = agent_environment(paths, workspace_root, runtime_cwd)
+    if data.get('global_resources_enabled',False): content += global_resource_environment(data)
     path = material_root / 'agent.env'
     provision.read_existing(path, control.pw_uid)  # Reject unsafe existing metadata.
     fd, temporary = tempfile.mkstemp(dir=material_root, prefix='.environment-')
@@ -236,6 +326,9 @@ def install(source, control_name, codex_source, database_file, workspace_root, m
 
 
 if __name__ == '__main__':
+    if sys.argv[1:] == ['--enable-global-resources']:
+        enable_global_resources()
+        sys.exit(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('source', type=pathlib.Path)
     parser.add_argument('control_user')

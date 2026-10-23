@@ -48,9 +48,11 @@ class AgentMcpGatewayConfiguration {
             NodeRunRepository nodes, WorkflowRunRepository workflows, ProjectRepository projects,
             McpConnectionRepository connections, ForgeInstanceIdentityRepository identity,
             McpRuntimeGrantRepository grants, SdkMcpGatewayToolView views,
-            com.sitionix.forgeagent.application.mcp.McpCredentialService credentials, McpRemoteToolClient remote, Clock clock) {
-        return new McpGatewayService(sessions, nodes, workflows, projects, connections, identity,
+            com.sitionix.forgeagent.application.mcp.McpCredentialService credentials, McpRemoteToolClient remote, Clock clock,
+            org.springframework.beans.factory.ObjectProvider<com.sitionix.forgeagent.domain.port.standalone.StandaloneSessionRepository> standalone) {
+        var gateway = new McpGatewayService(sessions, nodes, workflows, projects, connections, identity,
                 grants, views, credentials, remote, clock);
+        standalone.ifAvailable(gateway::withStandaloneSessions);return gateway;
     }
 
     @Bean McpExecutionSelectionService mcpExecutionSelectionService(WorkflowRunRepository workflows,

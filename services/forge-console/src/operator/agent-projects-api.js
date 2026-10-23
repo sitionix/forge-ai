@@ -1,7 +1,11 @@
+import { createAgentSessionsApi } from './agent-sessions-api.js';
 export function createAgentProjectsApi(http) {
   const root = "/agents";
   const dialoguePath = (runId, nodeRunId) => `${root}/workflow-runs/${encodeURIComponent(runId)}/node-runs/${encodeURIComponent(nodeRunId)}/dialogue`;
   return {
+    ...createAgentSessionsApi(http),
+    getAiLibrary(projectId, { signal } = {}) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/ai-library`, { signal }); },
+    getActiveProfile({ signal } = {}) { return http.get('/knowledge/active-profile', { signal }); },
     listTriggerConnections(projectId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/trigger-connections`); },
     listTriggerConfigurations(projectId, connectionId) { return http.get(`${root}/projects/${encodeURIComponent(projectId)}/trigger-connections/${encodeURIComponent(connectionId)}/configurations`); },
     getTriggerBinding(workflowId, nodeId) { return http.get(`${root}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/trigger-binding`); },

@@ -832,7 +832,8 @@ class CodexAppServerTurnClientTest {
                         "web_search": "disabled",
                           "features": {
                             "shell_tool": true,
-                            "apps": false
+                            "apps": false,
+                            "multi_agent": false
                           },
                           "agents": {
                             "enabled": false

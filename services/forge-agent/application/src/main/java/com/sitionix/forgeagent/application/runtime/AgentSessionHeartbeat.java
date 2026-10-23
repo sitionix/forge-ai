@@ -12,9 +12,12 @@ public final class AgentSessionHeartbeat implements AutoCloseable {
 
     public AgentSessionHeartbeat(final AgentSessionLeaseService leases, final AgentSessionExecutionClaim claim,
                           final ScheduledExecutorService scheduler, final Runnable ownershipLost) {
+        this(() -> leases.renew(claim),scheduler,ownershipLost);
+    }
+    public AgentSessionHeartbeat(final Runnable renewal, final ScheduledExecutorService scheduler,final Runnable ownershipLost) {
         this.future = scheduler.scheduleAtFixedRate(() -> {
             try {
-                leases.renew(claim);
+                renewal.run();
             } catch (RuntimeException exception) {
                 if (this.failure.compareAndSet(null, exception)) ownershipLost.run();
             }

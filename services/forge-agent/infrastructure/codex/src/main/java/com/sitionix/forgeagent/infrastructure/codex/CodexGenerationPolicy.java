@@ -18,8 +18,12 @@ final class CodexGenerationPolicy {
             "mcpToolCall"
     );
 
+    private final boolean nativeSubagents;
+    CodexGenerationPolicy(){this(false);}
+    CodexGenerationPolicy(boolean nativeSubagents){this.nativeSubagents=nativeSubagents;}
+
     RuntimeException violationFor(final String itemType) {
-        if (itemType != null && ALLOWED_ITEM_TYPES.contains(itemType)) {
+        if (itemType != null && (ALLOWED_ITEM_TYPES.contains(itemType) || nativeSubagents && Set.of("subAgentActivity","collabAgentToolCall").contains(itemType))) {
             return null;
         }
         return new CodexTransportException(

@@ -33,7 +33,7 @@ final class CodexAppServerClient implements CodexClient {
     static final String SUPPORTED_RECOVERY_VERSION = SUPPORTED_DURABLE_VERSION;
 
     static boolean supportsDurableVersion(String version) {
-        return SUPPORTED_DURABLE_VERSION.equals(version) || "0.160.0".equals(version) || "0.160.1".equals(version);
+        return SUPPORTED_DURABLE_VERSION.equals(version) || "0.160.0".equals(version) || "0.160.1".equals(version) || "0.163.0".equals(version);
     }
 
     private final ObjectMapper objectMapper;
@@ -59,6 +59,67 @@ final class CodexAppServerClient implements CodexClient {
         this.gatewayAddress = gatewayAddress;
         this.inventoryVerifier = new CodexMcpInventoryVerifier(objectMapper);
         this.authorizationGate = java.util.Objects.requireNonNull(authorizationGate);
+    }
+
+    /** Approved read-only project inventory; never shares the model discovery process. */
+    CodexInventorySession openInventory(Path cwd) {
+        var lease = this.authorizationGate.observe();
+        try {
+            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(30).toNanos();
+            var current = this.startNeutralTransport(cwd, lease);
+            var initialized = this.initializeResponse(current, java.time.Duration.ofNanos(Math.min(
+                    this.properties.getRequestTimeout().toNanos(), deadline - System.nanoTime())));
+            CodexLibraryCapabilities.requireCanonicalSkillPaths(extractVersion(initialized));
+            var homeValue = initialized.path("codexHome");
+            if (!homeValue.isTextual() || homeValue.asText().length()>4096) throw new CodexTransportException("Runtime inventory roots unavailable");
+            Path home = Path.of(homeValue.asText());
+            if (!home.isAbsolute() || !home.normalize().equals(home) || home.getParent()==null) throw new CodexTransportException("Runtime inventory roots unavailable");
+            this.authorizationGate.check(lease);
+            return new CodexInventorySession(current, lease, deadline, home);
+        } catch (RuntimeException failure) {
+            this.authorizationGate.release(lease);
+            throw failure;
+        }
+    }
+
+    final class CodexInventorySession implements AutoCloseable {
+        private final CodexJsonRpcTransport current;
+        private final AuthorizationLease lease;
+        private final long deadline;
+        private final Path codexHome;
+        Path codexHome() { return codexHome; }
+        private CodexInventorySession(CodexJsonRpcTransport current, AuthorizationLease lease, long deadline, Path codexHome) {
+            this.current=current;this.lease=lease;this.deadline=deadline;this.codexHome=codexHome;
+        }
+        JsonNode listSkills(java.util.List<Path> cwds) {
+            if (cwds.isEmpty() || cwds.size()>32) throw new CodexTransportException("Invalid inventory context");
+            thisCheck();
+            var params=objectMapper.createObjectNode().put("forceReload",true);
+            var paths=params.putArray("cwds");cwds.forEach(path->paths.add(path.toString()));
+            long remaining=deadline-System.nanoTime();
+            if(remaining<=0) throw new CodexTransportException("Inventory timed out");
+            var result=current.request("skills/list",params,java.time.Duration.ofNanos(
+                    Math.min(remaining,properties.getRequestTimeout().toNanos())));
+            thisCheck();return result;
+        }
+        JsonNode listMcpServerStatus(String cursor) {
+            thisCheck();
+            var params=objectMapper.createObjectNode().put("limit",100).put("detail","toolsAndAuthOnly");
+            if(cursor!=null) {
+                if(cursor.isBlank() || cursor.length()>4096) throw new CodexTransportException("Invalid inventory cursor");
+                params.put("cursor",cursor);
+            }
+            long remaining=deadline-System.nanoTime();
+            if(remaining<=0) throw new CodexTransportException("Inventory timed out");
+            var result=current.request(CodexProtocol.MCP_SERVER_STATUS_LIST,params,java.time.Duration.ofNanos(
+                    Math.min(remaining,properties.getRequestTimeout().toNanos())));
+            thisCheck();return result;
+        }
+        private void thisCheck() { authorizationGate.check(lease); }
+        @Override public void close() {
+            authorizationGate.release(lease);
+            if(!current.cleanupComplete()) throw new CodexTransportException("Inventory cleanup incomplete");
+        }
     }
 
     @Override
@@ -150,17 +211,18 @@ final class CodexAppServerClient implements CodexClient {
                 throw new CodexMcpExecutionException("Codex MCP launch grants do not match selection");
             this.threadStartParams(request);
         }
-        final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker();
+        final CodexTurnStateTracker turnStateTracker = new CodexTurnStateTracker(request.nativeSubagents());
         final CodexExecutionEventObserver eventObserver = new CodexExecutionEventObserver(
                 new CodexAgentExecutionEventMapper(this.objectMapper), callbacks);
         final CodexJsonRpcTransport transport = this.startWorkspaceTransport(
                 request.executionWorkspace().cwd(), turnStateTracker, eventObserver, grants,
-                request.mcpSelection() != null, lease);
+                request.mcpSelection() != null, lease, request.resourceSnapshot());
         CodexExecution execution = null;
         try {
             this.authorizationGate.registerCancellation(lease, transport::close);
             if (callbacks != null) callbacks.executionStarted(transport::close);
             final String providerVersion = this.initialize(transport);
+            if(request.nativeSubagents() && !"0.163.0".equals(providerVersion))throw new CodexTransportException("Native subagent runtime contract is unverified");
             if (durable) {
                 this.validateDurableVersion(providerVersion, expectedProviderVersion);
             }
@@ -240,10 +302,10 @@ final class CodexAppServerClient implements CodexClient {
                                                            final CodexTurnStateTracker turnStateTracker,
                                                            final CodexExecutionEventObserver eventObserver,
                                                            final McpRuntimeLaunchGrants grants,
-                                                           final boolean mcpConfigured, final AuthorizationLease lease) {
+                                                           final boolean mcpConfigured, final AuthorizationLease lease, final java.util.Map<String,String> resources) {
         final StartedCodexAppServer started;
         try {
-            started = mcpConfigured
+            started = resources != null ? this.processStarter.startPinned(workingDirectory,grants,resources) : mcpConfigured
                     ? this.processStarter.start(workingDirectory, grants)
                     : this.processStarter.start(workingDirectory);
         } catch (RuntimeException failure) {
@@ -324,7 +386,7 @@ final class CodexAppServerClient implements CodexClient {
                             ? sessionProtocol.startDurableThread(current, this.threadStartParams(request), this.properties.getRequestTimeout())
                             : existingThreadId != null
                                 ? sessionProtocol.resumeThread(current, existingThreadId,
-                                        request.sharedSessionGroup() || request.mcpSelection() != null
+                                        request.sharedSessionGroup() || request.mcpSelection() != null || request.outputSchema() == null
                                                 ? this.developerInstructions(request) : null,
                                         this.threadStartParams(request),
                                         this.properties.getRequestTimeout())
@@ -502,7 +564,7 @@ final class CodexAppServerClient implements CodexClient {
         params.put("cwd", request.executionWorkspace().cwd().toString());
         params.set("runtimeWorkspaceRoots", this.runtimeWorkspaceRoots(request));
         params.put("ephemeral", true);
-        final ObjectNode config = this.codexConfig();
+        final ObjectNode config = this.codexConfig(request.nativeSubagents());
         if (request.mcpSelection() != null) {
             if (this.gatewayAddress == null)
                 throw new CodexMcpExecutionException("Codex MCP gateway is unavailable");
@@ -531,11 +593,11 @@ final class CodexAppServerClient implements CodexClient {
         if (request.effortId() != null) {
             params.put("effort", request.effortId());
         }
-        params.set("outputSchema", request.outputSchema().deepCopy());
+        if (request.outputSchema() != null) params.set("outputSchema", request.outputSchema().deepCopy());
         return params;
     }
 
-    private ObjectNode codexConfig() {
+    private ObjectNode codexConfig(boolean nativeSubagents) {
         final ObjectNode config = this.objectMapper.createObjectNode();
         config.put("model_provider", "openai");
         config.put("cli_auth_credentials_store", "file");
@@ -544,8 +606,9 @@ final class CodexAppServerClient implements CodexClient {
         final ObjectNode features = config.putObject("features");
         features.put("shell_tool", true);
         features.put("apps", false);
+        features.put("multi_agent", nativeSubagents);
         final ObjectNode agents = config.putObject("agents");
-        agents.put("enabled", false);
+        if(nativeSubagents){agents.put("max_threads",2);agents.put("max_depth",1);}else agents.put("enabled", false);
         return config;
     }
 
@@ -558,6 +621,14 @@ final class CodexAppServerClient implements CodexClient {
     }
 
     private String initialize(final CodexJsonRpcTransport transport) {
+        return initialize(transport, this.properties.getRequestTimeout());
+    }
+
+    private String initialize(final CodexJsonRpcTransport transport, final java.time.Duration timeout) {
+        return extractVersion(initializeResponse(transport, timeout));
+    }
+
+    private JsonNode initializeResponse(final CodexJsonRpcTransport transport, final java.time.Duration timeout) {
         final ObjectNode params = this.objectMapper.createObjectNode();
         final ObjectNode clientInfo = params.putObject("clientInfo");
         clientInfo.put("name", this.properties.getClientName());
@@ -566,10 +637,10 @@ final class CodexAppServerClient implements CodexClient {
         final ObjectNode capabilities = params.putObject("capabilities");
         capabilities.put("experimentalApi", this.properties.isExperimentalApi());
         capabilities.put("requestAttestation", this.properties.isRequestAttestation());
-        final JsonNode response = transport.request(CodexProtocol.INITIALIZE, params, this.properties.getRequestTimeout());
-        final String version = this.extractVersion(response);
+        final JsonNode response = transport.request(CodexProtocol.INITIALIZE, params, timeout);
+        this.extractVersion(response);
         transport.notify(CodexProtocol.INITIALIZED, this.objectMapper.createObjectNode());
-        return version;
+        return response;
     }
 
     static String extractVersion(final JsonNode initializeResult) {

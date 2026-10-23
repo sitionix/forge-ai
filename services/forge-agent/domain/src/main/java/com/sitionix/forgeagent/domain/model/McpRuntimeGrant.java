@@ -8,8 +8,8 @@ import java.util.UUID;
 
 /** The approved, execution-scoped snapshot; it never contains a credential or bearer. */
 public record McpRuntimeGrant(
-        UUID id, UUID installationId, UUID sessionId, UUID turnId, UUID nodeRunId,
-        UUID workflowRunId, UUID projectId, String leaseOwnerId, long leaseToken,
+        UUID id, UUID installationId, UUID sessionId, UUID turnId, McpExecutionOwner executionOwner,
+        UUID projectId, String leaseOwnerId, long leaseToken,
         UUID connectionId, URI endpoint,
         McpAuthType authType, String credentialIdentity, Set<McpAllowedTool> tools,
         Instant deadline) {
@@ -18,8 +18,8 @@ public record McpRuntimeGrant(
         Objects.requireNonNull(installationId);
         Objects.requireNonNull(sessionId);
         Objects.requireNonNull(turnId);
-        Objects.requireNonNull(nodeRunId);
-        Objects.requireNonNull(workflowRunId);
+        Objects.requireNonNull(executionOwner);
+        if (executionOwner instanceof McpExecutionOwner.Standalone s && (!s.sessionId().equals(sessionId) || !s.turnId().equals(turnId))) throw new IllegalArgumentException("MCP owner identity mismatch");
         Objects.requireNonNull(projectId);
         Objects.requireNonNull(leaseOwnerId);
         Objects.requireNonNull(connectionId);
@@ -29,4 +29,11 @@ public record McpRuntimeGrant(
         tools = Set.copyOf(tools);
         Objects.requireNonNull(deadline);
     }
+    public McpRuntimeGrant(UUID id,UUID installationId,UUID sessionId,UUID turnId,UUID nodeRunId,UUID workflowRunId,
+            UUID projectId,String leaseOwnerId,long leaseToken,UUID connectionId,URI endpoint,McpAuthType authType,
+            String credentialIdentity,Set<McpAllowedTool> tools,Instant deadline) {
+        this(id,installationId,sessionId,turnId,new McpExecutionOwner.Workflow(nodeRunId,workflowRunId),projectId,leaseOwnerId,leaseToken,connectionId,endpoint,authType,credentialIdentity,tools,deadline);
+    }
+    public UUID nodeRunId() { return ((McpExecutionOwner.Workflow)executionOwner).nodeRunId(); }
+    public UUID workflowRunId() { return ((McpExecutionOwner.Workflow)executionOwner).workflowRunId(); }
 }

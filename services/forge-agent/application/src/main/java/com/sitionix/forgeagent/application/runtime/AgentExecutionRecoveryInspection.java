@@ -8,6 +8,8 @@ public record AgentExecutionRecoveryInspection(
         String providerConversationId,
         String providerTurnId,
         ExecutionWorkspace executionWorkspace,
-        Instant deadline
+        Instant deadline,
+        boolean recoverReply
 ) {
+    public AgentExecutionRecoveryInspection(String providerId,String providerVersion,String providerConversationId,String providerTurnId,ExecutionWorkspace workspace,Instant deadline){this(providerId,providerVersion,providerConversationId,providerTurnId,workspace,deadline,false);}
 }

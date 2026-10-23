@@ -14,6 +14,7 @@ export class ProjectWorkspace {
     this.onRefreshRepository = options.onRefreshRepository || (() => {});
     this.onPullRepository = options.onPullRepository || (() => {});
     this.onEditAgent = options.onEditAgent;
+    this.onStartAgent = options.onStartAgent;
     this.onNewWorkflow = options.onNewWorkflow;
     this.onOpenWorkflow = options.onOpenWorkflow;
     this.onDeleteAgent = options.onDeleteAgent;
@@ -118,10 +119,12 @@ export class ProjectWorkspace {
         <p>${escapeHtml(agent.instructions || 'Reusable agent definition')}</p>
         ${this.renderAgentModelMeta(agent.model, runtimeCatalog)}
         <div class="agents-v2-card-actions">
+          <button class="button small" type="button" data-start-agent-id="${escapeHtml(agent.id)}">Start Session</button>
           <button class="button small secondary" type="button" data-agent-id="${escapeHtml(agent.id)}">Edit</button>
         </div>
       </article>
     `).join('');
+    list.querySelectorAll('[data-start-agent-id]').forEach(element => element.addEventListener('click', () => this.onStartAgent?.(element.dataset.startAgentId)));
     list.querySelectorAll('[data-agent-id]').forEach((element) => {
       element.addEventListener('click', () => this.onEditAgent(element.dataset.agentId));
     });

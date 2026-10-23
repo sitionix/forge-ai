@@ -2,7 +2,10 @@
 """Narrow root-owned systemd launcher. Install only after disposable acceptance.
 No caller-selected config, executable, environment, property, PID or unit name.
 """
+from contextlib import contextmanager, nullcontext
 import fcntl
+import hashlib
+import tempfile
 import errno
 import grp
 import io
@@ -85,8 +88,9 @@ def load_config():
                 'workspace_roots', 'agent_unit', 'max_lifetime_seconds', 'codex_binary',
                 'git_binary', 'env_binary'}
     isolated = has_codex_isolation_config(data)
-    if set(data) != required | ({'codex_config', 'empty_system_config'} if isolated else set()):
+    if set(data) - {'global_resources_enabled'} != required | ({'codex_config', 'empty_system_config'} if isolated else set()):
         raise ValueError('unsafe configuration')
+    if type(data.get('global_resources_enabled',False)) is not bool: raise ValueError('unsafe configuration')
     identifier(data['installation'])
     fixed_paths = [data.get(key) for key in ['runtime_home','codex_binary','git_binary','env_binary']]
     if isolated:
@@ -196,7 +200,159 @@ def unit_name(config, execution):
     return 'forge-runtime-' + identifier(config['installation']) + '-' + identifier(execution) + '.service'
 
 
-def service_command(config, execution, cwd, command, credential_path=None):
+@contextmanager
+def global_resource_mounts(config):
+    """Fixed operator resource directories, pinned before systemd resolves them.
+
+    Never bind personal HOME, configuration, credentials or plugins. Keep the
+    O_PATH descriptors alive until the owned runtime exits, including cleanup.
+    """
+    descriptors=[]
+    mounts=[]
+    try:
+        if not config.get('global_resources_enabled',False):
+            yield mounts
+            return
+        home=Path(pwd.getpwuid(config['control_uid']).pw_dir)
+        if not home.is_absolute() or '..' in home.parts or home == Path('/'):
+            raise ValueError('unsafe resource home')
+        for relative,target in [('.codex/skills','.agents/skills'),
+                                ('.agents/skills','.codex/skills/forge-global'),
+                                ('.codex/agents','.codex/agents')]:
+            fd=os.open('/',os.O_PATH|os.O_DIRECTORY|os.O_CLOEXEC)
+            try:
+                for component in (home/relative).parts[1:]:
+                    child=os.open(component,os.O_PATH|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+                    os.close(fd);fd=child
+                    info=os.fstat(fd)
+                    if info.st_uid not in (0,config['control_uid']) or (info.st_mode & 0o002 and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)):
+                        raise ValueError('unsafe resource owner')
+            except FileNotFoundError:
+                os.close(fd)
+                continue
+            except BaseException:
+                os.close(fd)
+                raise ValueError('unsafe resource directory')
+            descriptors.append(fd)
+            mounts.append(('/proc/'+str(os.getpid())+'/fd/'+str(fd),config['runtime_home']+'/'+target))
+        yield mounts
+    finally:
+        for fd in descriptors: os.close(fd)
+
+
+def read_resource_file(path,owners=None):
+    """Read exactly one no-follow regular file through a no-follow ancestor chain."""
+    fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+    try:
+        for component in Path(path).parts[1:-1]:
+            child=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+            os.close(fd);fd=child
+            info=os.fstat(fd)
+            if owners is not None and (info.st_uid not in owners or (info.st_mode & 0o002 and not (info.st_uid==0 and info.st_mode & stat.S_ISVTX))):raise ValueError('unsafe global resource owner')
+        child=os.open(Path(path).name,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+        try:
+            info=os.fstat(child)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:raise ValueError('unsafe snapshot file')
+            data=bytearray()
+            while len(data)<=1048576:
+                chunk=os.read(child,min(65536,1048577-len(data)))
+                if not chunk:break
+                data.extend(chunk)
+            if len(data)>1048576:raise ValueError('snapshot file too large')
+            return bytes(data),bool(info.st_mode & 0o111)
+        finally:os.close(child)
+    finally:os.close(fd)
+
+
+@contextmanager
+def pinned_resource_mounts(config,cwd,manifest):
+    """Private, read-only copies, never mutable FD binds. No credentials or arbitrary paths.
+
+    Missing directories/files are masked as well: additions after validation cannot
+    enter a running root or child. All copies disappear only after owned-unit cleanup.
+    """
+    if not isinstance(manifest,dict) or len(manifest)>11000:raise ValueError('invalid resource snapshot')
+    projects=[];global_home=None;executables=set()
+    for key,value in manifest.items():
+        if key.startswith('@project:'):
+            root=key[len('@project:'):]
+            workspace(config,root)
+            if value!='directory':raise ValueError('invalid resource root')
+            projects.append(root)
+        elif key.startswith('@global:'):
+            root=key[len('@global:'):]
+            expected=pwd.getpwuid(config['control_uid']).pw_dir
+            if not config.get('global_resources_enabled',False) or root!=expected or value!='directory':raise ValueError('unapproved global resources')
+            global_home=root
+        elif key.startswith('@executable:'):
+            identity=key[len('@executable:'):]
+            if value!='executable' or identity not in manifest:raise ValueError('invalid executable snapshot')
+            executables.add(identity)
+        elif key.startswith('@'):raise ValueError('invalid resource root')
+    if not projects or cwd not in projects:raise ValueError('missing workspace snapshot')
+    if global_home:
+        # Preserve the established owner/mode checks of the shared global boundary.
+        with global_resource_mounts(config):pass
+    # Ancestor layers outside the trusted project scope are unsupported, rather than
+    # silently loaded outside the immutable snapshot. Installation paths are root-owned.
+    top=min(map(Path,projects),key=lambda p:len(p.parts))
+    for parent in top.parents:
+        for relative in ('AGENTS.md','AGENTS.override.md','.codex/config.toml'):
+            if os.path.lexists(parent/relative):raise ValueError('unsupported ancestor instructions')
+    groups=[]
+    for root in sorted(projects):
+        for relative in ('.codex','.agents'):
+            groups.append((root+'/'+relative,root+'/'+relative,True))
+        for relative in ('AGENTS.md','AGENTS.override.md'):
+            groups.append((root+'/'+relative,root+'/'+relative,False))
+    for relative,target in (('.codex/skills','.agents/skills'),('.agents/skills','.codex/skills/forge-global'),('.codex/agents','.codex/agents')):
+        groups.append(((global_home+'/'+relative) if global_home else None,config['runtime_home']+'/'+target,True))
+    # Personal/global instructions are not part of the approved resource inventory.
+    # Mask runtime-home instruction files; never copy personal HOME instructions.
+    for name in ('AGENTS.md','AGENTS.override.md'):
+        groups.append((None,config['runtime_home']+'/.codex/'+name,False))
+    remaining={k:v for k,v in manifest.items() if not k.startswith('@')}
+    total=0
+    # The launcher runs as root with a private /tmp. Sources are never placed in public workspaces.
+    with tempfile.TemporaryDirectory(prefix='forge-agent-resources-') as folder:
+        mounts=[]
+        for index,(source,target,is_directory) in enumerate(groups):
+            pinned=Path(folder)/str(index)
+            if is_directory:pinned.mkdir(mode=0o700)
+            elif source is None:
+                pinned.write_bytes(b'');pinned.chmod(0o444);mounts.append((str(pinned),target));continue
+            entries=[(k,v) for k,v in remaining.items() if source and (k.startswith(source+'/') if is_directory else k==source)]
+            if not is_directory and not entries:entries=[(source,hashlib.sha256(b'').hexdigest())]
+            for identity,fingerprint in entries:
+                if not isinstance(fingerprint,str) or not re.fullmatch('[a-f0-9]{64}',fingerprint):raise ValueError('invalid resource fingerprint')
+                if str(Path(identity))!=identity or '..' in Path(identity).parts:raise ValueError('invalid resource identity')
+                if is_directory and source and source.endswith(('/.codex','/.agents')):
+                    relative=str(Path(identity).relative_to(source))
+                    allowed=('skills/','agents/') if source.endswith('/.codex') else ('skills/',)
+                    if not (relative.startswith(allowed) or source.endswith('/.codex') and relative=='config.toml'):raise ValueError('unapproved project resource')
+                try:data,is_executable=read_resource_file(identity,{0,config['control_uid']} if global_home and identity.startswith(global_home+'/') else None)
+                except FileNotFoundError:
+                    if is_directory and not (identity.endswith('/.codex/config.toml') and fingerprint==hashlib.sha256(b'').hexdigest()):raise ValueError('resource revoked')
+                    data=b'';is_executable=False
+                if is_executable != (identity in executables):raise ValueError('resource executable mode changed')
+                if hashlib.sha256(data).hexdigest()!=fingerprint:raise ValueError('resource snapshot changed')
+                total+=len(data)
+                if total>16777216:raise ValueError('resource snapshot too large')
+                destination=pinned/Path(identity).relative_to(source) if is_directory else pinned
+                destination.parent.mkdir(parents=True,exist_ok=True)
+                destination.write_bytes(data);destination.chmod(0o555 if is_executable else 0o444)
+                remaining.pop(identity,None)
+                if identity.endswith('/.codex/config.toml'):
+                    parsed=tomllib.loads(data.decode('utf-8'))
+                    if set(parsed)-(CODEX_BASE_STRING_SETTINGS|CODEX_BASE_INTEGER_SETTINGS):raise ValueError('unsupported standalone project configuration')
+            if is_directory:
+                for directory,_,_ in os.walk(pinned,topdown=False):Path(directory).chmod(0o555)
+            mounts.append((str(pinned),target))
+        if remaining:raise ValueError('resource outside approved roots')
+        yield mounts
+
+
+def service_command(config, execution, cwd, command, credential_path=None, resource_mounts=()):
     props = ['User='+str(config['runtime_uid']), 'Group='+str(config['runtime_gid']),
              'SupplementaryGroups=', 'NoNewPrivileges=yes', 'CapabilityBoundingSet=',
              'AmbientCapabilities=', 'KillMode=control-group', 'TimeoutStopSec=5s',
@@ -216,6 +372,7 @@ def service_command(config, execution, cwd, command, credential_path=None):
                       'BindReadOnlyPaths='+config['empty_system_config']+':/etc/codex/config.toml',
                       'InaccessiblePaths='+codex_home+'/plugins',
                       'InaccessiblePaths='+codex_home+'/.agents/plugins'])
+        props.extend('BindReadOnlyPaths='+source+':'+target for source,target in resource_mounts)
         if credential_path is not None:
             props.append('LoadCredential=forge-mcp-grants:'+str(credential_path))
         else:
@@ -234,11 +391,13 @@ def validate_codex_mount_targets(config):
     paths = [(home/'.codex', True), (home/'.codex/config.toml', False),
              (home/'.codex/plugins', True), (home/'.codex/.agents', True),
              (home/'.codex/.agents/plugins', True)]
+    if config.get('global_resources_enabled',False):
+        paths.extend([(home/'.agents',True),(home/'.agents/skills',True),(home/'.codex/agents',True),(home/'.codex/skills',True),(home/'.codex/skills/forge-global',True)])
     for path, directory in paths:
         info = path.lstat()
         expected = stat.S_ISDIR if directory else stat.S_ISREG
         if (not expected(info.st_mode) or info.st_uid not in (0, config['runtime_uid'])
-                or info.st_mode & 0o022):
+                or info.st_mode & (0o002 if path == home/'.codex/skills' and info.st_gid == config.get('runtime_gid') else 0o022)):
             raise ValueError('unsafe Codex mount target')
 
 
@@ -335,12 +494,12 @@ def unique_object(pairs):
     return result
 
 
-def read_startup_envelope(reader):
+def read_startup_envelope(reader, validator=validate_grants, limit=MAX_GRANT_ENVELOPE):
     payload = bytearray()
     deadline = time.monotonic() + 5
     try: descriptor = reader.fileno()
     except (AttributeError, OSError, io.UnsupportedOperation): descriptor = None
-    while len(payload) <= MAX_GRANT_ENVELOPE:
+    while len(payload) <= limit:
         if descriptor is not None:
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not select.select([descriptor], [], [], remaining)[0]:
@@ -348,7 +507,7 @@ def read_startup_envelope(reader):
         chunk = reader.read(1)
         if not chunk: raise ValueError('incomplete runtime grant envelope')
         if chunk == b'\n':
-            try: return validate_grants(json.loads(payload, object_pairs_hook=unique_object))
+            try: return validator(json.loads(payload, object_pairs_hook=unique_object))
             except (json.JSONDecodeError, UnicodeDecodeError) as error:
                 raise ValueError('invalid runtime grant envelope') from error
         payload.extend(chunk)
@@ -405,10 +564,11 @@ def stop(config, execution):
         credential_path(config, execution).unlink(missing_ok=True)
 
 
-def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
+def start(config, execution, cwd, command, probe_input=None, codex_grants=None, resource_snapshot=None):
     child = None
     claimed = False
     credential = None
+    resources = None
     def terminate(signum, frame):
         raise InterruptedError('launcher interrupted')
     signal.signal(signal.SIGTERM, terminate)
@@ -418,6 +578,8 @@ def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
             validate_codex_isolation_config(config)
             validate_codex_project_config(cwd)
             validate_codex_mount_targets(config)
+        resources=(pinned_resource_mounts(config,cwd,resource_snapshot) if resource_snapshot is not None else global_resource_mounts(config)) if codex_grants is not None or is_codex_command(config,command) else nullcontext([])
+        resource_mounts=resources.__enter__()
         with locked_receipt(config, execution) as receipt:
             if receipt.read():
                 raise ValueError('execution already used')
@@ -427,7 +589,7 @@ def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
                 credential = write_credential(config, execution, codex_grants)
                 command = [str(Path(sys.executable).resolve()), '-I', str(Path(__file__)),
                            '--runtime-codex', config['codex_binary'], config['runtime_home']]
-            child = subprocess.Popen(service_command(config, execution, cwd, command, credential), env=SAFE_ENV,
+            child = subprocess.Popen(service_command(config, execution, cwd, command, credential, resource_mounts), env=SAFE_ENV,
                                      stdin=subprocess.PIPE if probe_input is not None else None,
                                      stdout=subprocess.PIPE if probe_input is not None else None,
                                      stderr=subprocess.DEVNULL if probe_input is not None else None)
@@ -451,10 +613,13 @@ def start(config, execution, cwd, command, probe_input=None, codex_grants=None):
             if claimed: stop(config, execution)
         finally:
             if credential is not None: credential.unlink(missing_ok=True)
-            if child is not None and child.poll() is None:
-                child.terminate()
-                try: child.wait(timeout=5)
-                except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=5)
+            try:
+                if child is not None and child.poll() is None:
+                    child.terminate()
+                    try: child.wait(timeout=5)
+                    except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=5)
+            finally:
+                if resources is not None: resources.__exit__(None,None,None)
 
 
 def git_command(config, arguments):
@@ -575,6 +740,15 @@ def main(args):
             finally: reader.close()
             return start(config, execution, workspace(config, args[3]),
                          [config['codex_binary'], 'app-server', '--stdio'], codex_grants=grants)
+        if kind == 'codex' and len(args)==5 and args[4]=='--snapshot':
+            def envelope(value):
+                if not isinstance(value,dict) or set(value)!={'grants','resources'} or not isinstance(value['resources'],dict):raise ValueError('invalid snapshot envelope')
+                validate_grants(value['grants']);return value
+            reader=os.fdopen(os.dup(sys.stdin.fileno()),'rb',buffering=0)
+            try:value=read_startup_envelope(reader,envelope,2097152)
+            finally:reader.close()
+            return start(config,execution,workspace(config,args[3]),[config['codex_binary'],'app-server','--stdio'],
+                         codex_grants=value['grants'],resource_snapshot=value['resources'])
         if kind == 'git':
             if sum(map(len, args)) > 131072: raise ValueError('argument limit exceeded')
             return start(config, execution, config['workspace_roots'][0], git_command(config, args[3:]))

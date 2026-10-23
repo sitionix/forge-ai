@@ -150,8 +150,7 @@ final class CodexRecoveryInspector implements AgentExecutionRecoveryInspector {
                             inspection.providerConversationId(),
                             inspection.providerTurnId(),
                             requestDeadline,
-                            this.properties.getRequestTimeout()
-                    );
+                            this.properties.getRequestTimeout(), inspection.recoverReply());
                 }
             }
         } catch (final RuntimeException exception) {

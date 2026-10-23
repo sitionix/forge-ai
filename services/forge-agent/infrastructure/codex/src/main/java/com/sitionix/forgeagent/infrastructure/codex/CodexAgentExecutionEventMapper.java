@@ -154,6 +154,8 @@ final class CodexAgentExecutionEventMapper {
             case "fileChange" -> completed ? Optional.of(this.fileChange(item, key, observedAt)) : Optional.empty();
             case "mcpToolCall" -> this.mcpTool(item, completed, key, observedAt);
             case "dynamicToolCall" -> Optional.of(this.tool(item, type, completed, key, observedAt));
+            case "collabAgentToolCall" -> Optional.of(this.subagent(item,completed,key,observedAt));
+            case "subAgentActivity" -> Optional.of(this.subagentActivity(item,key,observedAt));
             case "agentMessage" -> completed ? this.agentMessage(item, key, observedAt) : Optional.empty();
             case "contextCompaction" -> Optional.of(this.event(
                     AgentExecutionEventType.CONTEXT_COMPACTION,
@@ -162,6 +164,23 @@ final class CodexAgentExecutionEventMapper {
             case "plan" -> completed ? Optional.of(this.planItem(item, key, observedAt)) : Optional.empty();
             default -> Optional.empty();
         };
+    }
+
+    private AgentExecutionEventCandidate subagent(JsonNode item,boolean completed,String key,Instant observedAt) {
+        var payload=this.objectMapper.createObjectNode();
+        this.copyText(item,payload,"tool","tool");this.copyText(item,payload,"senderThreadId","senderThreadId");
+        payload.set("receiverThreadIds",this.sanitizer.sanitize(item.path("receiverThreadIds")));
+        var states=payload.putObject("agentsStates");
+        item.path("agentsStates").fields().forEachRemaining(entry->{
+            if(entry.getKey().matches("[A-Za-z0-9_-]{1,128}"))this.copyText(entry.getValue(),states.putObject(entry.getKey()),"status","status");
+        });
+        return this.event(AgentExecutionEventType.TOOL_CALL,completed?completedStatus(item):AgentExecutionEventStatus.STARTED,"subagent",key,payload,observedAt);
+    }
+    private AgentExecutionEventCandidate subagentActivity(JsonNode item,String key,Instant observedAt) {
+        var payload=this.objectMapper.createObjectNode();
+        this.copyText(item,payload,"agentThreadId","agentThreadId");this.copyText(item,payload,"kind","kind");this.copyText(item,payload,"model","model");
+        var status=switch(item.path("kind").asText()){case "started"->AgentExecutionEventStatus.STARTED;case "completed","interrupted"->AgentExecutionEventStatus.COMPLETED;default->AgentExecutionEventStatus.IN_PROGRESS;};
+        return this.event(AgentExecutionEventType.TOOL_CALL,status,"subagent",key,payload,observedAt);
     }
 
     private Optional<AgentExecutionEventCandidate> reasoning(final JsonNode item, final String key,

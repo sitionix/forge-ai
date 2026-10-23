@@ -15,7 +15,9 @@ final class CodexTurnStateTracker {
 
     private final Map<String, CodexExecutionState> executionsByThreadId = new HashMap<>();
     private final Map<String, List<PendingNotification>> pendingByThreadId = new HashMap<>();
-    private final CodexGenerationPolicy generationPolicy = new CodexGenerationPolicy();
+    private final CodexGenerationPolicy generationPolicy;
+    CodexTurnStateTracker(){this(false);}
+    CodexTurnStateTracker(boolean nativeSubagents){this.generationPolicy=new CodexGenerationPolicy(nativeSubagents);}
 
     synchronized CodexExecutionState register(final String threadId) {
         final CodexExecutionState state = new CodexExecutionState(threadId);

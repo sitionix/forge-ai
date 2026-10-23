@@ -14,6 +14,20 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CodexAgentExecutionEventMapperTest {
+    @Test void nativeV2ChildActivityUsesActualChildIdentityAndKind() throws Exception {
+        var event=mapper.map("item/completed",json.readTree("""
+          {"threadId":"root","turnId":"turn","item":{"type":"subAgentActivity","id":"spawn-v2","kind":"started","agentThreadId":"child-v2","agentPath":"/root/private-child-name","model":"child-model"}}
+          """),OBSERVED_AT).orElseThrow();
+        assertThat(event.type()).isEqualTo(AgentExecutionEventType.TOOL_CALL);assertThat(event.phase()).isEqualTo("subagent");assertThat(event.status()).isEqualTo(AgentExecutionEventStatus.STARTED);
+        assertThat(event.payload()).contains("child-v2","child-model").doesNotContain("/root/private-child-name");
+    }
+    @Test void nativeChildActivityRetainsRealIdentityWithoutLeakingPrompt() throws Exception {
+        var event=mapper.map("item/completed",json.readTree("""
+          {"threadId":"root","turnId":"turn","item":{"id":"spawn","type":"collabAgentToolCall","tool":"spawnAgent","status":"completed","senderThreadId":"root","receiverThreadIds":["child"],"prompt":"private-instructions-canary","agentsStates":{"child":{"status":"completed","message":"private-child-result"}}}}
+          """),OBSERVED_AT).orElseThrow();
+        assertThat(event.type()).isEqualTo(AgentExecutionEventType.TOOL_CALL);assertThat(event.phase()).isEqualTo("subagent");
+        assertThat(event.payload()).contains("root","child","spawnAgent").doesNotContain("private-instructions-canary","private-child-result");
+    }
     private static final Instant OBSERVED_AT = Instant.parse("2026-09-07T09:00:00Z");
     private final ObjectMapper json = new ObjectMapper();
     private final CodexAgentExecutionEventMapper mapper = new CodexAgentExecutionEventMapper(this.json);

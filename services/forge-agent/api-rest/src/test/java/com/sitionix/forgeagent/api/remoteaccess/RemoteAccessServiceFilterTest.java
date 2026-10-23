@@ -32,4 +32,18 @@ class RemoteAccessServiceFilterTest {
         var link=dir.resolve("link");Files.createSymbolicLink(link,key);
         assertThatThrownBy(() -> new RemoteAccessServiceFilter(link)).isInstanceOf(IllegalStateException.class);
     }
+    @Test void libraryAndRemoteAccessHaveIndependentRouteOwnership() throws Exception {
+        var key=dir.resolve("remote");Files.writeString(key,"r".repeat(43));Files.setAttribute(key,"unix:mode",0600);
+        var remote=new RemoteAccessServiceFilter(key);var library=new RemoteAccessServiceFilter("l".repeat(32));
+        var request=new MockHttpServletRequest("POST","/api/v1/projects/"+java.util.UUID.randomUUID()+"/ai-library/query");
+        request.setRemoteAddr("127.0.0.1");request.addHeader("Authorization","Bearer "+"l".repeat(32));
+        var response=new MockHttpServletResponse();var chain=new MockFilterChain();
+        remote.doFilter(request,response,(input,output)->library.doFilter(input,output,chain));
+        assertThat(chain.getRequest()).isSameAs(request);
+        assertThat(request.getAttribute(com.sitionix.forgeagent.api.security.AgentManagementRoutePolicy.LIBRARY_AUTHENTICATED)).isEqualTo(Boolean.TRUE);
+        var remoteRequest=new MockHttpServletRequest("GET","/api/v1/remote-access/sessions");remoteRequest.setRemoteAddr("127.0.0.1");
+        remoteRequest.addHeader("Authorization","Bearer "+"r".repeat(43));var remoteChain=new MockFilterChain();
+        library.doFilter(remoteRequest,new MockHttpServletResponse(),(input,output)->remote.doFilter(input,output,remoteChain));
+        assertThat(remoteChain.getRequest()).isSameAs(remoteRequest);
+    }
 }

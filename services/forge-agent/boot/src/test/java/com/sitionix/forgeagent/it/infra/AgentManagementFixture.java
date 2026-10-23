@@ -32,6 +32,7 @@ public abstract class AgentManagementFixture {
     protected static final Path MANAGED_WORKSPACE = ROOT.resolve("workspace");
     @DynamicPropertySource
     static void protectedFiles(DynamicPropertyRegistry registry) {
+        registry.add("FORGE_CODEX_SERVICE_TOKEN_FILE", () -> ROOT.resolve("missing-runtime-token").toString());
         registry.add("forge.agent.workspace-root", MANAGED_WORKSPACE::toString);
         registry.add("forge.mcp.key-file", () -> ROOT.resolve("key").toString());
         registry.add("forge.mcp.database-credential-file", () -> ROOT.resolve("database").toString());

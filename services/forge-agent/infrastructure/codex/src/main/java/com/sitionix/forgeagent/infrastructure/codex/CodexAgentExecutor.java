@@ -38,7 +38,7 @@ public final class CodexAgentExecutor implements AgentExecutor {
     private static final String PAYLOAD_SCHEMA_POINTER = "#/$defs/" + PAYLOAD_SCHEMA_DEFINITION;
 
     private final ObjectMapper objectMapper;
-    private final CodexClient client;
+    private final com.sitionix.forgeagent.application.runtime.AgentTurnExecutionPort turns;
     private final AgentSessionLeaseService sessionLeaseService;
     private final AgentExecutionEventRecorder eventRecorder;
     private final AgentExecutionDispatchGuard dispatchGuard;
@@ -46,15 +46,25 @@ public final class CodexAgentExecutor implements AgentExecutor {
     private final CodexAppServerProperties properties;
     private final ConcurrentHashMap<UUID, ExecutionCancellation> activeExecutions = new ConcurrentHashMap<>();
 
-    @Autowired
     public CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client,
                               final AgentSessionLeaseService sessionLeaseService,
                               final AgentExecutionEventRecorder eventRecorder,
                               final AgentExecutionDispatchGuard dispatchGuard,
                               @Nullable final McpExecutionSelectionService mcpSelectionService,
                               final CodexAppServerProperties properties) {
+        this(objectMapper,client,sessionLeaseService,eventRecorder,dispatchGuard,mcpSelectionService,properties,new CodexAgentTurnExecutionAdapter(client,objectMapper));
+    }
+
+    @Autowired
+    public CodexAgentExecutor(final ObjectMapper objectMapper, final CodexClient client,
+                              final AgentSessionLeaseService sessionLeaseService,
+                              final AgentExecutionEventRecorder eventRecorder,
+                              final AgentExecutionDispatchGuard dispatchGuard,
+                              @Nullable final McpExecutionSelectionService mcpSelectionService,
+                              final CodexAppServerProperties properties,
+                              final com.sitionix.forgeagent.application.runtime.AgentTurnExecutionPort turns) {
         this.objectMapper = objectMapper;
-        this.client = client;
+        this.turns = turns;
         this.sessionLeaseService = sessionLeaseService;
         this.eventRecorder = eventRecorder;
         this.dispatchGuard = dispatchGuard;
@@ -115,8 +125,9 @@ public final class CodexAgentExecutor implements AgentExecutor {
             );
             final String outputText;
             if (claim.agentSessionClaim() == null) {
-                outputText = prepared == null ? this.client.execute(request)
-                        : this.client.execute(request, prepared.launchGrants());
+                outputText = this.executeShared(request, claim.nodeRunId(),
+                        com.sitionix.forgeagent.application.runtime.AgentTurnExecutionRequest.Mode.FRESH,
+                        null, null, prepared, null);
             } else {
                 final ExecutionCancellation cancellation = new ExecutionCancellation();
                 this.activeExecutions.put(claim.nodeRunId(), cancellation);
@@ -258,15 +269,26 @@ public final class CodexAgentExecutor implements AgentExecutor {
     private String executeTracked(final CodexTurnRequest request, final NodeExecutionClaim claim,
                                   final McpExecutionPreparation prepared,
                                   final CodexExecutionIdentityCallbacks callbacks) {
-        if (claim.agentSessionClaim().contextMode()
-                == com.sitionix.forgeagent.domain.model.NodeContextMode.FRESH_EACH_NODE_RUN) {
-            return prepared == null ? this.client.executeTrackedFresh(request, callbacks)
-                    : this.client.executeTrackedFresh(request, prepared.launchGrants(), callbacks);
-        }
-        String threadId = claim.agentSessionClaim().providerConversationId();
-        String version = claim.agentSessionClaim().providerVersion();
-        return prepared == null ? this.client.executeDurable(request, threadId, version, callbacks)
-                : this.client.executeDurable(request, threadId, version, prepared.launchGrants(), callbacks);
+        var mode = claim.agentSessionClaim().contextMode()
+                == com.sitionix.forgeagent.domain.model.NodeContextMode.FRESH_EACH_NODE_RUN
+                ? com.sitionix.forgeagent.application.runtime.AgentTurnExecutionRequest.Mode.TRACKED_FRESH
+                : com.sitionix.forgeagent.application.runtime.AgentTurnExecutionRequest.Mode.DURABLE;
+        return this.executeShared(request,claim.nodeRunId(),mode,claim.agentSessionClaim().providerConversationId(),
+                claim.agentSessionClaim().providerVersion(),prepared,callbacks);
+    }
+
+    private String executeShared(CodexTurnRequest request, UUID executionId,
+            com.sitionix.forgeagent.application.runtime.AgentTurnExecutionRequest.Mode mode,
+            String thread, String version, McpExecutionPreparation prepared, CodexExecutionIdentityCallbacks callbacks) {
+        var definition = new com.sitionix.forgeagent.domain.model.execution.EffectiveAgentDefinition(
+                "FORGE",executionId.toString(),"Workflow agent",request.developerInstructions(),
+                new com.sitionix.forgeagent.domain.model.AgentModelSelection(PROVIDER_ID,request.modelId(),request.effortId()),
+                "workflow-snapshot",java.util.Map.of(),false);
+        return this.turns.execute(new com.sitionix.forgeagent.application.runtime.AgentTurnExecutionRequest(
+                executionId,definition,request.userInput(),request.outputSchema().toString(),request.executionWorkspace(),
+                mode,thread,version,request.sharedSessionGroup(),request.mcpSelection(),prepared==null?null:prepared.launchGrants(),
+                callbacks==null?com.sitionix.forgeagent.application.runtime.AgentTurnIdentityCallbacks.noop():callbacks),
+                callbacks==null?com.sitionix.forgeagent.application.runtime.AgentTurnEventSink.noop():callbacks).text();
     }
 
     @Override

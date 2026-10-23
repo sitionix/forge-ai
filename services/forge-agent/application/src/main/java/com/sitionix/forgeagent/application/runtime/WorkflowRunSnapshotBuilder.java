@@ -46,7 +46,7 @@ public class WorkflowRunSnapshotBuilder {
                 workflowRunId,
                 workflow.taskInputPortId(),
                 workflow.taskOutputPortId(),
-                workflow.nodes().stream().map(node -> this.runNode(workflowRunId, node, agentsById, taskRepositorySnapshot)).toList(),
+                workflow.nodes().stream().map(node -> this.runNode(workflowRunId, workflow.projectId(), node, agentsById, taskRepositorySnapshot)).toList(),
                 workflow.nodes().stream()
                         .flatMap(node -> java.util.stream.Stream.concat(
                                 this.runPorts(workflowRunId, node, PortDirection.INPUT, node.inputs()).stream(),
@@ -61,7 +61,7 @@ public class WorkflowRunSnapshotBuilder {
         return nodes.stream().filter(node -> node.nodeType() != NodeType.MANUAL).map(Node::targetId).collect(Collectors.toSet());
     }
 
-    private RunNode runNode(final UUID workflowRunId, final Node node, final Map<UUID, AgentDefinition> agentsById, final List<UUID> taskRepositorySnapshot) {
+    private RunNode runNode(final UUID workflowRunId, final UUID projectId, final Node node, final Map<UUID, AgentDefinition> agentsById, final List<UUID> taskRepositorySnapshot) {
         if (node.nodeType() == NodeType.MANUAL) {
             if (node.targetId() != null) {
                 throw new ValidationException("INVALID_MANUAL_NODE_TARGET", "Manual workflow nodes must not target an agent.");
@@ -73,7 +73,8 @@ public class WorkflowRunSnapshotBuilder {
         if (agent == null) {
             throw new ConflictException("SOURCE_AGENT_NOT_FOUND", "Source agent was not found.");
         }
-        final NodeRunExecutionModel executionModel = this.executionModel(agent.model());
+        final var definition = com.sitionix.forgeagent.application.definition.AgentDefinitionResolver.forgeSnapshot(projectId,agent);
+        final NodeRunExecutionModel executionModel = this.executionModel(definition.model());
         if (node.contextMode().reusable()
                 && !this.providerCapabilities.supports(
                         executionModel.providerId(), AgentExecutionProviderCapability.DURABLE_CONTEXT)) {
